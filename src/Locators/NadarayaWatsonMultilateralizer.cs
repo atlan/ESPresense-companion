@@ -45,8 +45,13 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             else
             {
                 const double EPS = 1e-6;
-                var weights = heard.Select(n => 1.0 / (Math.Pow(n.Distance, 2) + EPS)).ToArray();
+                var nwConfig = state.Config?.Locators?.NadarayaWatson;
+                var weights = nwConfig?.Kernel == "gaussian"
+                    ? heard.Select(n => Math.Exp(-Math.Pow(n.Distance, 2) / (2 * Math.Pow(Math.Max(nwConfig.Bandwidth, EPS), 2)))).ToArray()
+                    : heard.Select(n => 1.0 / (Math.Pow(n.Distance, 2) + EPS)).ToArray();
                 var wSum = weights.Sum();
+                if (wSum < EPS) weights = heard.Select(n => 1.0 / (Math.Pow(n.Distance, 2) + EPS)).ToArray();
+                wSum = weights.Sum();
 
                 est = new Point3D(
                     heard.Zip(weights, (n, w) => n.Node!.Location.X * w).Sum() / wSum,
