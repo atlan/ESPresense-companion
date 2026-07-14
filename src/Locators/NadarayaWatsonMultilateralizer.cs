@@ -39,7 +39,14 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             if (heard.Length < 3 || floor.Bounds == null)
             {
                 est = Point3D.MidPoint(heard[0].Node!.Location, heard[1].Node!.Location);
-                scenario.Error = null;
+                // Only 2 nodes heard - not enough for a real weighted fit, but leaving Error null
+                // zeroes the entire "quality" half of CalculateConfidence, which structurally favors
+                // any floor with >=3 audible nodes regardless of whether it's the correct floor
+                // (floors with fewer total nodes, e.g. a small basement, then can basically never win
+                // against a densely-covered floor). Compute a genuine residual instead: how far the
+                // midpoint's geometric distance to each node differs from that node's measured
+                // distance. Not a fit (no free parameters, so it can't be gamed), just a real signal.
+                scenario.Error = heard.Average(n => Math.Pow(est.DistanceTo(n.Node!.Location) - n.Distance, 2));
                 scenario.PearsonCorrelation = null;
             }
             else
