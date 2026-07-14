@@ -40,7 +40,11 @@ public class MLEMultilateralizer : BaseMultilateralizer
         int confidence = scenario.Confidence ?? 0;
         try
         {
-            if (nodes.Length < 3 || Floor.Bounds == null || Floor.Bounds.Length < 2)
+            // Fit has 4 free params (x,y,z,scale). With only 3-4 nodes that's under/exactly-determined,
+            // so the solver can drive the residual to ~0 for almost any 3-4 audible nodes on ANY floor
+            // by adjusting scale alone - producing spuriously high confidence on the wrong floor. Require
+            // at least one real degree of freedom (nodes > params) before trusting the scale-fit.
+            if (nodes.Length < 5 || Floor.Bounds == null || Floor.Bounds.Length < 2)
             {
                 confidence = 1;
                 scenario.UpdateLocation(guess);
@@ -60,7 +64,7 @@ public class MLEMultilateralizer : BaseMultilateralizer
                             .PointwiseMaximum(x.Subtract(upperBound))
                             .PointwiseMaximum(0)
                             .L2Norm();
-                        return (distanceFromBoundingBox > 0 ? Math.Pow(5, 1 + distanceFromBoundingBox) : 0) + Math.Pow(5 * (1 - x[3]), 2) + nodes
+                        return (distanceFromBoundingBox > 0 ? Math.Pow(5, 1 + distanceFromBoundingBox) : 0) + Math.Pow(20 * (1 - x[3]), 2) + nodes
                             .Select((dn, i) => new { err = Error(x, dn), weight = weights[i] })
                             .Sum(a => a.weight * a.err) / weightSum;
                     });
