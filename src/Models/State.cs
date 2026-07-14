@@ -107,6 +107,8 @@ public class State
     /// <returns>The newly created optimization snapshot containing active measurements.</returns>
     public OptimizationSnapshot TakeOptimizationSnapshot()
     {
+        static string[]? FloorIdsOf(Node? n) => n?.Floors?.Select(f => f.Id).Where(id => id != null).Select(id => id!).ToArray();
+
         Dictionary<string, OptNode> nodes = new();
         var os = new OptimizationSnapshot
         {
@@ -116,10 +118,12 @@ public class State
             foreach (var (rxId, meas) in txNode.RxNodes)
             {
                 if (meas.Rx == null) continue;
-                var tx = nodes.GetOrAdd(txId, a => new OptNode { Id = txId, Name = txNode.Name, Location = txNode.Location });
-                var rx = nodes.GetOrAdd(rxId, a => new OptNode { Id = rxId, Name = meas.Rx.Name, Location = meas.Rx.Location });
+                var tx = nodes.GetOrAdd(txId, a => new OptNode { Id = txId, Name = txNode.Name, Location = txNode.Location, FloorIds = FloorIdsOf(txNode) });
+                var rx = nodes.GetOrAdd(rxId, a => new OptNode { Id = rxId, Name = meas.Rx.Name, Location = meas.Rx.Location, FloorIds = FloorIdsOf(meas.Rx) });
                 tx.Location = txNode.Location;
                 rx.Location = meas.Rx.Location;
+                tx.FloorIds = FloorIdsOf(txNode);
+                rx.FloorIds = FloorIdsOf(meas.Rx);
                 if (meas.Current)
                 {
                     os.Measures.Add(new Measure()
@@ -146,9 +150,10 @@ public class State
             foreach (var deviceNode in device.Nodes.Values.Where(dn => dn.Node?.HasLocation == true && dn.Current))
             {
                 var rxNode = deviceNode.Node!;
-                var optRx = nodes.GetOrAdd(rxNode.Id, _ => new OptNode { Id = rxNode.Id, Name = rxNode.Name, Location = rxNode.Location });
+                var optRx = nodes.GetOrAdd(rxNode.Id, _ => new OptNode { Id = rxNode.Id, Name = rxNode.Name, Location = rxNode.Location, FloorIds = FloorIdsOf(rxNode) });
                 optRx.Location = rxNode.Location;
                 optRx.Name = rxNode.Name;
+                optRx.FloorIds = FloorIdsOf(rxNode);
 
                 os.Measures.Add(new Measure
                 {

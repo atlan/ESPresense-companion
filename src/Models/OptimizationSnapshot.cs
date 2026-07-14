@@ -35,6 +35,7 @@ public class OptNode
     public string Id { get; set; }
     public string? Name { get; set; }
     public Point3D Location { get; set; }
+    public string[]? FloorIds { get; set; }
 }
 
 public class Measure
