@@ -107,7 +107,7 @@ internal class OptimizationRunner : BackgroundService
                     var os = _state.TakeOptimizationSnapshot();
 
                     var baselineResults = new OptimizationResults();
-                    var (bestCorr, bestRmse) = baselineResults.Evaluate(_state.OptimizationSnaphots, _nsd);
+                    var (bestCorr, bestRmse) = baselineResults.Evaluate(_state.OptimizationSnaphots, _nsd, optimization.CrossFloorPenalty);
                     // Use weights from ConfigOptimization
                     double correlationWeight = optimization.CorrelationWeight;
                     double rmseWeight = optimization.RmseWeight;
@@ -133,7 +133,7 @@ internal class OptimizationRunner : BackgroundService
                     foreach (var optimizer in currentOptimizers)
                     {
                         var results = optimizer.Optimize(os, currentSettings);
-                        var (corr, rmse) = results.Evaluate(_state.OptimizationSnaphots, _nsd);
+                        var (corr, rmse) = results.Evaluate(_state.OptimizationSnaphots, _nsd, optimization.CrossFloorPenalty);
                         // Use weights from ConfigOptimization
                         var composite = (corr * correlationWeight) + ((1 - rmse / (1 + rmse)) * rmseWeight);
 

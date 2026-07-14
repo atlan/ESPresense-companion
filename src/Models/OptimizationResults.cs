@@ -10,7 +10,14 @@ public class OptimizationResults
 {
     public Dictionary<string, ProposedValues> Nodes { get; set; } = new();
 
-    public (double Correlation, double RMSE) Evaluate(List<OptimizationSnapshot> oss, NodeSettingsStore nss)
+    static bool IsCrossFloor(OptNode rx, OptNode tx)
+    {
+        if (rx.FloorIds is not { Length: > 0 } rxFloors || tx.FloorIds is not { Length: > 0 } txFloors)
+            return false;
+        return !rxFloors.Intersect(txFloors, StringComparer.OrdinalIgnoreCase).Any();
+    }
+
+    public (double Correlation, double RMSE) Evaluate(List<OptimizationSnapshot> oss, NodeSettingsStore nss, double crossFloorPenalty = 1.0)
     {
         List<double> predictedValues = new();
         List<double> measuredValues = new();
@@ -30,6 +37,7 @@ public class OptimizationResults
                     continue;
 
                 double mapDistance = m.Rx.Location.DistanceTo(m.Tx.Location);
+                if (IsCrossFloor(m.Rx, m.Tx)) mapDistance *= crossFloorPenalty;
 
                 double rxAdjRssi = rxPv?.RxAdjRssi ?? rx.Calibration.RxAdjRssi ?? 0;
                 double txRefRssi = txPv?.TxRefRssi ?? tx.Calibration.TxRefRssi ?? -59;
