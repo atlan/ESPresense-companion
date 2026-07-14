@@ -17,13 +17,26 @@ public class PerNodeAbsorptionRxTx : IOptimizer
 
     public string Name => "Per Node Absorption Rx Tx Adj";
 
+    static bool IsCrossFloor(OptNode rx, OptNode tx)
+    {
+        if (rx.FloorIds is not { Length: > 0 } rxFloors || tx.FloorIds is not { Length: > 0 } txFloors)
+            return false;
+        return !rxFloors.Intersect(txFloors, StringComparer.OrdinalIgnoreCase).Any();
+    }
+
     public OptimizationResults Optimize(OptimizationSnapshot os, Dictionary<string, NodeSettings> existingSettings)
     {
         var or = new OptimizationResults();
         var optimization = _state.Config?.Optimization;
 
-        // Group all valid measurements
-        var allRxNodes = os.ByRx().SelectMany(g => g).ToList();
+        // A single shared absorption value per Rx node cannot fit both same-floor pairs and
+        // cross-floor pairs (e.g. separated by a concrete floor slab) well at the same time - live-
+        // verified: manually lowering one node's absorption to fix its same-floor distances blew up
+        // its cross-floor distances 2-4x. Since live per-floor localization already only ever uses
+        // same-floor nodes (each Locator filters by Node.Floors), cross-floor node-to-node
+        // measurements carry no useful signal for calibration and are excluded entirely rather than
+        // just down-weighted.
+        var allRxNodes = os.ByRx().SelectMany(g => g).Where(n => !IsCrossFloor(n.Rx, n.Tx)).ToList();
 
         if (allRxNodes.Count < 3)
         {
@@ -60,7 +73,6 @@ public class PerNodeAbsorptionRxTx : IOptimizer
 
         var targetAbsorption = optimization.AbsorptionMin + (optimization.AbsorptionMax - optimization.AbsorptionMin) / 2.0;
         double penaltyWeight = 10;
-        double crossFloorPenalty = optimization.CrossFloorPenalty;
 
         // Pre-calculate weights for each node based on RssiVar
         var nodeWeights = new Dictionary<Measure, double>();
@@ -86,23 +98,6 @@ public class PerNodeAbsorptionRxTx : IOptimizer
             {
                 nodeWeights[node] = nodeWeights[node] / totalWeight * allRxNodes.Count;
             }
-        }
-
-        // A calibration pair whose nodes share no floor (e.g. straight-line-close but separated by
-        // a floor slab) gets its map distance scaled up before fitting, so a single shared
-        // absorption value per Rx node isn't forced to fit both same-floor and cross-floor pairs
-        // as if they had identical real-world attenuation.
-        bool IsCrossFloor(OptNode rx, OptNode tx)
-        {
-            if (rx.FloorIds is not { Length: > 0 } rxFloors || tx.FloorIds is not { Length: > 0 } txFloors)
-                return false;
-            return !rxFloors.Intersect(txFloors, StringComparer.OrdinalIgnoreCase).Any();
-        }
-
-        double GetMapDistance(Measure node)
-        {
-            var d = node.Rx.Location.DistanceTo(node.Tx.Location);
-            return IsCrossFloor(node.Rx, node.Tx) ? d * crossFloorPenalty : d;
         }
 
         // Define asymmetric error function that penalizes impossible situations
@@ -139,7 +134,7 @@ public class PerNodeAbsorptionRxTx : IOptimizer
                     double txRefRssi = x[txBaseIndex];
 
                     double calculatedDistance = Math.Pow(10, (txRefRssi - node.GetAdjustedRssi(rxAdjRssi)) / (10.0 * absorption));
-                    double mapDistance = GetMapDistance(node);
+                    double mapDistance = node.Rx.Location.DistanceTo(node.Tx.Location);
 
                     // Get the weight for this node
                     double weight = nodeWeights[node];
@@ -182,7 +177,7 @@ public class PerNodeAbsorptionRxTx : IOptimizer
                             double txRefRssi = xPlus[txBaseIndex];
                             double calculatedDistance = Math.Pow(10, (txRefRssi - node.GetAdjustedRssi(rxAdjRssi)) / (10.0 * absorption));
 
-                            double mapDistance = GetMapDistance(node);
+                            double mapDistance = node.Rx.Location.DistanceTo(node.Tx.Location);
 
                             fPlus += weight * (calculateDistanceError(calculatedDistance, mapDistance)
                                      + penaltyWeight * Math.Pow(absorption - targetAbsorption, 2));
@@ -194,7 +189,7 @@ public class PerNodeAbsorptionRxTx : IOptimizer
                             double txRefRssi = xMinus[txBaseIndex];
                             double calculatedDistance = Math.Pow(10, (txRefRssi - node.GetAdjustedRssi(rxAdjRssi)) / (10.0 * absorption));
 
-                            double mapDistance = GetMapDistance(node);
+                            double mapDistance = node.Rx.Location.DistanceTo(node.Tx.Location);
 
                             fMinus += weight * (calculateDistanceError(calculatedDistance, mapDistance)
                                       + penaltyWeight * Math.Pow(absorption - targetAbsorption, 2));

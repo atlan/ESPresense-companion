@@ -17,7 +17,7 @@ public class OptimizationResults
         return !rxFloors.Intersect(txFloors, StringComparer.OrdinalIgnoreCase).Any();
     }
 
-    public (double Correlation, double RMSE) Evaluate(List<OptimizationSnapshot> oss, NodeSettingsStore nss, double crossFloorPenalty = 1.0)
+    public (double Correlation, double RMSE) Evaluate(List<OptimizationSnapshot> oss, NodeSettingsStore nss)
     {
         List<double> predictedValues = new();
         List<double> measuredValues = new();
@@ -27,6 +27,7 @@ public class OptimizationResults
             foreach (var m in os.Measures)
             {
                 if (m.Tx?.Id == null || m.Rx?.Id == null) continue;
+                if (IsCrossFloor(m.Rx, m.Tx)) continue;
                 var tx = nss.Get(m.Tx.Id);
                 var rx = nss.Get(m.Rx.Id);
 
@@ -37,7 +38,6 @@ public class OptimizationResults
                     continue;
 
                 double mapDistance = m.Rx.Location.DistanceTo(m.Tx.Location);
-                if (IsCrossFloor(m.Rx, m.Tx)) mapDistance *= crossFloorPenalty;
 
                 double rxAdjRssi = rxPv?.RxAdjRssi ?? rx.Calibration.RxAdjRssi ?? 0;
                 double txRefRssi = txPv?.TxRefRssi ?? tx.Calibration.TxRefRssi ?? -59;

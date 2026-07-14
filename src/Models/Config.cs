@@ -181,11 +181,6 @@ namespace ESPresense.Models
         [YamlIgnore] public double RxAdjRssiMin => Limits.TryGetValue("rx_adj_rssi_min", out var val) ? val : -5;
         [YamlIgnore] public double RxAdjRssiMax => Limits.TryGetValue("rx_adj_rssi_max", out var val) ? val : 30;
 
-        // Multiplier applied to the map distance of a calibration pair whose Rx and Tx nodes have
-        // no floor in common (e.g. a straight-line-close pair that actually sits on different
-        // storeys, separated by a floor slab). Default 1.0 = no behavior change vs. upstream.
-        [YamlIgnore] public double CrossFloorPenalty => Limits.TryGetValue("cross_floor_penalty", out var val) ? val : 1.0;
-
         [YamlIgnore] public double CorrelationWeight => Weights.TryGetValue("correlation", out var val) ? val : 0.5;
         [YamlIgnore] public double RmseWeight => Weights.TryGetValue("rmse", out var val) ? val : 0.5;
     }
