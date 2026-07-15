@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using Serilog;
@@ -17,13 +18,6 @@ public class PerNodeAbsorptionRxTx : IOptimizer
 
     public string Name => "Per Node Absorption Rx Tx Adj";
 
-    static bool IsCrossFloor(OptNode rx, OptNode tx)
-    {
-        if (rx.FloorIds is not { Length: > 0 } rxFloors || tx.FloorIds is not { Length: > 0 } txFloors)
-            return false;
-        return !rxFloors.Intersect(txFloors, StringComparer.OrdinalIgnoreCase).Any();
-    }
-
     public OptimizationResults Optimize(OptimizationSnapshot os, Dictionary<string, NodeSettings> existingSettings)
     {
         var or = new OptimizationResults();
@@ -36,7 +30,7 @@ public class PerNodeAbsorptionRxTx : IOptimizer
         // same-floor nodes (each Locator filters by Node.Floors), cross-floor node-to-node
         // measurements carry no useful signal for calibration and are excluded entirely rather than
         // just down-weighted.
-        var allRxNodes = os.ByRx().SelectMany(g => g).Where(n => !IsCrossFloor(n.Rx, n.Tx)).ToList();
+        var allRxNodes = os.ByRx().SelectMany(g => g).Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToList();
 
         if (allRxNodes.Count < 3)
         {

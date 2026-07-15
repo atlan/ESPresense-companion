@@ -81,6 +81,8 @@ public class IsotonicRegressionOptimizer : IOptimizer
         {
             if (measure.Rx?.Location == null || measure.Tx?.Location == null)
                 continue;
+            if (SpatialUtils.IsCrossFloor(measure.Rx, measure.Tx))
+                continue;
 
             double distance = measure.Rx.Location.DistanceTo(measure.Tx.Location);
             if (distance <= 0 || double.IsNaN(distance) || double.IsInfinity(distance))

@@ -1,4 +1,5 @@
 ﻿using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using Serilog;
@@ -24,12 +25,17 @@ public class RxAdjRssiOptimizer : IOptimizer
 
         var absorption = ((optimization?.AbsorptionMax - optimization?.AbsorptionMin) / 2d) + optimization?.AbsorptionMin ?? 3d;
 
+        double TxRef(Measure dn) => existingSettings.TryGetValue(dn.Tx.Id, out var txSettings) ? txSettings?.Calibration?.TxRefRssi ?? dn.RefRssi : dn.RefRssi;
+
         foreach (var g in os.ByRx())
         {
-            var rxNodes = g.ToArray();
+            // Excludes cross-floor pairs - no useful calibration signal (see SpatialUtils.IsCrossFloor)
+            var rxNodes = g.Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToArray();
             var pos = rxNodes.Select(n => n.Rx.Location.DistanceTo(n.Tx.Location)).ToArray();
 
-            double Distance(Vector<double> x, Measure dn) => Math.Pow(10, (-59 + x[0] - dn.Rssi ) / (10.0d * absorption));
+            // Uses each Tx node's actual configured/fitted TxRefRssi instead of assuming every
+            // node broadcasts at exactly -59dBm@1m.
+            double Distance(Vector<double> x, Measure dn) => Math.Pow(10, (TxRef(dn) + x[0] - dn.Rssi) / (10.0d * absorption));
 
             if (rxNodes.Length < 3) continue;
 

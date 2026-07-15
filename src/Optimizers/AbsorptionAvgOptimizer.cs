@@ -1,4 +1,5 @@
 ﻿using ESPresense.Models;
+using ESPresense.Utils;
 
 namespace ESPresense.Optimizers;
 
@@ -22,10 +23,19 @@ public class AbsorptionAvgOptimizer : IOptimizer
             var pathLossExponents = new List<double>();
             foreach (var m in g)
             {
+                if (SpatialUtils.IsCrossFloor(m.Rx, m.Tx)) continue;
+
                 double distance = m.Rx.Location.DistanceTo(m.Tx.Location);
 
+                // At ~1m, log10(distance) is ~0 - dividing by it blows the exponent up to
+                // +-Infinity/NaN and silently corrupts the whole node's averaged absorption
+                // (a single bad sample can push the average out of bounds, skipping the node
+                // entirely). Skip samples too close to the 1m reference distance to divide by.
+                double logDistance = Math.Log10(distance);
+                if (Math.Abs(logDistance) < 0.01) continue;
+
                 double rssiDiff = m.Rssi - m.RefRssi;
-                double pathLossExponent = -rssiDiff / (10 * Math.Log10(distance));
+                double pathLossExponent = -rssiDiff / (10 * logDistance);
 
                 pathLossExponents.Add(pathLossExponent);
             }

@@ -10,13 +10,6 @@ public class OptimizationResults
 {
     public Dictionary<string, ProposedValues> Nodes { get; set; } = new();
 
-    static bool IsCrossFloor(OptNode rx, OptNode tx)
-    {
-        if (rx.FloorIds is not { Length: > 0 } rxFloors || tx.FloorIds is not { Length: > 0 } txFloors)
-            return false;
-        return !rxFloors.Intersect(txFloors, StringComparer.OrdinalIgnoreCase).Any();
-    }
-
     public (double Correlation, double RMSE) Evaluate(List<OptimizationSnapshot> oss, NodeSettingsStore nss)
     {
         List<double> predictedValues = new();
@@ -27,7 +20,7 @@ public class OptimizationResults
             foreach (var m in os.Measures)
             {
                 if (m.Tx?.Id == null || m.Rx?.Id == null) continue;
-                if (IsCrossFloor(m.Rx, m.Tx)) continue;
+                if (SpatialUtils.IsCrossFloor(m.Rx, m.Tx)) continue;
                 var tx = nss.Get(m.Tx.Id);
                 var rx = nss.Get(m.Rx.Id);
 

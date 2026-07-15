@@ -1,4 +1,5 @@
 ﻿using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using Serilog;
@@ -22,7 +23,8 @@ public class AbsorptionErrOptimizer : IOptimizer
 
         foreach (var g in os.ByRx())
         {
-            var rxNodes = g.ToArray();
+            // Excludes cross-floor pairs - no useful calibration signal (see SpatialUtils.IsCrossFloor)
+            var rxNodes = g.Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToArray();
             var pos = rxNodes.Select(n => n.Rx.Location.DistanceTo(n.Tx.Location)).ToArray();
 
             double Distance(Vector<double> x, Measure dn) => Math.Pow(10, (dn.RefRssi - dn.Rssi) / (10.0d * x[0]));

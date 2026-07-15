@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using Serilog;
@@ -40,7 +41,8 @@ public class WeightedJointRxAdjAbsorptionOptimizer : IOptimizer
         {
             NodeSettings? nodeSettings;
             existingSettings.TryGetValue(g.Key.Id, out nodeSettings);
-            var rxNodes = g.ToArray();
+            // Excludes cross-floor pairs - no useful calibration signal (see SpatialUtils.IsCrossFloor)
+            var rxNodes = g.Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToArray();
 
             // Per-node bounds
             // Bounds should always come from global config
@@ -55,9 +57,13 @@ public class WeightedJointRxAdjAbsorptionOptimizer : IOptimizer
             foreach (var (dn, i) in rxNodes.Select((dn, i) => (dn, i)))
                 Log.Debug("Node {0}: pos[{1}]={2:0.00}m, Rssi={3}", g.Key.Id, i, pos[i], dn.Rssi);
 
+            // Uses each Tx node's actual configured/fitted TxRefRssi instead of assuming every
+            // node broadcasts at exactly -59dBm@1m.
+            double TxRef(Measure dn) => existingSettings.TryGetValue(dn.Tx.Id, out var txSettings) ? txSettings?.Calibration?.TxRefRssi ?? dn.RefRssi : dn.RefRssi;
+
             double Distance(Vector<double> x, Measure dn)
             {
-                double exponent = (-59 + x[0] - dn.Rssi) / (10.0d * x[1]);
+                double exponent = (TxRef(dn) + x[0] - dn.Rssi) / (10.0d * x[1]);
                 return (x[1] > 0 && !double.IsInfinity(exponent)) ? Math.Pow(10, exponent) : double.MaxValue;
             }
 

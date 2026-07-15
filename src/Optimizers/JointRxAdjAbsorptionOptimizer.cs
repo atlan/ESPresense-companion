@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using Serilog;
@@ -33,7 +34,8 @@ public class JointRxAdjAbsorptionOptimizer : IOptimizer
 
         foreach (var g in os.ByRx())
         {
-            var rxNodes = g.ToArray();
+            // Excludes cross-floor pairs - no useful calibration signal (see SpatialUtils.IsCrossFloor)
+            var rxNodes = g.Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToArray();
             var pos = rxNodes.Select(n => n.Rx.Location.DistanceTo(n.Tx.Location)).ToArray();
 
             // Get node-specific settings, fallback to global config if not found
@@ -46,7 +48,10 @@ public class JointRxAdjAbsorptionOptimizer : IOptimizer
             double absorptionMax = optimization.AbsorptionMax;
             double absorptionMiddle = absorptionMin + (absorptionMax - absorptionMin) / 2; // Used for regularization and initial guess fallback
 
-            double Distance(Vector<double> x, Measure dn) => Math.Pow(10, (-60 + x[0] - dn.Rssi) / (10.0d * x[1]));
+            // Uses each Tx node's actual configured/fitted TxRefRssi instead of assuming every
+            // node broadcasts at exactly -60dBm@1m.
+            double TxRef(Measure dn) => existingSettings.TryGetValue(dn.Tx.Id, out var txSettings) ? txSettings?.Calibration?.TxRefRssi ?? dn.RefRssi : dn.RefRssi;
+            double Distance(Vector<double> x, Measure dn) => Math.Pow(10, (TxRef(dn) + x[0] - dn.Rssi) / (10.0d * x[1]));
 
             if (rxNodes.Length < 3) continue;
 

@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using Serilog;
@@ -34,9 +35,14 @@ public class TwoStageRxAdjAbsorptionOptimizer : IOptimizer
         OptimizationResults or = new();
         ConfigOptimization optimization = _state.Config?.Optimization ?? throw new InvalidOperationException("Optimization config not found");
 
+        // Uses each Tx node's actual configured/fitted TxRefRssi instead of assuming every node
+        // broadcasts at exactly -59dBm@1m.
+        double TxRef(Measure dn) => existingSettings.TryGetValue(dn.Tx.Id, out var txSettings) ? txSettings?.Calibration?.TxRefRssi ?? dn.RefRssi : dn.RefRssi;
+
         foreach (var g in os.ByRx())
         {
-            var rxNodes = g.ToArray();
+            // Excludes cross-floor pairs - no useful calibration signal (see SpatialUtils.IsCrossFloor)
+            var rxNodes = g.Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToArray();
             var pos = rxNodes.Select(n => n.Rx.Location.DistanceTo(n.Tx.Location)).ToArray();
 
             if (rxNodes.Length < 3) continue;
@@ -70,7 +76,7 @@ public class TwoStageRxAdjAbsorptionOptimizer : IOptimizer
                         double error = 0;
                         for (int i = 0; i < nodesToUse.Length; i++)
                         {
-                            double dist = Math.Pow(10, (-59 + x[0] - nodesToUse[i].Node.Rssi) / (10.0 * fixedAbsorption));
+                            double dist = Math.Pow(10, (TxRef(nodesToUse[i].Node) + x[0] - nodesToUse[i].Node.Rssi) / (10.0 * fixedAbsorption));
                             double distError = posToUse[i] - dist;
                             error += distError * distError;
                         }
@@ -97,9 +103,9 @@ public class TwoStageRxAdjAbsorptionOptimizer : IOptimizer
                         {
                             double d = pos[i];
                             double wAbs = Math.Min(2.0, 2.0 * Math.Pow(d / 3.0, 2) / (1 + Math.Pow(d / 3.0, 2)));
-                            double dist = Math.Pow(10, (-59 + rxAdjRssi - rxNodes[i].Rssi) / (10.0 * x[0]));
+                            double dist = Math.Pow(10, (TxRef(rxNodes[i]) + rxAdjRssi - rxNodes[i].Rssi) / (10.0 * x[0]));
                             double distError = pos[i] - dist;
-                            double predictedRssi = -59 + rxAdjRssi - 10 * x[0] * Math.Log10(pos[i]);
+                            double predictedRssi = TxRef(rxNodes[i]) + rxAdjRssi - 10 * x[0] * Math.Log10(pos[i]);
                             Log.Debug("Node {0}: d={1:0.00}, wAbs={2:0.00}, distErr={3:0.00}, PredRssi={4:0.00}, MeasRssi={5}",
                                 g.Key.Id, d, wAbs, distError, predictedRssi, rxNodes[i].Rssi);
                             error += wAbs * distError * distError;

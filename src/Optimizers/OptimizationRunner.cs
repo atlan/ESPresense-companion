@@ -137,10 +137,17 @@ internal class OptimizationRunner : BackgroundService
                         // Use weights from ConfigOptimization
                         var composite = (corr * correlationWeight) + ((1 - rmse / (1 + rmse)) * rmseWeight);
 
-                        if (double.IsNaN(composite) || double.IsInfinity(composite) || composite <= bestScore)
+                        // composite <= bestScore is always false when bestScore is NaN (e.g. too few
+                        // snapshots yet to evaluate a baseline, or a very sparse floor) - without this
+                        // explicit check, any finite candidate composite would silently bypass rejection
+                        // and get applied unvalidated, since there's nothing valid to compare it against.
+                        if (double.IsNaN(composite) || double.IsInfinity(composite) || double.IsNaN(bestScore) || double.IsInfinity(bestScore) || composite <= bestScore)
                         {
-                            Log.Information("Optimizer {0,-24} found worse results: Composite={1:0.000} <= Best={2:0.000} (R={3:0.000}, RMSE={4:0.000})",
-                                optimizer.Name, composite, bestScore, corr, rmse);
+                            if (double.IsNaN(bestScore) || double.IsInfinity(bestScore))
+                                Log.Information("Optimizer {0,-24} skipped: baseline not yet evaluable (Best={1})", optimizer.Name, bestScore);
+                            else
+                                Log.Information("Optimizer {0,-24} found worse results: Composite={1:0.000} <= Best={2:0.000} (R={3:0.000}, RMSE={4:0.000})",
+                                    optimizer.Name, composite, bestScore, corr, rmse);
 
                             foreach (var (id, result) in results.Nodes)
                                 Log.Debug("Rejected {0,-20}: Absorption={1:0.00}, RxAdj={2:00}, TxAdj={3:00}, Error={4}",

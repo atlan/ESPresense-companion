@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using Serilog;
@@ -21,7 +22,8 @@ public class CombinedOptimizer : IOptimizer
         var results = new OptimizationResults();
         var optimization = _state.Config?.Optimization;
 
-        var allNodes = os.ByRx().SelectMany(g => g).ToList();
+        // Excludes cross-floor pairs - no useful calibration signal (see SpatialUtils.IsCrossFloor)
+        var allNodes = os.ByRx().SelectMany(g => g).Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToList();
         var uniqueDeviceIds = allNodes.SelectMany(n => new[] { n.Rx.Id, n.Tx.Id }).Distinct().ToList();
 
         if (allNodes.Count < 3) return results;

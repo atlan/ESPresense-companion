@@ -123,4 +123,18 @@ public static class SpatialUtils
         var room = FindRoomContaining(location, floor);
         return (floor, room);
     }
+
+    /// <summary>
+    /// True if the two nodes have no floor in common. Live per-floor localization only ever uses
+    /// same-floor nodes, so a calibration pair spanning two floors (e.g. separated by a concrete
+    /// slab) carries no useful signal for fitting a node's RF calibration - a single shared
+    /// absorption/adjustment value can't fit same-floor and cross-floor attenuation at once
+    /// (verified live: fixing one made the other 2-4x worse).
+    /// </summary>
+    public static bool IsCrossFloor(OptNode rx, OptNode tx)
+    {
+        if (rx.FloorIds is not { Length: > 0 } rxFloors || tx.FloorIds is not { Length: > 0 } txFloors)
+            return false;
+        return !rxFloors.Intersect(txFloors, StringComparer.OrdinalIgnoreCase).Any();
+    }
 }

@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using Serilog;
@@ -30,8 +31,9 @@ public class GlobalAbsorptionRxTxOptimizer : IOptimizer
 
         if (optimization == null) return or;
 
-        // Group all valid measurements
-        var allRxNodes = os.ByRx().SelectMany(g => g).ToList();
+        // Group all valid measurements, excluding cross-floor pairs (no useful signal for
+        // calibration - see SpatialUtils.IsCrossFloor)
+        var allRxNodes = os.ByRx().SelectMany(g => g).Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToList();
 
         if (allRxNodes.Count < 3)
         {
