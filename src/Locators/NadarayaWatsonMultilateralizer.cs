@@ -113,17 +113,22 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
         // point is always inside SOME room there - the tolerance fallback above can't help).
         scenario.Room = SpatialUtils.FindRoomWithHysteresis(scenario.Location, floor, scenario.Room);
 
-        // If the single closest heard node is right on top of the device and its id/name
-        // happens to match a room (nodes are conventionally named after their room, e.g. a
-        // "Toilette" node in the "Toilette" room), trust that over the polygon result: in a
-        // small room a strongly dominant nearest node is a far more reliable signal than the
-        // weighted-centroid position, which can still land in a neighboring (often larger)
-        // room's polygon even while sitting almost on top of the small room's own node.
+        // If the single closest heard node is right on top of the device, trust which room
+        // *that node* belongs to over the polygon result: in a small room a strongly dominant
+        // nearest node is a far more reliable signal than the weighted-centroid position, which
+        // can still land in a neighboring (often larger) room's polygon even while sitting almost
+        // on top of the small room's own node. Prefer the explicit "room" field the Companion UI
+        // writes when a node is placed on the map (previously never read anywhere in the
+        // backend); fall back to matching the node's id/name against a room name (works when a
+        // node happens to be named after its room, e.g. "Toilette" node in "Toilette" room, but
+        // silently misses cases like a "bath_room"/"Bath Node" node in room "Badezimmer").
         const double DominantNodeDistance = 1.0;
         if (heard[0].Distance < DominantNodeDistance)
         {
-            var nameRoom = SpatialUtils.FindRoomByNodeName(floor, heard[0].Node!.Id, heard[0].Node!.Name);
-            if (nameRoom != null) scenario.Room = nameRoom;
+            var dominantNode = heard[0].Node!;
+            Room? overrideRoom = dominantNode.RoomId != null && floor.Rooms.TryGetValue(dominantNode.RoomId, out var configuredRoom) ? configuredRoom : null;
+            overrideRoom ??= SpatialUtils.FindRoomByNodeName(floor, dominantNode.Id, dominantNode.Name);
+            if (overrideRoom != null) scenario.Room = overrideRoom;
         }
 
         return true;

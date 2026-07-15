@@ -305,6 +305,13 @@ namespace ESPresense.Models
         [YamlMember(Alias = "floors")]
         public string[]? Floors { get; set; }
 
+        // Written by the Companion UI when a node is placed inside a room polygon on the map,
+        // but never read anywhere in the backend until now - an explicit, authoritative "this
+        // node lives in this room" signal that's strictly more reliable than either geometric
+        // polygon containment or name-matching the node against room names.
+        [YamlMember(Alias = "room")]
+        public string? Room { get; set; }
+
         [YamlMember(Alias = "enabled")]
         public bool Enabled { get; set; } = true;
 

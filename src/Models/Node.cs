@@ -58,10 +58,14 @@ public class Node(string id, NodeSourceType sourceType)
         double[]? point = cn.Point?.EnsureLength(3);
         Location = new Point3D(point?[0] ?? 0, point?[1] ?? 0, point?[2] ?? 0);
         Stationary = cn.Stationary;
+        RoomId = cn.Room;
         SourceType = NodeSourceType.Config;
     }
 
     public Floor[]? Floors { get; private set; }
+
+    // The room this node was placed in via the Companion UI's map editor (config "room" field).
+    public string? RoomId { get; private set; }
 
     public ConcurrentDictionary<string, RxNode> RxNodes { get; } = new(comparer: StringComparer.OrdinalIgnoreCase);
 
