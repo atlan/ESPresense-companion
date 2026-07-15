@@ -70,6 +70,33 @@ public static class SpatialUtils
         return nearestDist <= RoomBoundaryTolerance ? nearest : null;
     }
 
+    // How close to a room's own boundary a point must be for a just-crossed-the-border read to
+    // be treated as ambiguous rather than a decisive move. Two rooms sharing a wall (no gap
+    // between their polygons) can't be helped by RoomBoundaryTolerance - the point is always
+    // inside SOME polygon there, just flickering between the two as noise crosses the exact line.
+    const double RoomHysteresisMargin = 0.3;
+
+    /// <summary>
+    /// Like <see cref="FindRoomContaining"/>, but resists switching away from the previous room
+    /// when the point has only just barely crossed into a neighboring room (still within
+    /// <see cref="RoomHysteresisMargin"/> of both rooms' shared boundary) - dampens flicker
+    /// between adjacent rooms that a stateless polygon test can't distinguish from a real,
+    /// decisive move into the new room.
+    /// </summary>
+    public static Room? FindRoomWithHysteresis(Point3D location, Floor? floor, Room? previousRoom)
+    {
+        var direct = FindRoomContaining(location, floor);
+        if (direct == null || floor == null || previousRoom == null || direct == previousRoom || previousRoom.Polygon == null)
+            return direct;
+
+        var point = location.ToPoint2D();
+        var distToNew = direct.Polygon != null ? DistanceToPolygonBoundary(point, direct.Polygon) : double.MaxValue;
+        var distToPrevious = DistanceToPolygonBoundary(point, previousRoom.Polygon);
+
+        // Barely crossed the shared border (close to both rooms' boundaries at once) - stay put.
+        return distToNew < RoomHysteresisMargin && distToPrevious < RoomHysteresisMargin ? previousRoom : direct;
+    }
+
     /// <summary>
     /// Finds a room on the floor whose name matches the given node's id or name (nodes are
     /// often named after the room they're placed in, e.g. a "Toilette" node in the "Toilette"

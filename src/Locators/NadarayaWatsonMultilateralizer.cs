@@ -108,8 +108,10 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
 
         // Falls back to the nearest room within a small tolerance if the (still noisy)
         // weighted-centroid point misses every polygon - helps small rooms disproportionately,
-        // since ordinary RSSI noise more easily pushes the point past a tight boundary.
-        scenario.Room = SpatialUtils.FindRoomContaining(scenario.Location, floor);
+        // since ordinary RSSI noise more easily pushes the point past a tight boundary. Also
+        // resists flicker between two rooms that share a wall (no gap between polygons, so the
+        // point is always inside SOME room there - the tolerance fallback above can't help).
+        scenario.Room = SpatialUtils.FindRoomWithHysteresis(scenario.Location, floor, scenario.Room);
 
         // If the single closest heard node is right on top of the device and its id/name
         // happens to match a room (nodes are conventionally named after their room, e.g. a
