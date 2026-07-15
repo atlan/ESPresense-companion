@@ -55,11 +55,25 @@ public class MqttCoordinator : IMqttCoordinator
         _logger = logger;
         _mqttNetLogger = mqttNetLogger;
         _supervisorConfigLoader = supervisorConfigLoader;
-        _cfg.ConfigChanged += (s, c) =>
+        _cfg.ConfigChanged += async (s, c) =>
         {
-            var configChanged = ConfigChanged(c.Mqtt);
-            if (configChanged) _logger.LogInformation("MQTT configuration changed");
-            _reconnectRequired |= configChanged;
+            try
+            {
+                // c.Mqtt is the raw, unmerged mqtt: section from config.yaml - empty/default
+                // whenever the user relies on Supervisor auto-discovery (the common case, no
+                // mqtt.host in config.yaml). Comparing that against _lastConfig (which holds the
+                // actually-connected, Supervisor-resolved values) made every single config.yaml
+                // reload look like a real MQTT config change, forcing a full reconnect even when
+                // nothing MQTT-related changed. Resolve the same effective config used to connect.
+                var effective = string.IsNullOrEmpty(c.Mqtt?.Host) ? await _supervisorConfigLoader.GetSupervisorConfig() : c.Mqtt;
+                var configChanged = ConfigChanged(effective);
+                if (configChanged) _logger.LogInformation("MQTT configuration changed");
+                _reconnectRequired |= configChanged;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error checking MQTT config for changes");
+            }
         };
     }
 
