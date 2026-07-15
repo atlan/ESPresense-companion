@@ -106,8 +106,23 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
         if (scenario.Confidence <= 0) return false;
         if (scenario.Location.DistanceTo(scenario.LastLocation) < 0.1) return false;
 
-        scenario.Room = floor.Rooms.Values.FirstOrDefault(r =>
-            r.Polygon?.EnclosesPoint(scenario.Location.ToPoint2D()) ?? false);
+        // Falls back to the nearest room within a small tolerance if the (still noisy)
+        // weighted-centroid point misses every polygon - helps small rooms disproportionately,
+        // since ordinary RSSI noise more easily pushes the point past a tight boundary.
+        scenario.Room = SpatialUtils.FindRoomContaining(scenario.Location, floor);
+
+        // If the single closest heard node is right on top of the device and its id/name
+        // happens to match a room (nodes are conventionally named after their room, e.g. a
+        // "Toilette" node in the "Toilette" room), trust that over the polygon result: in a
+        // small room a strongly dominant nearest node is a far more reliable signal than the
+        // weighted-centroid position, which can still land in a neighboring (often larger)
+        // room's polygon even while sitting almost on top of the small room's own node.
+        const double DominantNodeDistance = 1.0;
+        if (heard[0].Distance < DominantNodeDistance)
+        {
+            var nameRoom = SpatialUtils.FindRoomByNodeName(floor, heard[0].Node!.Id, heard[0].Node!.Name);
+            if (nameRoom != null) scenario.Room = nameRoom;
+        }
 
         return true;
     }
