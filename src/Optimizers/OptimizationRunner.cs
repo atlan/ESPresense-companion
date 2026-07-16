@@ -63,8 +63,40 @@ internal class OptimizationRunner : BackgroundService
             }
         };
     }
+    // How often snapshots are sampled, decoupled from interval_secs (which now only paces the
+    // fit+apply cycle). Independent of interval_secs so keep_snapshot_mins can actually accumulate
+    // a real window of samples instead of the single snapshot interval_secs previously left in
+    // place by the time each fit ran.
+    private const int SnapshotSamplingIntervalSecs = 30;
+
+    private async Task RunSnapshotSamplingLoopAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (_state.Config?.Optimization is { Enabled: true })
+                        _state.TakeOptimizationSnapshot();
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Error taking optimization snapshot");
+                }
+                await Task.Delay(TimeSpan.FromSeconds(SnapshotSamplingIntervalSecs), stoppingToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during shutdown
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _ = RunSnapshotSamplingLoopAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -104,10 +136,15 @@ internal class OptimizationRunner : BackgroundService
                 {
                     optimization = _state.Config?.Optimization;
                     if (optimization is not { Enabled: true }) break;
-                    var os = _state.TakeOptimizationSnapshot();
+
+                    // Merge the whole retained (keep_snapshot_mins) window into one snapshot so the
+                    // fit sees real accumulated variance instead of the single, just-taken sample -
+                    // sampling itself now happens continuously in RunSnapshotSamplingLoopAsync.
+                    var snapshots = _state.GetOptimizationSnapshots();
+                    var os = new OptimizationSnapshot { Measures = snapshots.SelectMany(s => s.Measures).ToList() };
 
                     var baselineResults = new OptimizationResults();
-                    var (bestCorr, bestRmse) = baselineResults.Evaluate(_state.OptimizationSnaphots, _nsd);
+                    var (bestCorr, bestRmse) = baselineResults.Evaluate(snapshots, _nsd);
                     // Use weights from ConfigOptimization
                     double correlationWeight = optimization.CorrelationWeight;
                     double rmseWeight = optimization.RmseWeight;
@@ -133,7 +170,7 @@ internal class OptimizationRunner : BackgroundService
                     foreach (var optimizer in currentOptimizers)
                     {
                         var results = optimizer.Optimize(os, currentSettings);
-                        var (corr, rmse) = results.Evaluate(_state.OptimizationSnaphots, _nsd);
+                        var (corr, rmse) = results.Evaluate(snapshots, _nsd);
                         // Use weights from ConfigOptimization
                         var composite = (corr * correlationWeight) + ((1 - rmse / (1 + rmse)) * rmseWeight);
 

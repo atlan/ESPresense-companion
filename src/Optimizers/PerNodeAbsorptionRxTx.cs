@@ -66,7 +66,7 @@ public class PerNodeAbsorptionRxTx : IOptimizer
         if (optimization == null) return or;
 
         var targetAbsorption = optimization.AbsorptionMin + (optimization.AbsorptionMax - optimization.AbsorptionMin) / 2.0;
-        double penaltyWeight = 10;
+        double penaltyWeight = optimization.AbsorptionPenaltyWeight;
 
         // Pre-calculate weights for each node based on RssiVar
         var nodeWeights = new Dictionary<Measure, double>();

@@ -92,6 +92,7 @@ public class State
     public ConcurrentDictionary<string, ConfigDevice> ConfigDeviceById { get; private set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<Glob> IdsToTrack { get; private set; } = new();
     public List<Glob> NamesToTrack { get; private set; } = new();
+    private readonly object _snapshotLock = new();
     public List<OptimizationSnapshot> OptimizationSnaphots { get; } = new();
     public OptimizerState OptimizerState { get; set; } = new();
     public LocatorState LocatorState { get; } = new();
@@ -169,13 +170,30 @@ public class State
             }
         }
 
-        // Remove expired snapshots by time
+        // Remove expired snapshots by time. Locked: called both from OptimizationRunner's
+        // once-per-interval_secs fit cycle and from its independent, much-more-frequent snapshot
+        // sampling loop (decoupled so the fit sees an accumulated window of real variance instead
+        // of a single point-in-time reading) - both can race on this list without the lock.
         var expiryMinutes = Config?.Optimization?.KeepSnapshotMins ?? 5;
         var expiryThreshold = DateTime.UtcNow.AddMinutes(-expiryMinutes);
-        OptimizationSnaphots.RemoveAll(s => s.Timestamp < expiryThreshold);
-        OptimizationSnaphots.Add(os);
+        lock (_snapshotLock)
+        {
+            OptimizationSnaphots.RemoveAll(s => s.Timestamp < expiryThreshold);
+            OptimizationSnaphots.Add(os);
+        }
 
         return os;
+    }
+
+    /// <summary>
+    /// Thread-safe defensive copy of the currently retained optimization snapshots.
+    /// </summary>
+    public List<OptimizationSnapshot> GetOptimizationSnapshots()
+    {
+        lock (_snapshotLock)
+        {
+            return new List<OptimizationSnapshot>(OptimizationSnaphots);
+        }
     }
 
     IEnumerable<Floor> GetFloorsByIds(string[]? floorIds)

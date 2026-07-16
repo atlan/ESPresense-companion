@@ -183,6 +183,11 @@ namespace ESPresense.Models
 
         [YamlIgnore] public double CorrelationWeight => Weights.TryGetValue("correlation", out var val) ? val : 0.5;
         [YamlIgnore] public double RmseWeight => Weights.TryGetValue("rmse", out var val) ? val : 0.5;
+
+        // Regularization strength pulling PerNodeAbsorptionRxTx's per-node absorption fit toward
+        // the midpoint of [AbsorptionMin, AbsorptionMax]. Default 10 matches the previous hardcoded
+        // value (unchanged behavior unless a config explicitly sets weights.absorption_penalty).
+        [YamlIgnore] public double AbsorptionPenaltyWeight => Weights.TryGetValue("absorption_penalty", out var val) ? val : 10;
     }
 
     public partial class ConfigHistory
