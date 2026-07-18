@@ -185,10 +185,19 @@ export const nodes = readable<Node[]>([], function start(set) {
 
 // Calibration polling store
 export const calibration = readable<CalibrationResponse>({ matrix: {} }, function start(set) {
+	let outstanding = false;
 	async function fetchAndSet() {
-		const response = await fetch(resolve(`/api/state/calibration`));
-		const data = await response.json();
-		set(data);
+		if (outstanding) return;
+		outstanding = true;
+		try {
+			const response = await fetch(resolve(`/api/state/calibration`));
+			const data = await response.json();
+			set(data);
+		} catch (ex) {
+			console.error(ex);
+		} finally {
+			outstanding = false;
+		}
 	}
 	fetchAndSet();
 	const interval = setInterval(fetchAndSet, 1000);
