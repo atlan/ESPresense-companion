@@ -1,12 +1,18 @@
 import type { Action } from 'svelte/action';
 import { computePosition, offset, flip, shift, autoUpdate } from '@floating-ui/dom';
 
+// crypto.randomUUID() requires a secure context; nested cross-origin iframes (e.g. this
+// app embedded via panel_iframe in the Home Assistant app) don't always get one, and it
+// throws synchronously rather than being merely undefined - a plain counter avoids that
+// entirely since no cryptographic randomness is actually needed for an aria-describedby id.
+let tooltipIdCounter = 0;
+
 // A lightweight tooltip action that opens on hover/focus
 export const tooltip: Action<HTMLElement, string> = (node, content) => {
 	let tooltipEl: HTMLDivElement | null = null;
 	let cleanupAutoUpdate: (() => void) | null = null;
 	// Generate a unique, stable ID for this tooltip instance
-	const tooltipId = `tooltip-${crypto.randomUUID()}`;
+	const tooltipId = `tooltip-${++tooltipIdCounter}-${Date.now()}`;
 
 	/**
 	 * Ensure the tooltip DOM element exists, creating and initializing it if needed.
