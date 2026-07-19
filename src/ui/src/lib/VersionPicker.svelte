@@ -1,10 +1,20 @@
 <script>
-	import { releases, artifacts } from './firmware';
+	import { releases, artifacts, forkReleases } from './firmware';
 	export let version = '';
 	export let artifact = '';
 	export let flavor = '-';
 	export let updateMethod = 'self'; // 'self', 'manual', 'recovery'
-	export let firmwareSource = 'release'; // 'release', 'artifact'
+	export let firmwareSource = 'release'; // 'release', 'artifact', 'fork'
+	export let forkAsset = '';
+
+	// atlan/ESPresense has no board/flavor catalog like the upstream firmwareTypes
+	// API - the selected release's own asset list is the only source of filenames.
+	$: selectedForkRelease = Array.from($forkReleases.values())
+		.flat()
+		.find((r) => r.tag_name === version);
+	$: if (selectedForkRelease && !selectedForkRelease.assets.some((a) => a.name === forkAsset)) {
+		forkAsset = selectedForkRelease.assets[0]?.name ?? '';
+	}
 </script>
 
 <div class="card mb-6 space-y-6 border border-surface-300-700 bg-surface-50-950 p-6 shadow-lg rounded-lg">
@@ -48,6 +58,7 @@
 						<select id="source" class="select w-full bg-surface-100-900 border-surface-300-600 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 rounded-md" bind:value={firmwareSource}>
 							<option value="release">🏷️ GitHub Releases</option>
 							<option value="artifact">🔨 GitHub Artifacts</option>
+							<option value="fork">🔱 My Fork</option>
 						</select>
 					</label>
 
@@ -105,6 +116,44 @@
 								</select>
 							{/if}
 						</label>
+					{/if}
+
+					{#if firmwareSource === 'fork'}
+						<label class="block" for="fork-version">
+							<span class="block text-sm font-medium text-surface-700-300 mb-2">Fork Release</span>
+							{#if $forkReleases.size === 0}
+								<div class="flex items-center justify-center h-10 bg-surface-100-800 border border-surface-300-600 rounded-md">
+									<span class="text-sm text-surface-500-400 flex items-center gap-2">
+										<svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+											<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+											<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+										</svg>
+										Loading releases...
+									</span>
+								</div>
+							{:else}
+								<select id="fork-version" class="select w-full bg-surface-100-900 border-surface-300-600 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 rounded-md" bind:value={version}>
+									{#each Array.from($forkReleases.entries()).reverse() as [key, value]}
+										<optgroup label={key}>
+											{#each value as item}
+												<option value={item.tag_name}>{item.name}</option>
+											{/each}
+										</optgroup>
+									{/each}
+								</select>
+							{/if}
+						</label>
+
+						{#if selectedForkRelease && selectedForkRelease.assets.length > 1}
+							<label class="block" for="fork-asset">
+								<span class="block text-sm font-medium text-surface-700-300 mb-2">Fork Asset</span>
+								<select id="fork-asset" class="select w-full bg-surface-100-900 border-surface-300-600 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 rounded-md" bind:value={forkAsset}>
+									{#each selectedForkRelease.assets as item}
+										<option value={item.name}>{item.name}</option>
+									{/each}
+								</select>
+							</label>
+						{/if}
 					{/if}
 				</div>
 			</div>

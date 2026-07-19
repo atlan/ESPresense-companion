@@ -1,7 +1,7 @@
 <script lang="ts">
 	import DataTable from '$lib/DataTable.svelte';
 	import { nodes } from '$lib/stores';
-	import { updateMethod, firmwareSource, flavor, version, artifact } from '$lib/firmware';
+	import { updateMethod, firmwareSource, flavor, version, artifact, forkAsset } from '$lib/firmware';
 	import type { Node } from '$lib/types';
 	import NodeActions from './NodeActions.svelte';
 	import NodeActiveId from './NodeActiveId.svelte';
@@ -39,7 +39,7 @@
 
 <div>
 	{#if $nodes}
-		<VersionPicker bind:updateMethod={$updateMethod} bind:firmwareSource={$firmwareSource} bind:flavor={$flavor} bind:version={$version} bind:artifact={$artifact} />
+		<VersionPicker bind:updateMethod={$updateMethod} bind:firmwareSource={$firmwareSource} bind:flavor={$flavor} bind:version={$version} bind:artifact={$artifact} bind:forkAsset={$forkAsset} />
 		<DataTable {columns} rows={$nodes} classNameTable="table  table-compact" onclickRow={(event) => select(event.row)} />
 	{/if}
 </div>

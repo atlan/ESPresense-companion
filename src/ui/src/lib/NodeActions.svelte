@@ -5,7 +5,7 @@
 	import type { Node, NodeSetting, NodeSettingDetails } from '$lib/types';
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { showComponent, showConfirm } from '$lib/modal/modalStore';
-	import { updateMethod, firmwareSource, flavor, version, artifact, flavorNames, firmwareTypes, getFirmwareUrl } from '$lib/firmware';
+	import { updateMethod, firmwareSource, flavor, version, artifact, forkAsset, flavorNames, firmwareTypes, getFirmwareUrl } from '$lib/firmware';
 	import Firmware from '$lib/modals/Firmware.svelte';
 	import NodeSettingsModal from '$lib/modals/NodeSettingsModal.svelte';
 
@@ -72,6 +72,8 @@
 				description = `with github version ${$version}`;
 			} else if ($firmwareSource === 'artifact') {
 				description = `with github artifact ${$artifact}`;
+			} else if ($firmwareSource === 'fork') {
+				description = `with fork build ${$version} (${$forkAsset})`;
 			}
 		}
 
@@ -91,11 +93,21 @@
 
 		try {
 			if ($updateMethod !== 'self') {
-				const matchingFirmware = $firmwareTypes?.firmware?.filter((d) => d.cpu === cpuId && d.flavor === selectedFlavorId);
-				const firmwareId = matchingFirmware?.length === 1 ? matchingFirmware[0].name : null;
+				// The fork has no cpu/flavor build catalog like $firmwareTypes - the
+				// asset filename was already picked directly from the release in VersionPicker.
+				let firmwareId: string | null;
+				if ($firmwareSource === 'fork') {
+					firmwareId = $forkAsset || null;
+					if (!firmwareId) {
+						throw new Error('No fork asset selected');
+					}
+				} else {
+					const matchingFirmware = $firmwareTypes?.firmware?.filter((d) => d.cpu === cpuId && d.flavor === selectedFlavorId);
+					firmwareId = matchingFirmware?.length === 1 ? matchingFirmware[0].name : null;
 
-				if (!firmwareId) {
-					throw new Error(`No firmware found for selected CPU (${cpuId}) and flavor (${selectedFlavorId})`);
+					if (!firmwareId) {
+						throw new Error(`No firmware found for selected CPU (${cpuId}) and flavor (${selectedFlavorId})`);
+					}
 				}
 
 				url = getFirmwareUrl($firmwareSource, $version, $artifact, firmwareId);
@@ -143,7 +155,8 @@
 				flavor: flavorValue,
 				cpu: node.cpu?.value,
 				version: $version,
-				artifact: $artifact
+				artifact: $artifact,
+				forkAsset: $forkAsset
 			});
 		} else {
 			handleStandardUpdate(node, flavorValue, updateDescription);
@@ -205,7 +218,7 @@
 		<button class="btn btn-sm preset-filled-secondary-500" onclick={(e) => { e.stopPropagation(); gotoDetail(row); }} aria-label="View node on map"> Map </button>
 
 		{#if row.telemetry?.version}
-			<button onclick={e => onUpdate(row)} disabled={!$firmwareTypes || !($updateMethod === 'self' || ($firmwareSource === 'release' && $version) || ($firmwareSource === 'artifact' && $artifact))} class="btn btn-sm preset-filled-tertiary-500" aria-label="Update node firmware"> Update </button>
+			<button onclick={e => onUpdate(row)} disabled={!($updateMethod === 'self' || ($firmwareTypes && $firmwareSource === 'release' && $version) || ($firmwareTypes && $firmwareSource === 'artifact' && $artifact) || ($firmwareSource === 'fork' && $version && $forkAsset))} class="btn btn-sm preset-filled-tertiary-500" aria-label="Update node firmware"> Update </button>
 		{/if}
 
 		{#if row.telemetry}

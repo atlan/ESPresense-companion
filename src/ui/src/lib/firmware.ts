@@ -7,6 +7,10 @@ export const firmwareSource: SvelteStore<string> = writable('release');
 export const flavor: SvelteStore<string> = writable();
 export const version: SvelteStore<string> = writable();
 export const artifact: SvelteStore<string> = writable();
+// Asset filename within a selected release of the personal fork (see forkReleases
+// below) - the fork doesn't have a board/flavor catalog like $firmwareTypes, so its
+// asset list is used directly instead of the cpu/flavor-driven lookup.
+export const forkAsset: SvelteStore<string> = writable('');
 
 export const firmwareTypes = writable<FirmwareManifest | null>(null, function start(set) {
 	fetch(resolve('/api/firmware/types'))
@@ -124,6 +128,55 @@ export const releases = readable<Map<string, Release[]>>(new Map(), function sta
 	};
 });
 
+// Releases of the personal node-firmware fork (github.com/atlan/ESPresense) - same
+// shape as `releases` above, but no >5-assets filter: unlike upstream's per-release
+// per-board build matrix, a fork release may legitimately ship just one board's
+// firmware.bin, so only >0 assets are required.
+export const forkReleases = readable<Map<string, Release[]>>(new Map(), function start(set) {
+	let errors = 0;
+	let outstanding = false;
+
+	async function fetchData() {
+		try {
+			const res = await fetch('https://api.github.com/repos/atlan/ESPresense/releases', { credentials: 'same-origin' });
+			const data: Release[] = await res.json();
+
+			const response = data
+				.filter((i) => i.assets.length > 0)
+				.reduce((p: Map<string, Release[]>, c) => {
+					const key = c.prerelease ? 'Beta' : 'Release';
+					if (p.get(key)) {
+						p.get(key)?.push(c);
+					} else {
+						p.set(key, [c]);
+					}
+					return p;
+				}, new Map<string, Release[]>());
+
+			set(response);
+
+			errors = 0;
+			outstanding = false;
+		} catch (ex) {
+			outstanding = false;
+			if (++errors > 5) set(new Map<string, Release[]>());
+			console.log(ex);
+		}
+	}
+
+	const interval = setInterval(() => {
+		if (outstanding) return;
+		outstanding = true;
+		fetchData();
+	}, 15 * 60000);
+
+	fetchData();
+
+	return function stop() {
+		clearInterval(interval);
+	};
+});
+
 export function getFirmwareUrl(firmwareSource: string, version: string, artifact: string, firmware: string): string | null {
 	if (firmware) {
 		switch (firmwareSource) {
@@ -132,6 +185,9 @@ export function getFirmwareUrl(firmwareSource: string, version: string, artifact
 				break;
 			case 'release':
 				if (version) return `https://github.com/ESPresense/ESPresense/releases/download/${version}/${firmware}`;
+				break;
+			case 'fork':
+				if (version) return `https://github.com/atlan/ESPresense/releases/download/${version}/${firmware}`;
 				break;
 		}
 	}

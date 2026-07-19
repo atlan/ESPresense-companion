@@ -10,6 +10,7 @@
 	export let cpu: string;
 	export let version: string;
 	export let artifact: string;
+	export let forkAsset: string = '';
 	export let parent: any;
 
 	enum Progress {
@@ -31,6 +32,8 @@
 			description = `with github version ${version}`;
 		} else if (firmwareSource === 'artifact') {
 			description = `with github artifact ${artifact}`;
+		} else if (firmwareSource === 'fork') {
+			description = `with fork build ${version} (${forkAsset})`;
 		}
 
 		if (flavorName && flavor !== '-') {
@@ -51,7 +54,7 @@
 	let log: string[] = [];
 	let lastNonNumericLog: string | null = null;
 	let hasFlavorSelection: boolean;
-	$: url = getFirmwareUrl(firmwareSource, version, artifact, firmware) ?? '#ERR';
+	$: url = getFirmwareUrl(firmwareSource, version, artifact, firmwareSource === 'fork' ? forkAsset : firmware) ?? '#ERR';
 
 	async function onFormSubmit(): Promise<void> {
 		if (!isValidForm) return;
@@ -84,7 +87,10 @@
 	$: selectedFlavor = $firmwareTypes?.flavors?.find((d) => d.value === flavor);
 	$: possibleFirmware = $firmwareTypes?.firmware?.filter((d) => d.cpu === cpu && d.flavor == flavor);
 	$: hasFlavorSelection = flavor !== undefined && flavor !== null;
-	$: isValidForm = Boolean($firmwareTypes && hasFlavorSelection && cpu && firmware && url && url !== '#ERR');
+	$: isValidForm =
+		firmwareSource === 'fork'
+			? Boolean(forkAsset && url && url !== '#ERR')
+			: Boolean($firmwareTypes && hasFlavorSelection && cpu && firmware && url && url !== '#ERR');
 
 	// Base Classes
 	const cBase = 'w-modal space-y-4';
@@ -122,33 +128,35 @@
 	<div class={cBase}>
 		<header class={cHeader}>Update {node.name} Firmware</header>
 		<p class="text-surface-700-300 mb-4">{getUpdateDescription(node.flavor?.value)}</p>
-		<article>Select firmware options and click Update to proceed.</article>
+		<article>{firmwareSource === 'fork' ? 'Fork release + asset were already chosen above - confirm and click Update.' : 'Select firmware options and click Update to proceed.'}</article>
 		<!-- Enable for debugging: -->
 		<form class="modal-form {cForm}">
-			<label class="label">
-				<span>Flavor</span>
-				<select id="flavor" class="flex-grow select" bind:value={flavor}>
-					{#each $firmwareTypes.flavors as item}
-						<option value={item.value}>{item.name}</option>
-					{/each}
-				</select>
-			</label>
-			<label class="label">
-				<span>CPU</span>
-				<select id="cpu" class="flex-grow select" bind:value={cpu}>
-					{#each selectedFlavor?.cpus ?? [] as item}
-						<option value={item}>{$cpuNames?.get(item)}</option>
-					{/each}
-				</select>
-			</label>
-			<label class="label">
-				<span>Firmware</span>
-				<select id="firmware" class="flex-grow select" bind:value={firmware}>
-					{#each possibleFirmware ?? [] as item}
-						<option value={item.name}>{item.name}</option>
-					{/each}
-				</select>
-			</label>
+			{#if firmwareSource !== 'fork'}
+				<label class="label">
+					<span>Flavor</span>
+					<select id="flavor" class="flex-grow select" bind:value={flavor}>
+						{#each $firmwareTypes.flavors as item}
+							<option value={item.value}>{item.name}</option>
+						{/each}
+					</select>
+				</label>
+				<label class="label">
+					<span>CPU</span>
+					<select id="cpu" class="flex-grow select" bind:value={cpu}>
+						{#each selectedFlavor?.cpus ?? [] as item}
+							<option value={item}>{$cpuNames?.get(item)}</option>
+						{/each}
+					</select>
+				</label>
+				<label class="label">
+					<span>Firmware</span>
+					<select id="firmware" class="flex-grow select" bind:value={firmware}>
+						{#each possibleFirmware ?? [] as item}
+							<option value={item.name}>{item.name}</option>
+						{/each}
+					</select>
+				</label>
+			{/if}
 			<label>
 				<span>URL</span>
 				<input type="text" id="url" class="input" readonly bind:value={url} />
