@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
+	import { apiPath } from '$lib/api';
 	import type { DeviceSetting } from '$lib/types';
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { createEventDispatcher } from 'svelte';
@@ -45,7 +45,7 @@
 			}
 
 			const targetId = deviceSetting.originalId ?? deviceSetting.id;
-			const response = await fetch(resolve(`/api/device/${targetId}`), {
+			const response = await fetch(apiPath(`/api/device/${targetId}`), {
 				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json'

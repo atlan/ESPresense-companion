@@ -15,7 +15,7 @@
 	import MapCoordinates from './MapCoordinates.svelte';
 	import CalibrationSpot from './CalibrationSpot.svelte';
 
-	let svg: Element;
+	let svg: SVGElement;
 	let transform = zoomIdentity;
 
 	export let floorId: string | null = null;
@@ -38,7 +38,11 @@
 		];
 	}
 
-	const handler = zoom()
+	// Explicit <SVGElement, unknown> - without it, zoom() defaults its first
+	// type param to the base `Element`, which no longer lines up with
+	// select(svg)'s Selection<SVGElement, ...> now that `svg` itself is
+	// correctly typed as SVGElement (see the `let svg` declaration above).
+	const handler = zoom<SVGElement, unknown>()
 		.scaleExtent([0.5, 40])
 		.wheelDelta((event) => {
 			// Only zoom if shift key is pressed

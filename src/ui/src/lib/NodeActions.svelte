@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
+	import { apiPath } from '$lib/api';
 	import { gotoDetail } from '$lib/urls';
 	import link from '$lib/images/link.svg';
 	import type { Node, NodeSetting, NodeSettingDetails } from '$lib/types';
@@ -18,7 +18,7 @@
 
 	async function onRestart(node: Node) {
 		try {
-			const response = await fetch(resolve(`/api/node/${node.id}/restart`), { method: 'POST' });
+			const response = await fetch(apiPath(`/api/node/${node.id}/restart`), { method: 'POST' });
 			if (!response.ok) throw new Error(response.statusText || 'Failed to restart node');
 
 			toastStore.trigger({
@@ -43,7 +43,7 @@
 		if (!confirmed) return;
 
 		try {
-			const response = await fetch(resolve(`/api/node/${encodeURIComponent(node.id)}`), { method: 'DELETE' });
+			const response = await fetch(apiPath(`/api/node/${encodeURIComponent(node.id)}`), { method: 'DELETE' });
 			if (!response.ok) throw new Error(response.statusText || 'Failed to delete node');
 
 			toastStore.trigger({
@@ -117,7 +117,7 @@
 				}
 			}
 
-			const response = await fetch(resolve(`/api/node/${node.id}/update`), {
+			const response = await fetch(apiPath(`/api/node/${node.id}/update`), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -168,7 +168,7 @@
 		loadingEdit = true;
 
 		try {
-			const response = await fetch(resolve(`/api/node/${row.id}`));
+			const response = await fetch(apiPath(`/api/node/${row.id}`));
 			if (!response.ok) throw new Error(`Failed to fetch node settings details: ${response.statusText}`);
 
 			const nodeSettingsDetails: NodeSettingDetails = await response.json();

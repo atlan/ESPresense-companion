@@ -1,5 +1,5 @@
 import { readable, writable, derived, get } from 'svelte/store';
-import { resolve } from '$app/paths';
+import { apiPath } from '$lib/api';
 import type { Device, Config, Node, CalibrationResponse, DeviceSetting } from './types';
 import { WSManager } from './wsManager';
 
@@ -46,7 +46,7 @@ export const history = writable<string[]>(['/']);
  * Retrieves JSON from `/api/state/config` and sets the exported writable `config` store with the response.
  */
 async function getConfig() {
-	const response = await fetch(resolve(`/api/state/config`));
+	const response = await fetch(apiPath(`/api/state/config`));
 	config.set(await response.json());
 }
 getConfig();
@@ -57,7 +57,7 @@ export const deviceSettings = writable<DeviceSetting[] | null>([], function star
 	const interval = setInterval(() => {
 		if (outstanding) return;
 		outstanding = true;
-		fetch(resolve(`/api/devices`))
+		fetch(apiPath(`/api/devices`))
 			.then((d) => d.json())
 			.then((r: DeviceSetting[]) => {
 				outstanding = false;
@@ -89,7 +89,7 @@ export const devices = readable<Device[]>([], function start(set) {
 
 		isPolling = true;
 		try {
-			const response = await fetch(resolve(`/api/state/devices?showAll=${get(showAll)}`));
+			const response = await fetch(apiPath(`/api/state/devices?showAll=${get(showAll)}`));
 			if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
 
 			const devices: Device[] = await response.json();
@@ -163,7 +163,7 @@ export const nodes = readable<Node[]>([], function start(set) {
 	const interval = setInterval(() => {
 		if (outstanding) return;
 		outstanding = true;
-		fetch(resolve(`/api/state/nodes?includeTele=true`))
+		fetch(apiPath(`/api/state/nodes?includeTele=true`))
 			.then((d) => d.json())
 			.then((r) => {
 				outstanding = false;
@@ -190,7 +190,7 @@ export const calibration = readable<CalibrationResponse>({ matrix: {} }, functio
 		if (outstanding) return;
 		outstanding = true;
 		try {
-			const response = await fetch(resolve(`/api/state/calibration`));
+			const response = await fetch(apiPath(`/api/state/calibration`));
 			const data = await response.json();
 			set(data);
 		} catch (ex) {

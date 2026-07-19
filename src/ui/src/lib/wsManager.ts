@@ -1,4 +1,4 @@
-import { resolve } from '$app/paths';
+import { apiPath } from '$lib/api';
 import type { DeviceMessage } from './types';
 
 type EventCallback<T = any> = (data: T) => void;
@@ -60,7 +60,7 @@ export class WSManager {
 	}
 
 	private connect() {
-		const loc = new URL(resolve('/ws'), window.location.href);
+		const loc = new URL(apiPath('/ws'), window.location.href);
 		const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
 		const newUri = protocol + '//' + loc.host + loc.pathname + loc.search;
 

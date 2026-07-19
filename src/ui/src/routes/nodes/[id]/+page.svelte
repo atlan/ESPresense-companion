@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
+	import { apiPath } from '$lib/api';
 	import { nodes } from '$lib/stores';
 	import { readable } from 'svelte/store';
 	import type { NodeSettingDetails } from '$lib/types';
@@ -26,10 +26,10 @@
 
 	let accordionValue = $state(['details']);
 
-	export const nodeDetails = readable([], (set) => {
+	export const nodeDetails = readable<Array<{ key: string; value: string }>>([], (set) => {
 		async function fetchAndSet() {
 			try {
-				const response = await fetch(resolve(`/api/node/${node?.id}`));
+				const response = await fetch(apiPath(`/api/node/${node?.id}`));
 				const result = await response.json();
 				set(result.details);
 			} catch (ex) {

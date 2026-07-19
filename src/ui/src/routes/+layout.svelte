@@ -15,6 +15,9 @@
 
 	$: current = $page.url.pathname;
 
+	// `as const` keeps each `href` as its precise string-literal type (instead of
+	// widening to `string`) so `resolve()` below can statically verify every one
+	// of these is a real route.
 	const routes = [
 		{ href: '/', name: 'map', icon: map, alt: 'Map' },
 		{ href: '/3d', name: '3d', icon: cube, alt: '3D View' },
@@ -22,7 +25,7 @@
 		{ href: '/devices', name: 'devices', icon: devices, alt: 'Devices' },
 		{ href: '/nodes', name: 'nodes', icon: nodes, alt: 'Nodes' },
 		{ href: '/calibration', name: 'calibration', icon: calibration, alt: 'Calibration' }
-	];
+	] as const;
 
 	$: resolvedRoutes = routes.map((route) => ({
 		...route,

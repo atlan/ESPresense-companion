@@ -5,11 +5,9 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { zoomIdentity } from 'd3-zoom';
-	import type { Readable } from 'svelte/store';
-	import type { ZoomScale } from 'd3-zoom';
+	import type { AxisLayerCakeContext } from '$lib/types';
 
-	const context: { padding: Readable<Object>; xRange: Readable<Object>; xScale: Readable<ZoomScale>; yScale: Readable<ZoomScale> } = getContext('LayerCake');
-	const { padding, xRange, xScale, yScale } = context;
+	const { padding, xRange, xScale, yScale } = getContext<AxisLayerCakeContext>('LayerCake');
 
 	export let transform = zoomIdentity;
 
@@ -25,7 +23,7 @@
 	export let tickMarks = true;
 
 	/** @type {Function} [formatTick=d => d] - A function that passes the current tick value and expects a nicely formatted value in return. */
-	export let formatTick = (d) => d;
+	export let formatTick = (d: unknown) => d;
 
 	/** @type {Number|Array|Function} [ticks=4] - If this is a number, it passes that along to the [d3Scale.ticks](https://github.com/d3/d3-scale) function. If this is an array, hardcodes the ticks to those values. If it's a function, passes along the default tick values and expects an array of tick values in return. */
 	export let ticks = undefined;
@@ -47,19 +45,19 @@
 
 	$: isBandwidth = typeof y.bandwidth === 'function';
 
-	$: tickVals = Array.isArray(ticks) ? ticks : isBandwidth ? y.domain() : typeof ticks === 'function' ? ticks(y.ticks()) : y.ticks(ticks);
+	$: tickVals = Array.isArray(ticks) ? ticks : isBandwidth ? y.domain() : typeof ticks === 'function' ? ticks(y.ticks!()) : y.ticks!(ticks);
 </script>
 
 <g class="axis y-axis" transform="translate({-$padding.left}, 0)">
 	{#each tickVals as tick (tick)}
 		<g class="tick tick-{tick}" transform="translate({$xRange[0] + (isBandwidth ? $padding.left : 0)}, {y(tick)})">
 			{#if gridlines !== false}
-				<line class="gridline" x2="100%" y1={yTick + (isBandwidth ? y.bandwidth() / 2 : 0)} y2={yTick + (isBandwidth ? y.bandwidth() / 2 : 0)}></line>
+				<line class="gridline" x2="100%" y1={yTick + (isBandwidth ? y.bandwidth!() / 2 : 0)} y2={yTick + (isBandwidth ? y.bandwidth!() / 2 : 0)}></line>
 			{/if}
 			{#if tickMarks === true}
-				<line class="tick-mark" x1="0" x2={isBandwidth ? -6 : 6} y1={yTick + (isBandwidth ? y.bandwidth() / 2 : 0)} y2={yTick + (isBandwidth ? y.bandwidth() / 2 : 0)}></line>
+				<line class="tick-mark" x1="0" x2={isBandwidth ? -6 : 6} y1={yTick + (isBandwidth ? y.bandwidth!() / 2 : 0)} y2={yTick + (isBandwidth ? y.bandwidth!() / 2 : 0)}></line>
 			{/if}
-			<text x={xTick} y={yTick + (isBandwidth ? y.bandwidth() / 2 : 0)} dx={isBandwidth ? -9 : dxTick} dy={isBandwidth ? 4 : dyTick} style="text-anchor:{isBandwidth ? 'end' : textAnchor};">{formatTick(tick)}</text>
+			<text x={xTick} y={yTick + (isBandwidth ? y.bandwidth!() / 2 : 0)} dx={isBandwidth ? -9 : dxTick} dy={isBandwidth ? 4 : dyTick} style="text-anchor:{isBandwidth ? 'end' : textAnchor};">{formatTick(tick)}</text>
 		</g>
 	{/each}
 </g>

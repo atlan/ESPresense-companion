@@ -5,13 +5,15 @@
 		disabled?: boolean;
 		size?: 'sm' | 'md' | 'lg';
 		children?: any;
+		onclick?: () => void;
 	}
 
-	let { name, checked = $bindable(), disabled = false, size = 'md', children }: Props = $props();
+	let { name, checked = $bindable(), disabled = false, size = 'md', children, onclick }: Props = $props();
 
 	function toggle() {
 		if (!disabled) {
 			checked = !checked;
+			onclick?.();
 		}
 	}
 

@@ -1,8 +1,8 @@
-import { resolve } from '$app/paths';
+import { apiPath } from '$lib/api';
 import type { LoadEvent } from '@sveltejs/kit';
 
 export async function load({ fetch, params }: LoadEvent) {
-	return await fetch(resolve(`/api/device/${params.id}`))
+	return await fetch(apiPath(`/api/device/${params.id}`))
 		.then((response) => {
 			if (!response.ok) throw new Error(response.statusText);
 			return response.json();

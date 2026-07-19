@@ -29,9 +29,12 @@ test('map renders with LayerCake', async ({ page }) => {
 	
 	await page.goto('/');
 	
-	// Wait for the config to load first
+	// Wait for the app to render something. `window.fetch` (the reference, not
+	// a call) is always truthy in any real browser, so the previous
+	// `window.fetch && ...` check never actually gated on anything - the DOM
+	// check below is the only condition that ever mattered.
 	await page.waitForFunction(() => {
-		return window.fetch && window.document.body.children.length > 0;
+		return window.document.body.children.length > 0;
 	});
 	
 	// Wait for SVG to appear

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import NodesTable from '$lib/NodesTable.svelte';
 	import { getToastStore } from '$lib/toast/toastStore';
-	import { resolve } from '$app/paths';
+	import { apiPath } from '$lib/api';
 	import { gotoDetail } from '$lib/urls';
 	import type { NodeSettingDetails } from '$lib/types';
 	import TriStateCheckbox from '$lib/TriStateCheckbox.svelte';
@@ -23,7 +23,7 @@
 				}
 			};
 
-			const response = await fetch(resolve('/api/node/*'), {
+			const response = await fetch(apiPath('/api/node/*'), {
 				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json'
@@ -53,13 +53,13 @@
 	async function loadSettings() {
 		try {
 			loading = true;
-			const response = await fetch(resolve('/api/node/*'));
+			const response = await fetch(apiPath('/api/node/*'));
 
 			if (!response.ok) throw new Error('Failed to load settings');
 
 			const data: NodeSettingDetails = await response.json();
-			autoUpdate = data.settings.updating.autoUpdate;
-			prerelease = data.settings.updating.prerelease;
+			autoUpdate = data.settings?.updating.autoUpdate ?? null;
+			prerelease = data.settings?.updating.prerelease ?? null;
 		} catch (error) {
 			console.error(error);
 			const message = error instanceof Error ? error.message : 'Unknown error occurred';

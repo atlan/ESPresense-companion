@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
+	import { apiPath } from '$lib/api';
 	import { gotoDetail, gotoCalibration } from '$lib/urls';
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { showComponent, showConfirm } from '$lib/modal/modalStore';
@@ -20,7 +20,7 @@
 	async function handleEdit() {
 		loadingEdit = true;
 		try {
-			const response = await fetch(resolve(`/api/device/${row.id}`));
+			const response = await fetch(apiPath(`/api/device/${row.id}`));
 			if (!response.ok) {
 				throw new Error(`Failed to fetch settings details: ${response.statusText}`);
 			}
@@ -57,7 +57,7 @@
 
         loadingDelete = true;
         try {
-            const resp = await fetch(resolve(`/api/device/${encodeURIComponent(row.id)}`), { method: 'DELETE' });
+            const resp = await fetch(apiPath(`/api/device/${encodeURIComponent(row.id)}`), { method: 'DELETE' });
             if (!resp.ok && resp.status !== 204) {
                 throw new Error(`Failed to delete: ${resp.status} ${resp.statusText}`);
             }

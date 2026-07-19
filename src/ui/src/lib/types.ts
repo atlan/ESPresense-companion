@@ -1,5 +1,5 @@
 import type { ScaleOrdinal, ScaleLinear } from 'd3';
-import type { Writable } from 'svelte/store';
+import type { Readable, Writable } from 'svelte/store';
 
 export interface LayerCakeContext {
 	xScale: Writable<ScaleLinear<number, number, never>>;
@@ -13,6 +13,47 @@ export interface LayerCakeContext {
 		left: number;
 	}>;
 	colors: ScaleOrdinal<string, string>;
+}
+
+// d3-zoom's own `ZoomScale` (the constraint on rescaleX/rescaleY's generic
+// parameter) only guarantees domain/range/copy/invert - not a call signature,
+// ticks(), or bandwidth(), even though every scale actually passed through
+// zoomIdentity.rescaleX/rescaleY here supports all of those. Narrower,
+// call-signature-bearing type matching how AxisX/AxisY/CalibrationSpot
+// actually use their scales (call as a function, optionally .ticks() for
+// continuous scales or .bandwidth() for band/ordinal ones, numeric-only
+// .invert() since this app's domains are always numeric, never Date).
+export interface AxisScale {
+	(value: number): number;
+	domain(): number[];
+	domain(domain: number[]): this;
+	range(): number[];
+	range(range: number[]): this;
+	copy(): AxisScale;
+	invert(value: number): number;
+	ticks?(count?: number): number[];
+	bandwidth?(): number;
+}
+
+// The zoomable axis/calibration components (AxisX, AxisY, CalibrationSpot) read
+// the same 'LayerCake' context but pan/zoom their scales via d3-zoom, so they
+// need AxisScale (see above) instead of LayerCakeContext's fixed ScaleLinear.
+// layercake itself ships no .d.ts, so this - like LayerCakeContext above - is
+// a manually maintained match of the shape it actually puts in the context at
+// runtime.
+export interface AxisLayerCakeContext {
+	xScale: Readable<AxisScale>;
+	yScale: Readable<AxisScale>;
+	width: Readable<number>;
+	height: Readable<number>;
+	padding: Readable<{
+		top: number;
+		right: number;
+		bottom: number;
+		left: number;
+	}>;
+	xRange: Readable<[number, number]>;
+	yRange: Readable<[number, number]>;
 }
 
 export interface Room {

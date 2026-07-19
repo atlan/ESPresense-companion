@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { calibration } from '$lib/stores';
-	import { resolve } from '$app/paths';
+	import { apiPath } from '$lib/api';
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { showConfirm } from '$lib/modal/modalStore';
 	import { tooltip } from '$lib/tooltip';
@@ -88,7 +88,7 @@
 
 	async function fetchAutoOptimizationState() {
 		try {
-			const response = await fetch(resolve('/api/state/calibration/auto-optimize'));
+			const response = await fetch(apiPath('/api/state/calibration/auto-optimize'));
 			if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
 			const data = await response.json();
 			autoOptimization = !!data.autoOptimize;
@@ -109,7 +109,7 @@
 		const desiredState = autoOptimization;
 
 		try {
-			const response = await fetch(resolve('/api/state/calibration/auto-optimize'), {
+			const response = await fetch(apiPath('/api/state/calibration/auto-optimize'), {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
@@ -141,7 +141,7 @@
 		if (!confirmed) return;
 
 		try {
-			const response = await fetch(resolve('/api/state/calibration/reset'), { method: 'POST' });
+			const response = await fetch(apiPath('/api/state/calibration/reset'), { method: 'POST' });
 			if (response.ok) {
 				toastStore.trigger({
 					message: 'Calibration reset successfully',
@@ -216,7 +216,7 @@
 								name="auto-optimization"
 								bind:checked={autoOptimization}
 								disabled={!autoOptimizationLoaded || autoOptimizationBusy}
-								on:click={toggleAutoOptimization}
+								onclick={toggleAutoOptimization}
 							>
 								Auto Optimization
 							</SlideToggle>

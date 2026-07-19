@@ -9,7 +9,7 @@
 <div class="flex items-center space-x-2 text-sm text-surface-600-400 mb-4">
 	<button 
 		class="hover:text-primary-500 transition-colors" 
-		onclick={gotoCalibration}
+		onclick={() => gotoCalibration()}
 		aria-label="Go to main calibration page"
 	>
 		Calibration
@@ -19,7 +19,7 @@
 		<span>→</span>
 		<button 
 			class="hover:text-primary-500 transition-colors" 
-			onclick={gotoCalibration}
+			onclick={() => gotoCalibration()}
 			aria-label="Go to device calibration list"
 		>
 			Device Calibration

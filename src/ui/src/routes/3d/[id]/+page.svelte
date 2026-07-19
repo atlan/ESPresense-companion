@@ -10,7 +10,7 @@
 
 	// --- Route Param ---
 	let deviceId: string | null = null;
-	$: deviceId = $page.params.id; // Get device ID from URL
+	$: deviceId = $page.params.id ?? null; // Get device ID from URL
 
 	// --- Data Stores & Derived State ---
 	// Find the specific device based on the route ID
