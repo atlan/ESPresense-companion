@@ -11,7 +11,10 @@ public class FirmwareUpdateJobService
     {
         "https://github.com/ESPresense/",
         "https://nightly.link/ESPresense/",
-        "https://espresense.com/artifacts/download/runs/"
+        "https://espresense.com/artifacts/download/runs/",
+        // Eigener Node-Firmware-Fork (github.com/atlan/ESPresense) - 2026-07-19,
+        // fuer Custom-Builds (z.B. seshat-Logging) ueber die Companion-UI.
+        "https://github.com/atlan/"
     };
 
     private readonly ConcurrentDictionary<string, FirmwareUpdateJob> _jobs = new(StringComparer.OrdinalIgnoreCase);
