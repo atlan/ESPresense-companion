@@ -164,4 +164,29 @@ public static class SpatialUtils
             return false;
         return !rxFloors.Intersect(txFloors, StringComparer.OrdinalIgnoreCase).Any();
     }
+
+    /// <summary>
+    /// True if the pair (rx, tx) is listed in a same-floor "excluded_pairs" config (e.g. two nodes
+    /// on the same floor separated by a wall with unusually high attenuation - see the 2026-07-20
+    /// Office Node 2 / Sleeping Room Node 2 case). Same rationale as IsCrossFloor: a shared per-node
+    /// absorption value can't fit one heavily-obstructed same-floor pair and this node's otherwise
+    /// clear-line-of-sight neighbors at the same time, so the obstructed pair is excluded from the
+    /// fit entirely rather than dragging down calibration quality for everything else that node hears.
+    /// excludedPairs entries are "node_id_a:node_id_b" (order and case don't matter).
+    /// </summary>
+    public static bool IsExcludedPair(OptNode rx, OptNode tx, IEnumerable<string>? excludedPairs)
+    {
+        if (excludedPairs == null) return false;
+        foreach (var pair in excludedPairs)
+        {
+            var parts = pair.Split(':', 2);
+            if (parts.Length != 2) continue;
+            var a = parts[0].Trim();
+            var b = parts[1].Trim();
+            if ((rx.Id.Equals(a, StringComparison.OrdinalIgnoreCase) && tx.Id.Equals(b, StringComparison.OrdinalIgnoreCase)) ||
+                (rx.Id.Equals(b, StringComparison.OrdinalIgnoreCase) && tx.Id.Equals(a, StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+        return false;
+    }
 }

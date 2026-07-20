@@ -174,6 +174,11 @@ namespace ESPresense.Models
         [YamlMember(Alias = "limits")] public Dictionary<string, double> Limits { get; set; } = new();
         [YamlMember(Alias = "weights")] public Dictionary<string, double> Weights { get; set; } = new();
 
+        // Same-floor node pairs to exclude from calibration entirely (e.g. two nodes separated by
+        // an unusually attenuating wall) - see SpatialUtils.IsExcludedPair. Entries are
+        // "node_id_a:node_id_b"; order and case don't matter.
+        [YamlMember(Alias = "excluded_pairs")] public List<string> ExcludedPairs { get; set; } = new();
+
         [YamlIgnore] public double AbsorptionMin => Limits.TryGetValue("absorption_min", out var val) ? val : 2;
         [YamlIgnore] public double AbsorptionMax => Limits.TryGetValue("absorption_max", out var val) ? val : 4;
         [YamlIgnore] public double TxRefRssiMin => Limits.TryGetValue("tx_ref_rssi_min", out var val) ? val : -70;

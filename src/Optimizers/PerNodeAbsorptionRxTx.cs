@@ -30,7 +30,11 @@ public class PerNodeAbsorptionRxTx : IOptimizer
         // same-floor nodes (each Locator filters by Node.Floors), cross-floor node-to-node
         // measurements carry no useful signal for calibration and are excluded entirely rather than
         // just down-weighted.
-        var allRxNodes = os.ByRx().SelectMany(g => g).Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx)).ToList();
+        var excludedPairs = _state.Config?.Optimization?.ExcludedPairs;
+        var allRxNodes = os.ByRx().SelectMany(g => g)
+            .Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx))
+            .Where(n => !SpatialUtils.IsExcludedPair(n.Rx, n.Tx, excludedPairs))
+            .ToList();
 
         if (allRxNodes.Count < 3)
         {

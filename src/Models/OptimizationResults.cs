@@ -10,7 +10,7 @@ public class OptimizationResults
 {
     public Dictionary<string, ProposedValues> Nodes { get; set; } = new();
 
-    public (double Correlation, double RMSE) Evaluate(List<OptimizationSnapshot> oss, NodeSettingsStore nss)
+    public (double Correlation, double RMSE) Evaluate(List<OptimizationSnapshot> oss, NodeSettingsStore nss, IEnumerable<string>? excludedPairs = null)
     {
         List<double> predictedValues = new();
         List<double> measuredValues = new();
@@ -21,6 +21,7 @@ public class OptimizationResults
             {
                 if (m.Tx?.Id == null || m.Rx?.Id == null) continue;
                 if (SpatialUtils.IsCrossFloor(m.Rx, m.Tx)) continue;
+                if (SpatialUtils.IsExcludedPair(m.Rx, m.Tx, excludedPairs)) continue;
                 var tx = nss.Get(m.Tx.Id);
                 var rx = nss.Get(m.Rx.Id);
 
