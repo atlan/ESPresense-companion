@@ -77,9 +77,13 @@ builder.Services.AddSingleton<DeviceService>();
 builder.Services.AddSingleton<DeviceCaptureService>();
 builder.Services.AddSingleton<LeaseService>();
 builder.Services.AddSingleton<ILeaseService>(provider => provider.GetRequiredService<LeaseService>());
+builder.Services.AddSingleton<PairErrorTracker>();
+builder.Services.AddSingleton<WizardService>();
+// Registered as singleton + forwarded so WizardController can call TriggerNow() on the same instance.
+builder.Services.AddSingleton<OptimizationRunner>();
 
 builder.Services.AddHostedService<MultiScenarioLocator>();
-builder.Services.AddHostedService<OptimizationRunner>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<OptimizationRunner>());
 builder.Services.AddHostedService(provider => provider.GetRequiredService<DeviceTracker>());
 builder.Services.AddHostedService(provider => provider.GetRequiredService<DeviceSettingsStore>());
 builder.Services.AddHostedService(provider => provider.GetRequiredService<NodeSettingsStore>());

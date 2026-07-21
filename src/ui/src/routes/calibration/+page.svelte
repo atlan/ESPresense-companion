@@ -1,6 +1,7 @@
 <script lang="ts">
 	import NodeCalibrationMatrix from '$lib/NodeCalibrationMatrix.svelte';
 	import DeviceCalibrationManager from '$lib/DeviceCalibrationManager.svelte';
+	import SetupWizard from '$lib/SetupWizard.svelte';
 	import CalibrationTabs from '$lib/CalibrationTabs.svelte';
 
 	let calibrationType = 'node';
@@ -24,6 +25,10 @@
 	{:else if calibrationType === 'device'}
 		<section>
 			<DeviceCalibrationManager />
+		</section>
+	{:else if calibrationType === 'setup'}
+		<section>
+			<SetupWizard />
 		</section>
 	{/if}
 </div>

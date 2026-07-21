@@ -111,7 +111,7 @@ public static class SpatialUtils
             (nodeName != null && string.Equals(r.Name, nodeName, StringComparison.OrdinalIgnoreCase)));
     }
 
-    static double DistanceToPolygonBoundary(Point2D point, Polygon2D polygon)
+    public static double DistanceToPolygonBoundary(Point2D point, Polygon2D polygon)
     {
         var vertices = polygon.Vertices.ToList();
         if (vertices.Count < 2) return double.MaxValue;

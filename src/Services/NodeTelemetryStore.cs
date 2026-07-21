@@ -9,6 +9,10 @@ public class NodeTelemetryStore : BackgroundService
 
     private readonly ConcurrentDictionary<string, NodeTelemetry> _teleById = new();
     private readonly ConcurrentDictionary<string, bool> _onlineById = new();
+    // MQTT LWT-based "online" can stay true long after a node stops sending (broker keepalive lag,
+    // or a wedged node that still holds its TCP session) - tracking when telemetry actually last
+    // ARRIVED lets the wizard health gate distinguish "online and alive" from "online but stuck".
+    private readonly ConcurrentDictionary<string, DateTime> _teleReceivedAt = new();
 
     /// <summary>
     /// Initializes a new instance of <see cref="NodeTelemetryStore"/> and stores the provided MQTT coordinator reference.
@@ -36,12 +40,14 @@ public class NodeTelemetryStore : BackgroundService
         _mqttCoordinator.NodeTelemetryReceivedAsync += arg =>
         {
             _teleById.AddOrUpdate(arg.NodeId, _ => arg.Payload, (_, _) => arg.Payload);
+            _teleReceivedAt[arg.NodeId] = DateTime.UtcNow;
             return Task.CompletedTask;
         };
 
         _mqttCoordinator.NodeTelemetryRemovedAsync += arg =>
         {
             _teleById.TryRemove(arg.NodeId, out _);
+            _teleReceivedAt.TryRemove(arg.NodeId, out _);
             return Task.CompletedTask;
         };
 
@@ -79,6 +85,15 @@ public class NodeTelemetryStore : BackgroundService
     public virtual bool Online(string id)
     {
         return _onlineById.TryGetValue(id, out var online) && online;
+    }
+
+    /// <summary>
+    /// When the node's last telemetry payload actually arrived, or null if none was received
+    /// since startup. Unlike Online() (MQTT LWT-based) this reflects real liveness.
+    /// </summary>
+    public virtual DateTime? LastReceivedAt(string id)
+    {
+        return _teleReceivedAt.TryGetValue(id, out var at) ? at : null;
     }
 
     /// <summary>

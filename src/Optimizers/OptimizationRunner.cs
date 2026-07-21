@@ -8,7 +8,7 @@ using System.Linq;
 
 namespace ESPresense.Optimizers;
 
-internal class OptimizationRunner : BackgroundService
+public class OptimizationRunner : BackgroundService
 {
     private const string OptimizationLeaseName = "optimization";
     private readonly State _state;
@@ -19,14 +19,22 @@ internal class OptimizationRunner : BackgroundService
     private IList<IOptimizer> _optimizers;
     private readonly object _optimizersLock = new();
     private string? _lastOptimizerMode;
+    private readonly PairErrorTracker _pairErrorTracker;
 
-    public OptimizationRunner(State state, NodeSettingsStore nsd, ILogger<OptimizationRunner> logger, ConfigLoader cfg, ILeaseService leaseService)
+    // "Calibrate now" support: TriggerNow() completes the current TCS (waking whichever
+    // InterruptibleDelay is pending) and opens a short skip window so ALL remaining delays in a
+    // multi-delay phase (the 4-delay warmup) fast-forward too, not just the one currently awaited.
+    private volatile TaskCompletionSource _triggerNow = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private DateTime _skipDelaysUntil = DateTime.MinValue;
+
+    public OptimizationRunner(State state, NodeSettingsStore nsd, ILogger<OptimizationRunner> logger, ConfigLoader cfg, ILeaseService leaseService, PairErrorTracker pairErrorTracker)
     {
         _state = state;
         _nsd = nsd;
         _logger = logger;
         _cfg = cfg;
         _leaseService = leaseService;
+        _pairErrorTracker = pairErrorTracker;
         _optimizers = new List<IOptimizer>();
 
         _cfg.ConfigChanged += (_, config) =>
@@ -69,6 +77,28 @@ internal class OptimizationRunner : BackgroundService
     // place by the time each fit ran.
     private const int SnapshotSamplingIntervalSecs = 30;
 
+    /// <summary>
+    /// Wakes the optimizer loop immediately: the currently pending delay (warmup or between-cycle)
+    /// completes right away, and any further delays within the next few seconds are skipped, so a
+    /// full fit+apply cycle runs now regardless of interval_secs. Replaces the manual
+    /// "temporarily set interval_secs to 15 + restart" procedure.
+    /// </summary>
+    public void TriggerNow()
+    {
+        _skipDelaysUntil = DateTime.UtcNow.AddSeconds(10);
+        _triggerNow.TrySetResult();
+    }
+
+    private async Task InterruptibleDelay(TimeSpan delay, CancellationToken ct)
+    {
+        if (DateTime.UtcNow < _skipDelaysUntil) return;
+        var trigger = _triggerNow;
+        var completed = await Task.WhenAny(Task.Delay(delay, ct), trigger.Task);
+        if (completed == trigger.Task)
+            _triggerNow = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ct.ThrowIfCancellationRequested();
+    }
+
     private async Task RunSnapshotSamplingLoopAsync(CancellationToken stoppingToken)
     {
         try
@@ -79,6 +109,7 @@ internal class OptimizationRunner : BackgroundService
                 {
                     if (_state.Config?.Optimization is { Enabled: true })
                         _state.TakeOptimizationSnapshot();
+                    _pairErrorTracker.Sample();
                 }
                 catch (Exception ex)
                 {
@@ -120,12 +151,12 @@ internal class OptimizationRunner : BackgroundService
 
                 Log.Information("Optimization enabled");
                 _state.OptimizerState.Optimizers = "Starting...";
-                await Task.Delay(TimeSpan.FromSeconds(optimization.IntervalSecs), stoppingToken);
+                await InterruptibleDelay(TimeSpan.FromSeconds(optimization.IntervalSecs), stoppingToken);
 
                 for (int i = 0; i < 3; i++)
                 {
                     _state.TakeOptimizationSnapshot();
-                    await Task.Delay(TimeSpan.FromSeconds(optimization.IntervalSecs), stoppingToken);
+                    await InterruptibleDelay(TimeSpan.FromSeconds(optimization.IntervalSecs), stoppingToken);
                 }
 
                 Log.Information("Optimization cycle started");
@@ -212,7 +243,7 @@ internal class OptimizationRunner : BackgroundService
                         bestScore = composite;
                     }
 
-                    await Task.Delay(TimeSpan.FromSeconds(optimization.IntervalSecs), stoppingToken);
+                    await InterruptibleDelay(TimeSpan.FromSeconds(optimization.IntervalSecs), stoppingToken);
                 }
             }
             catch (OperationCanceledException)
