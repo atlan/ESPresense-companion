@@ -104,9 +104,12 @@ public class ConfigLoader : BackgroundService
         // after a BLANK line inside the section, leaving the rest of the old section behind
         // dedented to column 0 (invalid YAML, happened live on a locators save), and it could
         // glue a following top-level comment onto the serialized section's last line.
-        // A section here spans from its "name:" line through all following indented or blank
-        // lines; it ends at the first column-0 line (next top-level key OR full-line comment -
-        // comments stay with whatever follows them).
+        // A section here spans from its "name:" line through all following indented, blank or
+        // column-0 SEQUENCE-ITEM lines ("- ..." - YamlDotNet serializes top-level list items at
+        // column 0, and a bare item can only belong to the current section; treating it as a new
+        // section made a second save duplicate every floors entry live). It ends at the first
+        // other column-0 line (next top-level key OR full-line comment - comments stay with
+        // whatever follows them).
         var lines = text.Split('\n').ToList();
         var start = lines.FindIndex(l => l.StartsWith(sectionName + ":"));
 
@@ -115,7 +118,7 @@ public class ConfigLoader : BackgroundService
         {
             var end = start + 1;
             while (end < lines.Count &&
-                   (lines[end].Length == 0 || lines[end][0] == ' ' || lines[end][0] == '\t' || lines[end].TrimEnd('\r').Length == 0))
+                   (lines[end].Length == 0 || lines[end][0] == ' ' || lines[end][0] == '\t' || lines[end][0] == '-' || lines[end].TrimEnd('\r').Length == 0))
                 end++;
             // Leave trailing blank lines to the remainder so section spacing is preserved.
             while (end - 1 > start && lines[end - 1].TrimEnd('\r').Length == 0)

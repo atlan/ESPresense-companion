@@ -216,4 +216,50 @@ floors:
         var deserializer = new YamlDotNet.Serialization.DeserializerBuilder().Build();
         Assert.DoesNotThrow(() => deserializer.Deserialize<object>(result));
     }
+
+    [Test]
+    public async Task SaveSectionAsync_ReplacesSectionWithColumnZeroSequenceItems()
+    {
+        // Regression: YamlDotNet serializes top-level list items at COLUMN 0 ("floors:\n- id: x").
+        // The line scan treated a column-0 "- ..." as the start of the next section, so a SECOND
+        // save replaced only the bare "floors:" line and left the previous save's items behind -
+        // live this duplicated every floor after add-floor followed by delete-floor.
+        var original = @"mqtt:
+  host: localhost
+
+floors:
+- id: ground
+  name: Ground
+  bounds:
+  - - 0
+    - 0
+    - 0
+  - - 5
+    - 5
+    - 3
+- id: first
+  name: First
+
+# Nodes comment
+nodes:
+- id: kitchen
+";
+        await File.WriteAllTextAsync(_configPath, original);
+        var loader = new ConfigLoader(_tempDir);
+
+        await loader.SaveSectionAsync("floors", new[]
+        {
+            new ConfigFloor { Id = "ground", Name = "Ground", Bounds = new[] { new[] { 0.0, 0, 0 }, new[] { 5.0, 5, 3 } } }
+        });
+
+        var result = await File.ReadAllTextAsync(_configPath);
+
+        Assert.That(result.Split("- id: ground").Length - 1, Is.EqualTo(1), "ground floor exactly once");
+        Assert.That(result, Does.Not.Contain("- id: first"), "removed floor must not survive");
+        Assert.That(result.Split('\n'), Does.Contain("# Nodes comment"));
+        Assert.That(result, Does.Contain("- id: kitchen"), "following nodes section preserved");
+
+        var deserializer = new YamlDotNet.Serialization.DeserializerBuilder().Build();
+        Assert.DoesNotThrow(() => deserializer.Deserialize<object>(result));
+    }
 }
