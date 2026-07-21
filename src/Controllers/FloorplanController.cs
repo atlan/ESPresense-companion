@@ -22,6 +22,9 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
     private static readonly object BackupLock = new();
     private static bool _backedUp;
 
+    /// <summary>Editor backups kept; older .bak-floorplan-* files are pruned on each new backup.</summary>
+    private const int BackupsToKeep = 5;
+
     private void EnsureBackup()
     {
         lock (BackupLock)
@@ -32,6 +35,20 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
                 var backupPath = configLoader.ConfigPath + $".bak-floorplan-{DateTime.UtcNow:yyyyMMdd-HHmmss}";
                 System.IO.File.Copy(configLoader.ConfigPath, backupPath);
                 Log.Information("Floorplan editor: backed up config to {Path}", backupPath);
+
+                // Prune old editor backups - one accrues per app run with edits, and they'd pile
+                // up forever otherwise. Timestamped names sort chronologically.
+                var dir = Path.GetDirectoryName(configLoader.ConfigPath)!;
+                var prefix = Path.GetFileName(configLoader.ConfigPath) + ".bak-floorplan-";
+                var old = Directory.GetFiles(dir, prefix + "*")
+                    .OrderByDescending(Path.GetFileName)
+                    .Skip(BackupsToKeep)
+                    .ToList();
+                foreach (var f in old)
+                {
+                    System.IO.File.Delete(f);
+                    Log.Information("Floorplan editor: pruned old backup {Path}", f);
+                }
             }
             catch (Exception ex)
             {

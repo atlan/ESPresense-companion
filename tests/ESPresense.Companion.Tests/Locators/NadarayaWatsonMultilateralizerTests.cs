@@ -182,8 +182,11 @@ public class NadarayaWatsonMultilateralizerTests
         // Act
         var result = multilateralizer.Locate(scenario);
 
-        // Assert - with 2 nodes and no bounds, uses midpoint
-        Assert.That(scenario.Error, Is.Null);
+        // Assert - with 2 nodes and no bounds, uses midpoint. The fork computes a REAL
+        // geometric residual here instead of null (a null Error zeroed the quality half of
+        // CalculateConfidence and structurally penalized sparse floors); with both distances
+        // matching the midpoint exactly the residual is 0.
+        Assert.That(scenario.Error, Is.EqualTo(0).Within(0.001));
         Assert.That(scenario.PearsonCorrelation, Is.Not.Null);
         var expectedMidpoint = Point3D.MidPoint(node1.Location, node2.Location);
         Assert.That(scenario.Location.DistanceTo(expectedMidpoint), Is.LessThan(0.01));

@@ -114,6 +114,19 @@ public class MLEMultilateralizerTests
             LastHit = DateTime.UtcNow
         };
 
+
+        var node4 = CreateTestNode("node4", 0, 4.33, 0, floor);
+        var node5 = CreateTestNode("node5", 5, 4.33, 0, floor);
+        device.Nodes["node4"] = new DeviceToNode(device, node4)
+        {
+            Distance = expectedPosition.DistanceTo(node4.Location),
+            LastHit = DateTime.UtcNow
+        };
+        device.Nodes["node5"] = new DeviceToNode(device, node5)
+        {
+            Distance = expectedPosition.DistanceTo(node5.Location),
+            LastHit = DateTime.UtcNow
+        };
         var multilateralizer = new MLEMultilateralizer(device, floor, _state);
         var scenario = new Scenario(_configLoader.Config, multilateralizer, "MLE");
 
@@ -124,7 +137,7 @@ public class MLEMultilateralizerTests
         Assert.That(result, Is.True);
         Assert.That(scenario.Confidence, Is.GreaterThan(0));
         Assert.That(scenario.Location.DistanceTo(expectedPosition), Is.LessThan(0.5)); // Within 0.5 meters
-        Assert.That(scenario.Fixes, Is.EqualTo(3));
+        Assert.That(scenario.Fixes, Is.EqualTo(5));
     }
 
     [Test]
@@ -198,6 +211,14 @@ public class MLEMultilateralizerTests
             LastHit = DateTime.UtcNow
         };
 
+
+        // Fork change: the scale fit needs >=5 measurements (4 free parameters) - add a fifth.
+        var node5 = CreateTestNode("node5", 5, 4.33, 0, floor);
+        device.Nodes["node5"] = new DeviceToNode(device, node5)
+        {
+            Distance = expectedPosition.DistanceTo(node5.Location),
+            LastHit = DateTime.UtcNow
+        };
         var multilateralizer = new MLEMultilateralizer(device, floor, _state);
         var scenario = new Scenario(_configLoader.Config, multilateralizer, "MLE");
 
@@ -206,7 +227,7 @@ public class MLEMultilateralizerTests
 
         // Assert
         Assert.That(result, Is.True);
-        Assert.That(scenario.Confidence, Is.GreaterThan(10)); // Should have decent confidence with 4 nodes
+        Assert.That(scenario.Confidence, Is.GreaterThan(10)); // Should have decent confidence with 5 nodes
         Assert.That(scenario.Confidence, Is.LessThanOrEqualTo(100)); // Should not exceed 100
     }
 
@@ -224,6 +245,11 @@ public class MLEMultilateralizerTests
         device.Nodes["node1"] = new DeviceToNode(device, node1) { Distance = 2.5, LastHit = DateTime.UtcNow };
         device.Nodes["node2"] = new DeviceToNode(device, node2) { Distance = 2.5, LastHit = DateTime.UtcNow };
         device.Nodes["node3"] = new DeviceToNode(device, node3) { Distance = 2.5, LastHit = DateTime.UtcNow };
+        // Fork change: the scale fit needs >=5 measurements (4 free parameters).
+        var node4 = CreateTestNode("node4", 0, 4.33, 0, floor);
+        var node5 = CreateTestNode("node5", 5, 4.33, 0, floor);
+        device.Nodes["node4"] = new DeviceToNode(device, node4) { Distance = 3.0, LastHit = DateTime.UtcNow };
+        device.Nodes["node5"] = new DeviceToNode(device, node5) { Distance = 3.0, LastHit = DateTime.UtcNow };
 
         var multilateralizer = new MLEMultilateralizer(device, floor, _state);
         var scenario = new Scenario(_configLoader.Config, multilateralizer, "MLE");
@@ -265,6 +291,19 @@ public class MLEMultilateralizerTests
             LastHit = DateTime.UtcNow
         };
 
+
+        var node4 = CreateTestNode("node4", 0, 4.33, 0, floor);
+        var node5 = CreateTestNode("node5", 5, 4.33, 0, floor);
+        device.Nodes["node4"] = new DeviceToNode(device, node4)
+        {
+            Distance = expectedPosition.DistanceTo(node4.Location),
+            LastHit = DateTime.UtcNow
+        };
+        device.Nodes["node5"] = new DeviceToNode(device, node5)
+        {
+            Distance = expectedPosition.DistanceTo(node5.Location),
+            LastHit = DateTime.UtcNow
+        };
         var multilateralizer = new MLEMultilateralizer(device, floor, _state);
         var scenario = new Scenario(_configLoader.Config, multilateralizer, "MLE");
 
@@ -311,6 +350,19 @@ public class MLEMultilateralizerTests
             LastHit = DateTime.UtcNow
         };
 
+
+        var node4 = CreateTestNode("node4", 0, 4.33, 0, floor);
+        var node5 = CreateTestNode("node5", 5, 4.33, 0, floor);
+        device.Nodes["node4"] = new DeviceToNode(device, node4)
+        {
+            Distance = expectedPosition.DistanceTo(node4.Location),
+            LastHit = DateTime.UtcNow
+        };
+        device.Nodes["node5"] = new DeviceToNode(device, node5)
+        {
+            Distance = expectedPosition.DistanceTo(node5.Location),
+            LastHit = DateTime.UtcNow
+        };
         var multilateralizer = new MLEMultilateralizer(device, floor, _state);
         var scenario = new Scenario(_configLoader.Config, multilateralizer, "MLE");
 

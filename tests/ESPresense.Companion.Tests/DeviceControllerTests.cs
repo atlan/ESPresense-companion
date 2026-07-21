@@ -56,7 +56,8 @@ public class DeviceControllerTests
             _mockDeviceSettingsStore.Object,
             deviceService,
             _mockState.Object,
-            captureService
+            captureService,
+            mockConfigLoader.Object
         );
     }
 

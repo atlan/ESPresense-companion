@@ -108,13 +108,16 @@ locators:
     }
 
     [Test]
-    public async Task SaveSectionAsync_RejectsProtectedSection()
+    public async Task SaveSectionAsync_MapSectionIsEditable()
     {
+        // "map" used to be a protected section; it is deliberately editable now (the wizard's
+        // settings form exposes flip/wall options).
         await File.WriteAllTextAsync(_configPath, "map:\n  flip_x: false\n");
         var loader = new ConfigLoader(_tempDir);
 
-        Assert.ThrowsAsync<InvalidOperationException>(
-            () => loader.SaveSectionAsync("map", new ConfigMap()));
+        await loader.SaveSectionAsync("map", new ConfigMap { FlipX = true });
+        var result = await File.ReadAllTextAsync(_configPath);
+        Assert.That(result, Does.Contain("flip_x: true"));
     }
 
     [Test]
