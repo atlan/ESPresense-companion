@@ -18,8 +18,22 @@ namespace ESPresense.Services;
 /// anchoring writes retained device settings over MQTT that would need careful restore. Sampling
 /// Device.Nodes directly is side-effect free.
 /// </summary>
-public class WalkTestService(State state, PairErrorTracker pairErrorTracker, NodeSettingsStore nodeSettings)
+public class WalkTestService
 {
+    private readonly State state;
+    private readonly PairErrorTracker pairErrorTracker;
+    private readonly NodeSettingsStore nodeSettings;
+    private readonly string? _persistPath;
+
+    public WalkTestService(State state, PairErrorTracker pairErrorTracker, NodeSettingsStore nodeSettings, string? persistPath = null)
+    {
+        this.state = state;
+        this.pairErrorTracker = pairErrorTracker;
+        this.nodeSettings = nodeSettings;
+        _persistPath = persistPath;
+        LoadPoints();
+    }
+
     /// <summary>
     /// The txRefRssi value Evaluate()/the fit fall back to for transmitters without stored
     /// settings. Walk test measures are RSSI-shifted at synthesis time so the beacon's effective
@@ -48,8 +62,14 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker, Nod
         public double? DistVar { get; set; }
         /// <summary>Straight-line distance from the walk point to the node - the ground truth.</summary>
         public double MapDistance { get; set; }
-        /// <summary>Rx node position at record time - measures are dropped if the node moves later.</summary>
-        public Point3D NodeLocationAtRecord { get; set; }
+        // Rx node position at record time (plain doubles so the point JSON-serializes for
+        // persistence - Point3D has no parameterless ctor). Measures are dropped if the node moves.
+        public double NodeLocX { get; set; }
+        public double NodeLocY { get; set; }
+        public double NodeLocZ { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Point3D NodeLocationAtRecord => new(NodeLocX, NodeLocY, NodeLocZ);
     }
 
     public class WalkTestPoint
@@ -292,7 +312,9 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker, Nod
                 RefRssi = Median(g.Select(x => x.RefRssi)),
                 DistVar = g.Any(x => x.DistVar.HasValue) ? Median(g.Where(x => x.DistVar.HasValue).Select(x => x.DistVar!.Value)) : null,
                 MapDistance = node.Location.DistanceTo(new Point3D(s.X, s.Y, s.Z)),
-                NodeLocationAtRecord = node.Location
+                NodeLocX = node.Location.X,
+                NodeLocY = node.Location.Y,
+                NodeLocZ = node.Location.Z
             });
         }
 
@@ -328,12 +350,59 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker, Nod
             TxRefRssiEstimate = txRefEstimates.Count >= 2 ? Median(txRefEstimates) : null
         };
         _points[point.Id] = point;
+        SavePoints();
         Log.Information("Walk test point {Id} recorded: {Nodes} nodes, {Samples} raw samples (device {Device} at {X},{Y},{Z})",
             point.Id, aggregates.Count, s.Samples.Count, s.DeviceId, s.X, s.Y, s.Z);
         return point;
     }
 
-    public bool DeletePoint(string id) => _points.TryRemove(id, out _);
+    public bool DeletePoint(string id)
+    {
+        var removed = _points.TryRemove(id, out _);
+        if (removed) SavePoints();
+        return removed;
+    }
+
+    private readonly object _persistLock = new();
+
+    private void SavePoints()
+    {
+        if (_persistPath == null) return;
+        try
+        {
+            lock (_persistLock)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_persistPath)!);
+                File.WriteAllText(_persistPath, System.Text.Json.JsonSerializer.Serialize(_points.Values.ToList()));
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to persist walk test points to {Path}", _persistPath);
+        }
+    }
+
+    private void LoadPoints()
+    {
+        if (_persistPath == null || !File.Exists(_persistPath)) return;
+        try
+        {
+            var loaded = System.Text.Json.JsonSerializer.Deserialize<List<WalkTestPoint>>(File.ReadAllText(_persistPath));
+            foreach (var p in loaded ?? new List<WalkTestPoint>())
+            {
+                _points[p.Id] = p;
+                // Resume the id counter past loaded points so new ids don't collide.
+                if (p.Id.StartsWith("wt") && int.TryParse(p.Id[2..], out var n) && n > _pointCounter)
+                    _pointCounter = n;
+            }
+            if (_points.Count > 0)
+                Log.Information("Loaded {Count} persisted walk test points from {Path}", _points.Count, _persistPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load persisted walk test points from {Path}", _persistPath);
+        }
+    }
 
     /// <summary>
     /// Synthesizes optimizer measures from all recorded walk test points. The device acts as a

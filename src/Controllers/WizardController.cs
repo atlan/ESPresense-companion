@@ -17,7 +17,8 @@ public class WizardController(
     OptimizationRunner optimizationRunner,
     ConfigLoader configLoader,
     State state,
-    WalkTestService walkTest) : ControllerBase
+    WalkTestService walkTest,
+    AutoTuneService autoTune) : ControllerBase
 {
     /// <summary>Renders a config pair id ("node_a:node_b") with friendly node names for display.</summary>
     private string FriendlyPair(string pair)
@@ -168,5 +169,32 @@ public class WizardController(
     public IActionResult WalkTestSuggest()
     {
         return Ok(new { suggestions = walkTest.SuggestPoints() });
+    }
+
+    // ─── Auto-tune (optimizer/hyperparameter selection) ─────────────────────
+
+    [HttpGet("api/wizard/autotune/status")]
+    public IActionResult AutoTuneStatus()
+    {
+        return Ok(autoTune.Status());
+    }
+
+    [HttpPost("api/wizard/autotune/start")]
+    public IActionResult AutoTuneStart()
+    {
+        var (ok, error) = autoTune.Start();
+        return ok ? Ok(new { started = true }) : BadRequest(new { error });
+    }
+
+    public class AutoTuneApplyRequest
+    {
+        public string CandidateKey { get; set; } = "";
+    }
+
+    [HttpPost("api/wizard/autotune/apply")]
+    public async Task<IActionResult> AutoTuneApply([FromBody] AutoTuneApplyRequest req)
+    {
+        var (ok, error) = await autoTune.Apply(req.CandidateKey);
+        return ok ? Ok(new { applied = true }) : BadRequest(new { error });
     }
 }

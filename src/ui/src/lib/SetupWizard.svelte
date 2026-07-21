@@ -116,6 +116,41 @@
 	let refreshTimer: ReturnType<typeof setInterval> | null = null;
 	let walkTimer: ReturnType<typeof setInterval> | null = null;
 
+	interface TuneCandidate {
+		key: string;
+		optimizer: string;
+		absorptionPenalty?: number;
+		label: string;
+	}
+
+	interface TuneResult {
+		candidate: TuneCandidate;
+		meanHoldoutComposite: number;
+		meanTrainComposite: number;
+		meanHoldoutR: number;
+		meanHoldoutRmse: number;
+		folds: number;
+		isCurrent: boolean;
+	}
+
+	interface TuneState {
+		running: boolean;
+		phase?: string;
+		candidatesDone: number;
+		candidatesTotal: number;
+		error?: string;
+		results: TuneResult[];
+		baseline?: TuneResult;
+		recommendation?: string;
+		measureCount: number;
+		pairCount: number;
+		finishedAt?: string;
+	}
+
+	let tuneState: TuneState | null = null;
+	let tuneBusy = false;
+	let tuneTimer: ReturnType<typeof setInterval> | null = null;
+
 	let walkStatus: WalkTestStatus | null = null;
 	let walkSuggestions: WalkPointSuggestion[] = [];
 	let wtDevice = '';
@@ -233,6 +268,61 @@
 		wtZ = s.z;
 	}
 
+	async function fetchTuneStatus() {
+		try {
+			const res = await fetch(apiPath('/api/wizard/autotune/status'));
+			if (res.ok) tuneState = await res.json();
+		} catch (error) {
+			console.error('Error fetching autotune status:', error);
+		}
+	}
+
+	async function startAutoTune() {
+		if (tuneBusy) return;
+		tuneBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/autotune/start'), { method: 'POST' });
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.error ?? `HTTP ${res.status}`);
+			}
+			toastStore.trigger({ message: 'Auto-tune started - this can take a minute or two', background: 'preset-filled-success-500' });
+			await fetchTuneStatus();
+		} catch (error) {
+			toastStore.trigger({
+				message: error instanceof Error ? error.message : 'Failed to start auto-tune',
+				background: 'preset-filled-error-500'
+			});
+		} finally {
+			tuneBusy = false;
+		}
+	}
+
+	async function applyTuneCandidate(r: TuneResult) {
+		const confirmed = await showConfirm({
+			title: 'Apply optimizer configuration',
+			body: `Set optimizer to "${r.candidate.label}" in the live config? The next calibration cycles will use it.`
+		});
+		if (!confirmed) return;
+		try {
+			const res = await fetch(apiPath('/api/wizard/autotune/apply'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ candidateKey: r.candidate.key })
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.error ?? `HTTP ${res.status}`);
+			}
+			toastStore.trigger({ message: `Applied: ${r.candidate.label}`, background: 'preset-filled-success-500' });
+		} catch (error) {
+			toastStore.trigger({
+				message: error instanceof Error ? error.message : 'Failed to apply candidate',
+				background: 'preset-filled-error-500'
+			});
+		}
+	}
+
 	async function calibrateNow() {
 		if (calibrateBusy) return;
 		calibrateBusy = true;
@@ -308,16 +398,21 @@
 
 	onMount(() => {
 		fetchAll();
+		fetchTuneStatus();
 		refreshTimer = setInterval(fetchAll, 15000);
 		// Faster poll for the walk test progress while a session runs
 		walkTimer = setInterval(() => {
 			if (walkStatus?.active) fetchWalkStatus();
+		}, 3000);
+		tuneTimer = setInterval(() => {
+			if (tuneState?.running) fetchTuneStatus();
 		}, 3000);
 	});
 
 	onDestroy(() => {
 		if (refreshTimer) clearInterval(refreshTimer);
 		if (walkTimer) clearInterval(walkTimer);
+		if (tuneTimer) clearInterval(tuneTimer);
 	});
 </script>
 
@@ -406,22 +501,23 @@
 				</header>
 				<p class="text-sm text-surface-600-400 mb-3">Runs a fit cycle immediately instead of waiting for the next scheduled interval. Useful right after moving a node or changing its coordinates.</p>
 				{#if $calibration?.optimizerState}
+					<!-- Same metric order as the Nodes calibration page: RMSE, R, Best RMSE, Best R -->
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
 						<div class="card p-3 preset-tonal">
-							<div class="text-xl font-bold text-primary-500">{$calibration?.r?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">Current R</div>
-						</div>
-						<div class="card p-3 preset-tonal">
 							<div class="text-xl font-bold text-primary-500">{$calibration?.rmse?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">Current RMSE</div>
+							<div class="text-xs text-surface-600-400">RMSE</div>
 						</div>
 						<div class="card p-3 preset-tonal">
-							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestR?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">Best R</div>
+							<div class="text-xl font-bold text-primary-500">{$calibration?.r?.toFixed(3) ?? 'n/a'}</div>
+							<div class="text-xs text-surface-600-400">R</div>
 						</div>
 						<div class="card p-3 preset-tonal">
 							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestRMSE?.toFixed(3) ?? 'n/a'}</div>
 							<div class="text-xs text-surface-600-400">Best RMSE</div>
+						</div>
+						<div class="card p-3 preset-tonal">
+							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestR?.toFixed(3) ?? 'n/a'}</div>
+							<div class="text-xs text-surface-600-400">Best R</div>
 						</div>
 					</div>
 				{/if}
@@ -580,7 +676,70 @@
 							</tbody>
 						</table>
 					</div>
-					<p class="text-xs text-surface-600-400 mt-2">Points live in memory - an app restart clears them. Points whose receiving node was moved afterwards are ignored automatically.</p>
+					<p class="text-xs text-surface-600-400 mt-2">Points persist across restarts. Points whose receiving node was moved afterwards are ignored automatically.</p>
+				{/if}
+			</div>
+
+			<!-- 6. Optimizer auto-tune -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Optimizer Tuning</h2>
+					{#if tuneState?.running}
+						<span class="badge preset-filled-primary-500">Running</span>
+					{:else}
+						<button class="btn preset-filled-primary-500" onclick={startAutoTune} disabled={tuneBusy}>Run auto-tune</button>
+					{/if}
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Fits each optimizer/penalty candidate on the collected measurements and scores it on held-out node pairs the fit never saw (3-fold cross-validation) - guards against configurations that only look good on their own training data. Walk test points count as extra data. Note: locator settings like nadaraya_watson bandwidth affect live positioning, not the fit, and cannot be tuned this way.
+				</p>
+
+				{#if tuneState?.running}
+					<p class="text-sm">
+						{tuneState.phase ?? 'Working'} ({tuneState.candidatesDone}/{tuneState.candidatesTotal} candidates done, {tuneState.pairCount} pairs / {tuneState.measureCount} measures)
+					</p>
+				{:else if tuneState?.error}
+					<p class="text-sm text-error-500">{tuneState.error}</p>
+				{/if}
+
+				{#if tuneState && !tuneState.running && tuneState.results.length > 0}
+					{#if tuneState.recommendation}
+						<p class="text-sm font-semibold mb-2">{tuneState.recommendation}</p>
+					{/if}
+					<div class="overflow-x-auto">
+						<table class="table table-compact">
+							<thead>
+								<tr><th>Candidate</th><th>Holdout</th><th>Train</th><th>R</th><th>RMSE</th><th></th></tr>
+							</thead>
+							<tbody>
+								{#if tuneState.baseline}
+									<tr class="opacity-75">
+										<td>{tuneState.baseline.candidate.label}</td>
+										<td>{tuneState.baseline.meanHoldoutComposite.toFixed(3)}</td>
+										<td>-</td>
+										<td>{tuneState.baseline.meanHoldoutR.toFixed(3)}</td>
+										<td>{tuneState.baseline.meanHoldoutRmse.toFixed(3)}</td>
+										<td><span class="badge preset-filled-surface-500">current</span></td>
+									</tr>
+								{/if}
+								{#each tuneState.results as r, i (r.candidate.key)}
+									<tr>
+										<td>{r.candidate.label}{r.isCurrent ? ' (current)' : ''}</td>
+										<td class={i === 0 ? 'font-bold text-success-500' : ''}>{r.meanHoldoutComposite.toFixed(3)}</td>
+										<td>{Number.isNaN(r.meanTrainComposite) ? '-' : r.meanTrainComposite.toFixed(3)}</td>
+										<td>{r.meanHoldoutR.toFixed(3)}</td>
+										<td>{r.meanHoldoutRmse.toFixed(3)}</td>
+										<td>
+											{#if !r.isCurrent}
+												<button class="btn btn-sm preset-filled-warning-500" onclick={() => applyTuneCandidate(r)}>Apply</button>
+											{/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-2">Holdout = mean composite score on pairs excluded from fitting (higher is better). A big train-vs-holdout gap indicates overfitting.</p>
 				{/if}
 			</div>
 		{/if}

@@ -18,6 +18,13 @@ public class PerNodeAbsorptionRxTx : IOptimizer
 
     public string Name => "Per Node Absorption Rx Tx Adj";
 
+    /// <summary>
+    /// When set, overrides config weights.absorption_penalty for this instance - lets the
+    /// auto-tune wizard fit candidate penalty values against the same data without mutating
+    /// (or racing on) the live shared config.
+    /// </summary>
+    public double? AbsorptionPenaltyOverride { get; init; }
+
     public OptimizationResults Optimize(OptimizationSnapshot os, Dictionary<string, NodeSettings> existingSettings)
     {
         var or = new OptimizationResults();
@@ -70,7 +77,7 @@ public class PerNodeAbsorptionRxTx : IOptimizer
         if (optimization == null) return or;
 
         var targetAbsorption = optimization.AbsorptionMin + (optimization.AbsorptionMax - optimization.AbsorptionMin) / 2.0;
-        double penaltyWeight = optimization.AbsorptionPenaltyWeight;
+        double penaltyWeight = AbsorptionPenaltyOverride ?? optimization.AbsorptionPenaltyWeight;
 
         // Pre-calculate weights for each node based on RssiVar
         var nodeWeights = new Dictionary<Measure, double>();
