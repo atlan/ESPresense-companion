@@ -235,6 +235,33 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
         }
     }
 
+    [HttpDelete("api/floorplan/floor/{id}")]
+    public async Task<IActionResult> DeleteFloor(string id)
+    {
+        var c = configLoader.Config;
+        if (c == null) return StatusCode(500, new { error = "Config not loaded" });
+
+        var floors = c.Floors.ToList();
+        var floor = floors.FirstOrDefault(f => string.Equals(f.GetId(), id, StringComparison.OrdinalIgnoreCase));
+        if (floor == null) return NotFound(new { error = $"Floor '{id}' not found" });
+
+        // Refuse while nodes still reference the floor - deleting would leave them dangling
+        // (invisible on every map, silently excluded from per-floor locating).
+        var referencing = c.Nodes
+            .Where(n => n.Floors?.Contains(id, StringComparer.OrdinalIgnoreCase) ?? false)
+            .Select(n => n.Name ?? n.GetId())
+            .ToList();
+        if (referencing.Count > 0)
+            return BadRequest(new { error = $"Floor '{id}' is still referenced by node(s): {string.Join(", ", referencing)}. Move or delete them first." });
+
+        EnsureBackup();
+        floors.Remove(floor);
+        c.Floors = floors.ToArray();
+        await configLoader.SaveSectionAsync("floors", c.Floors);
+        Log.Information("Floorplan editor: floor {Floor} deleted", id);
+        return Ok(new { deleted = true });
+    }
+
     public class FloorBoundsRequest
     {
         public string FloorId { get; set; } = "";

@@ -3,7 +3,7 @@
 	import { zoomIdentity } from 'd3-zoom';
 	import { config, nodes } from '$lib/stores';
 	import { screenToMap } from '$lib/mapcoords';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom } from '$lib/floorplanEdit';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage } from '$lib/floorplanEdit';
 	import type { LayerCakeContext } from '$lib/types';
 
 	export let transform = zoomIdentity;
@@ -52,6 +52,16 @@
 	let dragNodeId: string | null = null;
 	let dragNodeZ = 0;
 	let dragVertex: { roomId: string; index: number; stored: number[][] } | null = null;
+	let dragImage: { grabDx: number; grabDy: number } | null = null;
+
+	function imageDown(e: PointerEvent) {
+		if (!$traceImage?.movable) return;
+		e.stopPropagation();
+		e.preventDefault();
+		const m = toMap(e);
+		if (!m) return;
+		dragImage = { grabDx: m.x - $traceImage.x, grabDy: m.y - $traceImage.y };
+	}
 
 	function nodeDown(e: PointerEvent, n: { id: string; location: { z: number } }) {
 		e.stopPropagation();
@@ -78,12 +88,17 @@
 			const pts = ($roomEdits[dragVertex.roomId] ?? dragVertex.stored).map((p) => [...p]);
 			pts[dragVertex.index] = [round(m.x), round(m.y)];
 			$roomEdits = { ...$roomEdits, [dragVertex.roomId]: pts };
+		} else if (dragImage && $traceImage) {
+			const m = toMap(e);
+			if (!m) return;
+			$traceImage = { ...$traceImage, x: round(m.x - dragImage.grabDx), y: round(m.y - dragImage.grabDy) };
 		}
 	}
 
 	function endDrag() {
 		dragNodeId = null;
 		dragVertex = null;
+		dragImage = null;
 	}
 
 	function insertVertex(e: MouseEvent, roomId: string, stored: number[][], index: number) {
@@ -148,6 +163,29 @@
 
 {#if $editMode !== 'off'}
 	<g transform={transform.toString()}>
+		{#if $traceImage}
+			{@const ix0 = $xScale($traceImage.x)}
+			{@const ix1 = $xScale($traceImage.x + $traceImage.widthM)}
+			{@const iy0 = $yScale($traceImage.y)}
+			{@const iy1 = $yScale($traceImage.y + $traceImage.widthM * $traceImage.aspect)}
+			<!-- Tracing image in map coordinates (pans/zooms with the map). Both corners are
+			     scaled and min/abs'd so flipped axes (map.flip_x/flip_y) render correctly.
+			     pointer-events only while 'movable' so drawing clicks pass through otherwise. -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<image
+				href={$traceImage.url}
+				x={Math.min(ix0, ix1)}
+				y={Math.min(iy0, iy1)}
+				width={Math.abs(ix1 - ix0)}
+				height={Math.abs(iy1 - iy0)}
+				opacity={$traceImage.opacity}
+				preserveAspectRatio="none"
+				style="pointer-events: {$traceImage.movable ? 'all' : 'none'}; cursor: {$traceImage.movable ? 'move' : 'default'};"
+				onpointerdown={imageDown}
+				onmousedown={blockZoom}
+				ontouchstart={blockZoom}
+			/>
+		{/if}
 		<!-- Transparent capture layer for placement/draft clicks (below handles) -->
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<rect

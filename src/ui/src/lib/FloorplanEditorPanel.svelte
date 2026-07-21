@@ -3,7 +3,7 @@
 	import { config, nodes } from '$lib/stores';
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { showConfirm } from '$lib/modal/modalStore';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, resetEditState } from '$lib/floorplanEdit';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, resetEditState } from '$lib/floorplanEdit';
 
 	const toastStore = getToastStore();
 
@@ -42,6 +42,73 @@
 
 	let newFloorName = '';
 	let newFloorBounds: number[][] | null = null;
+	let renameFloorName = '';
+	let lastFloorId: string | null = null;
+	let traceInput: HTMLInputElement;
+
+	$: if (floorId !== lastFloorId) {
+		lastFloorId = floorId;
+		renameFloorName = floor?.name ?? '';
+	}
+
+	async function renameFloor() {
+		if (!floorId || !renameFloorName.trim() || busy) return;
+		busy = true;
+		try {
+			await post('/api/floorplan/floor', { floorId, name: renameFloorName.trim() });
+			ok(`Floor renamed to '${renameFloorName.trim()}'`);
+		} catch (e) {
+			fail(e, 'Failed to rename floor');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function deleteFloor() {
+		if (!floorId || busy) return;
+		const confirmed = await showConfirm({
+			title: 'Delete floor',
+			body: `Delete floor '${floor?.name ?? floorId}' including all its rooms? Nodes referencing it block the deletion (move them first).`
+		});
+		if (!confirmed) return;
+		busy = true;
+		try {
+			const res = await fetch(apiPath(`/api/floorplan/floor/${floorId}`), { method: 'DELETE' });
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.error ?? `HTTP ${res.status}`);
+			}
+			ok('Floor deleted');
+		} catch (e) {
+			fail(e, 'Failed to delete floor');
+		} finally {
+			busy = false;
+		}
+	}
+
+	function handleTraceUpload(event: Event) {
+		const file = (event.target as HTMLInputElement).files?.[0];
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = (e) => {
+			const url = e.target?.result as string;
+			const img = new Image();
+			img.onload = () => {
+				const boundsW = floor?.bounds?.[1]?.[0] ?? 10;
+				$traceImage = {
+					url,
+					x: 0,
+					y: 0,
+					widthM: boundsW,
+					aspect: img.height / img.width,
+					opacity: 0.4,
+					movable: true
+				};
+			};
+			img.src = url;
+		};
+		reader.readAsDataURL(file);
+	}
 
 	function startNewFloor() {
 		// Prefill x/y extent from the current floor, stack the z range on top of the highest floor.
@@ -232,7 +299,7 @@
 	}
 </script>
 
-<div class="absolute top-2 left-2 z-10 flex flex-col gap-2 max-w-xs">
+<div class="absolute top-2 left-2 z-10 flex flex-col gap-2 w-80 max-w-[90vw]">
 	<div class="flex gap-1 bg-surface-100-900/90 rounded-lg p-1 shadow">
 		<button class="btn btn-sm {$editMode === 'off' ? 'preset-filled-primary-500' : 'preset-tonal'}" onclick={() => setMode('off')}>View</button>
 		<button class="btn btn-sm {$editMode === 'nodes' ? 'preset-filled-primary-500' : 'preset-tonal'}" onclick={() => setMode('nodes')}>Edit Nodes</button>
@@ -299,6 +366,11 @@
 				<p class="text-xs text-surface-600-400">Drag corners to move them. Click a small edge dot to insert a corner, double-click a corner to remove it. The name is editable above.</p>
 			{:else}
 				<p class="text-xs">Click a room to edit its outline.</p>
+				<div class="flex gap-2 items-center">
+					<input class="input" bind:value={renameFloorName} placeholder="floor name" />
+					<button class="btn btn-sm preset-tonal" onclick={renameFloor} disabled={busy || !renameFloorName.trim() || renameFloorName.trim() === floor?.name}>Rename</button>
+					<button class="btn btn-sm preset-filled-error-500" onclick={deleteFloor} disabled={busy}>Delete</button>
+				</div>
 				<button class="btn btn-sm preset-tonal" onclick={() => ($draftRoom = [])}>New room</button>
 				{#if newFloorBounds}
 					<div class="space-y-1">
@@ -337,6 +409,31 @@
 					</div>
 				{:else}
 					<button class="btn btn-sm preset-tonal" onclick={startBoundsEdit}>Edit floor bounds</button>
+				{/if}
+
+				<!-- Tracing image (scale template) -->
+				<input bind:this={traceInput} type="file" accept=".svg,.png,.jpg,.jpeg,.webp" onchange={handleTraceUpload} style="display: none;" />
+				{#if $traceImage}
+					<div class="space-y-1 border-t border-surface-300-700 pt-2">
+						<p class="font-semibold text-xs">Tracing image</p>
+						<div class="grid grid-cols-3 gap-1">
+							<label class="label text-xs"><span>X</span><input class="input" type="number" step="0.1" bind:value={$traceImage.x} /></label>
+							<label class="label text-xs"><span>Y</span><input class="input" type="number" step="0.1" bind:value={$traceImage.y} /></label>
+							<label class="label text-xs"><span>Width (m)</span><input class="input" type="number" step="0.1" min="0.5" bind:value={$traceImage.widthM} /></label>
+						</div>
+						<label class="label text-xs"><span>Opacity: {Math.round($traceImage.opacity * 100)}%</span>
+							<input class="input" type="range" min="0.1" max="1" step="0.05" bind:value={$traceImage.opacity} />
+						</label>
+						<div class="flex gap-2">
+							<button class="btn btn-sm {$traceImage.movable ? 'preset-filled-warning-500' : 'preset-tonal'}" onclick={() => ($traceImage = $traceImage ? { ...$traceImage, movable: !$traceImage.movable } : null)}>
+								{$traceImage.movable ? 'Moving (drag image)' : 'Move'}
+							</button>
+							<button class="btn btn-sm preset-tonal" onclick={() => ($traceImage = null)}>Remove</button>
+						</div>
+						<p class="text-xs text-surface-600-400">Set the width to the real-world width of the imaged area (e.g. measure one known wall), drag the image into place, then lower opacity and draw rooms over it. Session-only - not saved.</p>
+					</div>
+				{:else}
+					<button class="btn btn-sm preset-tonal" onclick={() => traceInput.click()}>Load tracing image</button>
 				{/if}
 			{/if}
 		</div>

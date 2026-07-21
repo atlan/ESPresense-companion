@@ -24,6 +24,22 @@ export const roomEdits = writable<Record<string, number[][]>>({});
 /** In-progress new-room vertex list (click to append), null = not drafting. */
 export const draftRoom = writable<number[][] | null>(null);
 
+/**
+ * Session-only tracing image rendered in MAP coordinates below the editor layers, so it pans and
+ * zooms with the map - lets the user draw rooms over a scanned floor plan. widthM sets the scale
+ * (image height follows the aspect ratio); movable=true routes drags to the image.
+ */
+export interface TraceImage {
+	url: string;
+	x: number;
+	y: number;
+	widthM: number;
+	aspect: number; // height / width of the source image
+	opacity: number;
+	movable: boolean;
+}
+export const traceImage = writable<TraceImage | null>(null);
+
 export function resetEditState() {
 	selectedNodeId.set(null);
 	nodeEdits.set({});
@@ -32,4 +48,6 @@ export function resetEditState() {
 	selectedRoomId.set(null);
 	roomEdits.set({});
 	draftRoom.set(null);
+	// traceImage intentionally survives mode switches - losing the aligned image on an
+	// accidental mode change would be infuriating; it's cleared explicitly via its Remove button.
 }
