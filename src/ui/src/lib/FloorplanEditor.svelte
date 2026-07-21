@@ -123,8 +123,24 @@
 		$selectedRoomId = roomId;
 	}
 
-	function polyPath(pts: number[][]): string {
-		return `M${pts.map((p) => [$xScale(p[0]), $yScale(p[1])]).join('L')}Z`;
+	// Config polygons are usually explicitly closed (first point repeated as last) - drop the
+	// duplicate for editing so the user doesn't see/drag a phantom extra corner sitting exactly
+	// on the first one (dragging it produced degenerate shapes).
+	function openPolygon(pts: number[][]): number[][] {
+		if (pts.length >= 2) {
+			const f = pts[0];
+			const l = pts[pts.length - 1];
+			if (Math.abs(f[0] - l[0]) < 1e-9 && Math.abs(f[1] - l[1]) < 1e-9) return pts.slice(0, -1);
+		}
+		return pts;
+	}
+
+	// Scales are passed IN so the template expression references $xScale/$yScale directly -
+	// reading them only inside the function body hides the dependency from Svelte's reactivity,
+	// and the path then doesn't re-render when the scales change on browser resize (the handles
+	// reference the scales inline and moved correctly, the outline didn't).
+	function polyPath(pts: number[][], xs: (v: number) => number, ys: (v: number) => number): string {
+		return `M${pts.map((p) => [xs(p[0]), ys(p[1])]).join('L')}Z`;
 	}
 </script>
 
@@ -150,7 +166,7 @@
 				{@const pts = $roomEdits[room.id] ?? room.points}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<path
-					d={polyPath(pts)}
+					d={polyPath(pts, $xScale, $yScale)}
 					fill="transparent"
 					stroke={$selectedRoomId === room.id ? '#f59e0b' : 'transparent'}
 					stroke-width={2 / transform.k}
@@ -163,7 +179,7 @@
 			     (SVG paint order = document order; corner handles sit exactly on shared edges,
 			     where a neighboring room's interior would otherwise swallow the pointer events) -->
 			{#each (floor?.rooms ?? []).filter((r) => r.id === $selectedRoomId) as room (room.id)}
-				{@const pts = $roomEdits[room.id] ?? room.points}
+				{@const pts = openPolygon($roomEdits[room.id] ?? room.points)}
 				{#each pts as p, i (i)}
 					{@const next = pts[(i + 1) % pts.length]}
 					<!-- Edge midpoint: click to insert a vertex -->
@@ -175,7 +191,7 @@
 						fill="#94a3b8"
 						opacity="0.7"
 						style="cursor: copy; pointer-events: all;"
-						onclick={(e) => insertVertex(e, room.id, room.points, i)}
+						onclick={(e) => insertVertex(e, room.id, pts, i)}
 						onpointerdown={blockZoom}
 						onmousedown={blockZoom}
 						ontouchstart={blockZoom}
@@ -192,10 +208,10 @@
 						stroke="white"
 						stroke-width={1.5 / transform.k}
 						style="cursor: grab; pointer-events: all;"
-						onpointerdown={(e) => vertexDown(e, room.id, i, room.points)}
+						onpointerdown={(e) => vertexDown(e, room.id, i, pts)}
 						onmousedown={blockZoom}
 						ontouchstart={blockZoom}
-						ondblclick={(e) => removeVertex(e, room.id, room.points, i)}
+						ondblclick={(e) => removeVertex(e, room.id, pts, i)}
 					/>
 				{/each}
 			{/each}

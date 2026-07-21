@@ -104,9 +104,19 @@ public class ConfigLoader : BackgroundService
 
         string replaced;
         if (match.Success)
-            replaced = text[..match.Index] + sectionYaml + text[(match.Index + match.Length)..];
+        {
+            // The section pattern's trailing `\n\s*` can consume the newline BEFORE a following
+            // top-level comment line - without re-adding a separator, the remainder gets glued
+            // onto the serialized section's last line (e.g. "color: '#7F7F7F'# some comment"),
+            // which is invalid or silently comment-eating YAML.
+            var rest = text[(match.Index + match.Length)..];
+            var separator = rest.Length > 0 && !rest.StartsWith("\n") ? "\n" : "";
+            replaced = text[..match.Index] + sectionYaml + separator + rest;
+        }
         else
+        {
             replaced = text.TrimEnd() + "\n\n" + sectionYaml + "\n";
+        }
 
         await File.WriteAllTextAsync(_configPath, replaced);
     }
