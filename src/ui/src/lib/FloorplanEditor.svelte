@@ -309,6 +309,20 @@
 					stroke-width={2 / transform.k}
 					stroke-dasharray={`${6 / transform.k} ${4 / transform.k}`}
 				/>
+				{#if $draftRoom.length >= 3}
+					<!-- Implicit closing edge: Finish will close the outline here - shown fainter so
+					     it's obvious the polygon closes itself without re-clicking the start point. -->
+					<line
+						x1={$xScale($draftRoom[$draftRoom.length - 1][0])}
+						y1={$yScale($draftRoom[$draftRoom.length - 1][1])}
+						x2={$xScale($draftRoom[0][0])}
+						y2={$yScale($draftRoom[0][1])}
+						stroke="#22c55e"
+						stroke-opacity="0.35"
+						stroke-width={2 / transform.k}
+						stroke-dasharray={`${3 / transform.k} ${5 / transform.k}`}
+					/>
+				{/if}
 				{#each $draftRoom as p, i (i)}
 					<circle cx={$xScale(p[0])} cy={$yScale(p[1])} r={hrSmall} fill="#22c55e" />
 				{/each}

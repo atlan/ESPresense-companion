@@ -394,12 +394,15 @@
 <div class="absolute top-2 left-2 z-10 flex flex-col gap-2 w-80 max-w-[90vw]">
 	<div class="flex gap-1 bg-surface-100-900/90 rounded-lg p-1 shadow">
 		<button class="btn btn-sm {$editMode === 'off' ? 'preset-filled-primary-500' : 'preset-tonal'}" onclick={() => setMode('off')}>View</button>
-		<button class="btn btn-sm {$editMode === 'nodes' ? 'preset-filled-primary-500' : 'preset-tonal'}" onclick={() => setMode('nodes')}>Edit Nodes</button>
-		<button class="btn btn-sm {$editMode === 'rooms' ? 'preset-filled-primary-500' : 'preset-tonal'}" onclick={() => setMode('rooms')}>Edit Rooms</button>
+		<button class="btn btn-sm {$editMode !== 'off' ? 'preset-filled-primary-500' : 'preset-tonal'}" onclick={() => setMode('rooms')}>Edit</button>
 	</div>
 
 	{#if $editMode === 'nodes'}
 		<div class="bg-surface-100-900/90 rounded-lg p-3 shadow space-y-2 text-sm">
+			<div class="flex items-center justify-between">
+				<p class="font-semibold text-xs">Nodes</p>
+				<button class="btn btn-sm preset-tonal" onclick={() => ($editMode = 'rooms')}>Back</button>
+			</div>
 			{#if $pendingNode}
 				<p class="font-semibold">New node at ({$pendingNode.x}, {$pendingNode.y})</p>
 				<input class="input" placeholder="node id (e.g. kitchen_2)" bind:value={newNodeId} list="floorplan-known-nodes" />
@@ -447,7 +450,7 @@
 					<button class="btn btn-sm preset-filled-success-500" onclick={finishDraftRoom} disabled={busy || $draftRoom.length < 3 || !newRoomName.trim()}>Finish</button>
 					<button class="btn btn-sm preset-tonal" onclick={() => ($draftRoom = null)}>Cancel</button>
 				</div>
-				<p class="text-xs text-surface-600-400">Click the map to add corner points (at least 3).</p>
+				<p class="text-xs text-surface-600-400">Click the map to add corner points (at least 3). Finish closes the outline back to the first point automatically - no need to click the start again.</p>
 			{:else if selRoom}
 				<input class="input font-semibold" bind:value={roomName} placeholder="room name" />
 				<div class="flex gap-2">
@@ -463,7 +466,10 @@
 					<button class="btn btn-sm preset-tonal" onclick={renameFloor} disabled={busy || !renameFloorName.trim() || renameFloorName.trim() === floor?.name}>Rename</button>
 					<button class="btn btn-sm preset-filled-error-500" onclick={deleteFloor} disabled={busy}>Delete</button>
 				</div>
-				<button class="btn btn-sm preset-tonal" onclick={() => ($draftRoom = [])}>New room</button>
+				<div class="flex gap-2">
+					<button class="btn btn-sm preset-tonal" onclick={() => ($editMode = 'nodes')}>Edit nodes</button>
+					<button class="btn btn-sm preset-tonal" onclick={() => ($draftRoom = [])}>New room</button>
+				</div>
 				{#if newFloorBounds}
 					<div class="space-y-1">
 						<p class="font-semibold text-xs">New floor</p>

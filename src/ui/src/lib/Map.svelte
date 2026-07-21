@@ -156,7 +156,8 @@
 		{#if editable}
 			<FloorplanEditorPanel bind:floorId />
 		{/if}
-		<div class="absolute bottom-14 right-2 z-10 flex flex-col gap-1">
+		<!-- bottom-24 clears the coordinate readout box in the bottom-right corner -->
+		<div class="absolute bottom-24 right-2 z-10 flex flex-col gap-1">
 			<button class="btn-icon preset-tonal shadow" onclick={() => zoomBy(1.4)} title="Zoom in" aria-label="Zoom in">+</button>
 			<button class="btn-icon preset-tonal shadow" onclick={() => zoomBy(1 / 1.4)} title="Zoom out" aria-label="Zoom out">−</button>
 			<button class="btn-icon preset-tonal shadow" onclick={zoomReset} title="Reset zoom" aria-label="Reset zoom">⌂</button>
