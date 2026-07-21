@@ -177,6 +177,8 @@
 			{@const ix1 = $xScale($traceImage.x + $traceImage.widthM)}
 			{@const iy0 = $yScale($traceImage.y)}
 			{@const iy1 = $yScale($traceImage.y + $traceImage.widthM * $traceImage.aspect)}
+			{@const icx = (ix0 + ix1) / 2}
+			{@const icy = (iy0 + iy1) / 2}
 			<!-- Tracing image in map coordinates (pans/zooms with the map). Both corners are
 			     scaled and min/abs'd so flipped axes (map.flip_x/flip_y) render correctly.
 			     pointer-events only while 'movable' so drawing clicks pass through otherwise. -->
@@ -189,6 +191,7 @@
 				height={Math.abs(iy1 - iy0)}
 				opacity={$traceImage.opacity}
 				preserveAspectRatio="none"
+				transform={$traceImage.rotation ? `rotate(${$traceImage.rotation}, ${icx}, ${icy})` : undefined}
 				style="pointer-events: {$traceImage.movable ? 'all' : 'none'}; cursor: {$traceImage.movable ? 'move' : 'default'};"
 				onpointerdown={imageDown}
 				onmousedown={blockZoom}

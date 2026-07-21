@@ -37,7 +37,9 @@ export interface TraceImage {
 	aspect: number; // height / width of the source image
 	opacity: number;
 	movable: boolean;
-	/** True once "Set origin" was used - the image is then locked against dragging. */
+	/** Rotation in degrees around the image center (90-degree steps + fine adjustment). */
+	rotation: number;
+	/** True once "Set origin" was used - the image is then locked against dragging/rotating. */
 	originSet?: boolean;
 }
 export const traceImage = writable<TraceImage | null>(null);

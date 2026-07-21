@@ -44,11 +44,20 @@
 	let newFloorBounds: number[][] | null = null;
 	let renameFloorName = '';
 	let lastFloorId: string | null = null;
+	let seededFloorName: string | null = null;
 	let traceInput: HTMLInputElement;
 
-	$: if (floorId !== lastFloorId) {
-		lastFloorId = floorId;
-		renameFloorName = floor?.name ?? '';
+	// Seed the rename field when the floor changes - AND when the floor's name first arrives.
+	// Right after creating a floor we switch to its tab before the config reload delivers it
+	// (~1s), so the first seed attempt finds no name; re-seed once it shows up (but never while
+	// the user is editing - seededFloorName guards against overwriting typed input).
+	$: {
+		const name = floor?.name ?? null;
+		if (floorId !== lastFloorId || (seededFloorName === null && name !== null)) {
+			lastFloorId = floorId;
+			seededFloorName = name;
+			renameFloorName = name ?? '';
+		}
 	}
 
 	async function renameFloor() {
@@ -139,6 +148,11 @@
 		ok('Scale applied - the clicked distance now measures ' + realDist + 'm');
 	}
 
+	function rotateImage(delta: number) {
+		if (!$traceImage || $traceImage.originSet) return;
+		$traceImage = { ...$traceImage, rotation: (($traceImage.rotation + delta) % 360 + 360) % 360 };
+	}
+
 	function startBoundsDraw() {
 		$boundsPoints = [];
 		$imageTool = 'bounds';
@@ -182,6 +196,7 @@
 					aspect: img.height / img.width,
 					opacity: 0.4,
 					movable: true,
+					rotation: 0,
 					originSet: false
 				};
 			};
@@ -556,7 +571,12 @@
 									{$traceImage.originSet ? 'Locked (origin set)' : $traceImage.movable ? 'Moving (drag image)' : 'Move'}
 								</button>
 							</div>
-							<div class="flex flex-wrap gap-2">
+							<div class="flex flex-wrap items-center gap-2">
+								<button class="btn btn-sm preset-tonal" onclick={() => rotateImage(-90)} disabled={$traceImage.originSet} title="Rotate 90° counter-clockwise">⟲ 90°</button>
+								<button class="btn btn-sm preset-tonal" onclick={() => rotateImage(90)} disabled={$traceImage.originSet} title="Rotate 90° clockwise">⟳ 90°</button>
+								<label class="label text-xs flex items-center gap-1"><span>°</span>
+									<input class="input w-20" type="number" step="0.5" bind:value={$traceImage.rotation} disabled={$traceImage.originSet} />
+								</label>
 								<button class="btn btn-sm preset-tonal" onclick={() => ($traceImage = null)}>Remove</button>
 							</div>
 							<label class="label text-xs"><span>Opacity: {Math.round($traceImage.opacity * 100)}%</span>
