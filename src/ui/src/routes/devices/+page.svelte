@@ -1,5 +1,6 @@
 <script lang="ts">
 	import DevicesTable from '$lib/DevicesTable.svelte';
+	import DeviceConfigLists from '$lib/DeviceConfigLists.svelte';
 	import SlideToggle from '$lib/SlideToggle.svelte';
 	import { gotoDetail } from '$lib/urls';
 	import { showAll, wsManager } from '$lib/stores';
@@ -54,6 +55,10 @@
 
 		<section>
 			<DevicesTable onselected={(device) => gotoDetail(device)} />
+		</section>
+
+		<section>
+			<DeviceConfigLists />
 		</section>
 	</div>
 </div>

@@ -14,13 +14,16 @@ namespace ESPresense.Controllers
         private readonly State _state;
         private readonly DeviceCaptureService _captureService;
 
-        public DeviceController(ILogger<DeviceController> logger, DeviceSettingsStore deviceSettingsStore, DeviceService deviceService, State state, DeviceCaptureService captureService)
+        private readonly ConfigLoader _configLoader;
+
+        public DeviceController(ILogger<DeviceController> logger, DeviceSettingsStore deviceSettingsStore, DeviceService deviceService, State state, DeviceCaptureService captureService, ConfigLoader configLoader)
         {
             _logger = logger;
             _deviceSettingsStore = deviceSettingsStore;
             _deviceService = deviceService;
             _state = state;
             _captureService = captureService;
+            _configLoader = configLoader;
         }
 
         [HttpGet("{id}")]
@@ -51,6 +54,28 @@ namespace ESPresense.Controllers
         public async Task<IActionResult> Delete(string id)
         {
             var deleted = await _deviceService.DeleteAsync(id, "manual");
+
+            // Also drop matching entries from the config's tracked devices list - deleting only
+            // the runtime/MQTT state left a config-listed device to simply come back as tracked
+            // on its next advert. (Wildcard patterns like "phone:*" are never removed here - a
+            // single device deletion must not silently stop tracking a whole pattern.)
+            var c = _configLoader.Config;
+            if (c != null)
+            {
+                var devices = c.Devices.ToList();
+                var removed = devices.RemoveAll(d =>
+                    !string.IsNullOrEmpty(d.GetId()) &&
+                    !d.GetId().Contains('*') &&
+                    string.Equals(d.GetId(), id, StringComparison.OrdinalIgnoreCase));
+                if (removed > 0)
+                {
+                    c.Devices = devices.ToArray();
+                    await _configLoader.SaveSectionAsync("devices", c.Devices);
+                    _logger.LogInformation("Device {Id} also removed from config devices list", id.Replace("\r", "").Replace("\n", ""));
+                    deleted = true;
+                }
+            }
+
             return deleted ? NoContent() : NotFound();
         }
 

@@ -187,6 +187,31 @@
 		multiFloorEnabled: boolean;
 		nearestNodeEnabled: boolean;
 		nearestNodeMaxDistance?: number;
+		timeout: number;
+		awayTimeout: number;
+		filteringProcessNoise: number;
+		filteringMeasurementNoise: number;
+		filteringMaxVelocity: number;
+		filteringSmoothingWeight: number;
+		filteringMotionSigma: number;
+		historyEnabled: boolean;
+		historyDb: string;
+		historyExpireAfter: string;
+		mapFlipX: boolean;
+		mapFlipY: boolean;
+		mapWallThickness: number;
+		mapWallColor?: string;
+		mapWallOpacity?: number;
+		gpsLatitude?: number;
+		gpsLongitude?: number;
+		gpsElevation?: number;
+		gpsRotation?: number;
+		gpsReport: boolean;
+		mqttHost?: string;
+		mqttPort?: number;
+		mqttSsl?: boolean;
+		mqttUsername?: string;
+		mqttPassword?: string;
 	}
 
 	let settings: WizardSettings | null = null;
@@ -1008,7 +1033,70 @@
 							</div>
 						</div>
 					</div>
-					<p class="text-xs text-surface-600-400 mt-3">Writes the optimization and locators sections of config.yaml directly - changes apply within a few seconds (config is polled), no restart needed. correlation/rmse weights and floor assignments are deliberately not exposed here.</p>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+						<div>
+							<h3 class="font-semibold text-sm mb-2">General</h3>
+							<div class="grid grid-cols-2 gap-3">
+								<label class="label text-sm"><span>Timeout (s)</span><input class="input" type="number" min="5" bind:value={settings.timeout} /></label>
+								<label class="label text-sm"><span>Away timeout (s)</span><input class="input" type="number" min="10" bind:value={settings.awayTimeout} /></label>
+							</div>
+							<h3 class="font-semibold text-sm mb-2 mt-4">Filtering (Kalman)</h3>
+							<div class="grid grid-cols-2 gap-3">
+								<label class="label text-sm"><span>Process noise</span><input class="input" type="number" step="0.001" bind:value={settings.filteringProcessNoise} /></label>
+								<label class="label text-sm"><span>Measurement noise</span><input class="input" type="number" step="0.01" bind:value={settings.filteringMeasurementNoise} /></label>
+								<label class="label text-sm"><span>Max velocity (m/s)</span><input class="input" type="number" step="0.1" bind:value={settings.filteringMaxVelocity} /></label>
+								<label class="label text-sm"><span>Smoothing weight</span><input class="input" type="number" step="0.05" min="0" max="1" bind:value={settings.filteringSmoothingWeight} /></label>
+								<label class="label text-sm"><span>Motion sigma</span><input class="input" type="number" step="0.1" bind:value={settings.filteringMotionSigma} /></label>
+							</div>
+							<h3 class="font-semibold text-sm mb-2 mt-4">History</h3>
+							<div class="space-y-2">
+								<div class="flex items-center gap-3">
+									<input type="checkbox" class="checkbox" bind:checked={settings.historyEnabled} id="hist-en" />
+									<label for="hist-en" class="text-sm">enabled</label>
+								</div>
+								<label class="label text-sm"><span>DB</span><input class="input" bind:value={settings.historyDb} /></label>
+								<label class="label text-sm"><span>Expire after</span><input class="input" placeholder="24h" bind:value={settings.historyExpireAfter} /></label>
+							</div>
+						</div>
+						<div>
+							<h3 class="font-semibold text-sm mb-2">Map</h3>
+							<div class="space-y-2">
+								<div class="flex items-center gap-4">
+									<span class="flex items-center gap-2"><input type="checkbox" class="checkbox" bind:checked={settings.mapFlipX} id="map-fx" /><label for="map-fx" class="text-sm">flip_x</label></span>
+									<span class="flex items-center gap-2"><input type="checkbox" class="checkbox" bind:checked={settings.mapFlipY} id="map-fy" /><label for="map-fy" class="text-sm">flip_y</label></span>
+								</div>
+								<div class="grid grid-cols-3 gap-3">
+									<label class="label text-sm"><span>Wall thickness</span><input class="input" type="number" step="0.05" bind:value={settings.mapWallThickness} /></label>
+									<label class="label text-sm"><span>Wall color</span><input class="input" placeholder="#888888" bind:value={settings.mapWallColor} /></label>
+									<label class="label text-sm"><span>Wall opacity</span><input class="input" type="number" step="0.05" min="0" max="1" bind:value={settings.mapWallOpacity} /></label>
+								</div>
+							</div>
+							<h3 class="font-semibold text-sm mb-2 mt-4">GPS</h3>
+							<div class="grid grid-cols-2 gap-3">
+								<label class="label text-sm"><span>Latitude</span><input class="input" type="number" step="0.000001" bind:value={settings.gpsLatitude} /></label>
+								<label class="label text-sm"><span>Longitude</span><input class="input" type="number" step="0.000001" bind:value={settings.gpsLongitude} /></label>
+								<label class="label text-sm"><span>Elevation (m)</span><input class="input" type="number" step="0.1" bind:value={settings.gpsElevation} /></label>
+								<label class="label text-sm"><span>Rotation (°)</span><input class="input" type="number" step="0.1" bind:value={settings.gpsRotation} /></label>
+							</div>
+							<div class="flex items-center gap-3 mt-2">
+								<input type="checkbox" class="checkbox" bind:checked={settings.gpsReport} id="gps-rep" />
+								<label for="gps-rep" class="text-sm">report GPS position</label>
+							</div>
+							<h3 class="font-semibold text-sm mb-2 mt-4">MQTT</h3>
+							<p class="text-xs text-surface-600-400 mb-1">Leave host empty to use the Supervisor-provided broker (HA add-on default).</p>
+							<div class="grid grid-cols-2 gap-3">
+								<label class="label text-sm"><span>Host</span><input class="input" bind:value={settings.mqttHost} /></label>
+								<label class="label text-sm"><span>Port</span><input class="input" type="number" bind:value={settings.mqttPort} /></label>
+								<label class="label text-sm"><span>Username</span><input class="input" bind:value={settings.mqttUsername} /></label>
+								<label class="label text-sm"><span>Password</span><input class="input" type="password" bind:value={settings.mqttPassword} /></label>
+							</div>
+							<div class="flex items-center gap-3 mt-2">
+								<input type="checkbox" class="checkbox" bind:checked={settings.mqttSsl} id="mqtt-ssl" />
+								<label for="mqtt-ssl" class="text-sm">SSL</label>
+							</div>
+						</div>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-3">Writes these config.yaml sections directly - changes apply within a few seconds (config is polled), no restart needed. Changing MQTT to a wrong broker disconnects the companion from the fleet - the Supervisor default is usually right. correlation/rmse weights and floor assignments are deliberately not exposed here.</p>
 				{/if}
 			</div>
 		{/if}

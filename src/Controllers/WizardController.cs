@@ -237,6 +237,37 @@ public class WizardController(
         public bool MultiFloorEnabled { get; set; }
         public bool NearestNodeEnabled { get; set; }
         public double? NearestNodeMaxDistance { get; set; }
+
+        public int Timeout { get; set; }
+        public int AwayTimeout { get; set; }
+
+        public double FilteringProcessNoise { get; set; }
+        public double FilteringMeasurementNoise { get; set; }
+        public double FilteringMaxVelocity { get; set; }
+        public double FilteringSmoothingWeight { get; set; }
+        public double FilteringMotionSigma { get; set; }
+
+        public bool HistoryEnabled { get; set; }
+        public string HistoryDb { get; set; } = "";
+        public string HistoryExpireAfter { get; set; } = "";
+
+        public bool MapFlipX { get; set; }
+        public bool MapFlipY { get; set; }
+        public double MapWallThickness { get; set; }
+        public string? MapWallColor { get; set; }
+        public double? MapWallOpacity { get; set; }
+
+        public double? GpsLatitude { get; set; }
+        public double? GpsLongitude { get; set; }
+        public double? GpsElevation { get; set; }
+        public double? GpsRotation { get; set; }
+        public bool GpsReport { get; set; }
+
+        public string? MqttHost { get; set; }
+        public int? MqttPort { get; set; }
+        public bool? MqttSsl { get; set; }
+        public string? MqttUsername { get; set; }
+        public string? MqttPassword { get; set; }
     }
 
     [HttpGet("api/wizard/settings")]
@@ -257,7 +288,32 @@ public class WizardController(
             MleEnabled = c.Locators.Mle.Enabled,
             MultiFloorEnabled = c.Locators.MultiFloor.Enabled,
             NearestNodeEnabled = c.Locators.NearestNode.Enabled,
-            NearestNodeMaxDistance = c.Locators.NearestNode.MaxDistance
+            NearestNodeMaxDistance = c.Locators.NearestNode.MaxDistance,
+            Timeout = c.Timeout,
+            AwayTimeout = c.AwayTimeout,
+            FilteringProcessNoise = c.Filtering.ProcessNoise,
+            FilteringMeasurementNoise = c.Filtering.MeasurementNoise,
+            FilteringMaxVelocity = c.Filtering.MaxVelocity,
+            FilteringSmoothingWeight = c.Filtering.SmoothingWeight,
+            FilteringMotionSigma = c.Filtering.MotionSigma,
+            HistoryEnabled = c.History.Enabled,
+            HistoryDb = c.History.Database,
+            HistoryExpireAfter = c.History.ExpireAfter,
+            MapFlipX = c.Map.FlipX,
+            MapFlipY = c.Map.FlipY,
+            MapWallThickness = c.Map.WallThickness,
+            MapWallColor = c.Map.WallColor,
+            MapWallOpacity = c.Map.WallOpacity,
+            GpsLatitude = c.Gps.Latitude,
+            GpsLongitude = c.Gps.Longitude,
+            GpsElevation = c.Gps.Elevation,
+            GpsRotation = c.Gps.Rotation,
+            GpsReport = c.Gps.Report,
+            MqttHost = c.Mqtt.Host,
+            MqttPort = c.Mqtt.Port,
+            MqttSsl = c.Mqtt.Ssl,
+            MqttUsername = c.Mqtt.Username,
+            MqttPassword = c.Mqtt.Password
         });
     }
 
@@ -283,15 +339,106 @@ public class WizardController(
             c.Locators.NearestNode.Enabled = s.NearestNodeEnabled;
             c.Locators.NearestNode.MaxDistance = s.NearestNodeMaxDistance;
 
+            c.Timeout = Math.Clamp(s.Timeout, 5, 3600);
+            c.AwayTimeout = Math.Clamp(s.AwayTimeout, 10, 86400);
+
+            c.Filtering.ProcessNoise = s.FilteringProcessNoise;
+            c.Filtering.MeasurementNoise = s.FilteringMeasurementNoise;
+            c.Filtering.MaxVelocity = s.FilteringMaxVelocity;
+            c.Filtering.SmoothingWeight = s.FilteringSmoothingWeight;
+            c.Filtering.MotionSigma = s.FilteringMotionSigma;
+
+            c.History.Enabled = s.HistoryEnabled;
+            if (!string.IsNullOrWhiteSpace(s.HistoryDb)) c.History.Database = s.HistoryDb;
+            if (!string.IsNullOrWhiteSpace(s.HistoryExpireAfter)) c.History.ExpireAfter = s.HistoryExpireAfter;
+
+            c.Map.FlipX = s.MapFlipX;
+            c.Map.FlipY = s.MapFlipY;
+            c.Map.WallThickness = s.MapWallThickness;
+            c.Map.WallColor = string.IsNullOrWhiteSpace(s.MapWallColor) ? null : s.MapWallColor;
+            c.Map.WallOpacity = s.MapWallOpacity;
+
+            c.Gps.Latitude = s.GpsLatitude;
+            c.Gps.Longitude = s.GpsLongitude;
+            c.Gps.Elevation = s.GpsElevation;
+            c.Gps.Rotation = s.GpsRotation;
+            c.Gps.Report = s.GpsReport;
+
+            c.Mqtt.Host = string.IsNullOrWhiteSpace(s.MqttHost) ? null : s.MqttHost;
+            c.Mqtt.Port = s.MqttPort;
+            c.Mqtt.Ssl = s.MqttSsl;
+            c.Mqtt.Username = string.IsNullOrWhiteSpace(s.MqttUsername) ? null : s.MqttUsername;
+            c.Mqtt.Password = string.IsNullOrWhiteSpace(s.MqttPassword) ? null : s.MqttPassword;
+
             await configLoader.SaveSectionAsync("optimization", c.Optimization);
             await configLoader.SaveSectionAsync("locators", c.Locators);
-            Log.Information("Wizard settings saved (optimization + locators sections)");
+            await configLoader.SaveSectionAsync("timeout", c.Timeout);
+            await configLoader.SaveSectionAsync("away_timeout", c.AwayTimeout);
+            await configLoader.SaveSectionAsync("filtering", c.Filtering);
+            await configLoader.SaveSectionAsync("history", c.History);
+            await configLoader.SaveSectionAsync("map", c.Map);
+            await configLoader.SaveSectionAsync("gps", c.Gps);
+            await configLoader.SaveSectionAsync("mqtt", c.Mqtt);
+            Log.Information("Wizard settings saved (all editable config sections)");
             return Ok(new { saved = true });
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to save wizard settings");
             return StatusCode(500, new { error = "Failed to save settings" });
+        }
+    }
+
+    // ─── Tracked / excluded device patterns (config devices: / exclude_devices:) ─────
+
+    public class DeviceListEntry
+    {
+        public string? Name { get; set; }
+        public string? Id { get; set; }
+    }
+
+    public class DeviceListsRequest
+    {
+        public List<DeviceListEntry> Devices { get; set; } = new();
+        public List<DeviceListEntry> ExcludeDevices { get; set; } = new();
+    }
+
+    [HttpGet("api/config/devices")]
+    public IActionResult GetDeviceLists()
+    {
+        var c = configLoader.Config;
+        if (c == null) return StatusCode(500, new { error = "Config not loaded" });
+        return Ok(new
+        {
+            devices = c.Devices.Select(d => new DeviceListEntry { Name = d.Name, Id = d.Id }).ToList(),
+            excludeDevices = c.ExcludeDevices.Select(d => new DeviceListEntry { Name = d.Name, Id = d.Id }).ToList()
+        });
+    }
+
+    [HttpPost("api/config/devices")]
+    public async Task<IActionResult> SaveDeviceLists([FromBody] DeviceListsRequest req)
+    {
+        try
+        {
+            var c = configLoader.Config;
+            if (c == null) return StatusCode(500, new { error = "Config not loaded" });
+
+            static ConfigDevice[] ToConfig(List<DeviceListEntry> list) => list
+                .Where(e => !string.IsNullOrWhiteSpace(e.Id) || !string.IsNullOrWhiteSpace(e.Name))
+                .Select(e => new ConfigDevice { Name = string.IsNullOrWhiteSpace(e.Name) ? null : e.Name, Id = string.IsNullOrWhiteSpace(e.Id) ? null : e.Id })
+                .ToArray();
+
+            c.Devices = ToConfig(req.Devices);
+            c.ExcludeDevices = ToConfig(req.ExcludeDevices);
+            await configLoader.SaveSectionAsync("devices", c.Devices);
+            await configLoader.SaveSectionAsync("exclude_devices", c.ExcludeDevices);
+            Log.Information("Device lists saved: {Tracked} tracked, {Excluded} excluded", c.Devices.Length, c.ExcludeDevices.Length);
+            return Ok(new { saved = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to save device lists");
+            return StatusCode(500, new { error = "Failed to save device lists" });
         }
     }
 }

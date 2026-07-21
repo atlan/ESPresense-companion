@@ -81,7 +81,7 @@ public class ConfigLoader : BackgroundService
         return config;
     }
 
-    private static readonly HashSet<string> ProtectedSections = new(StringComparer.OrdinalIgnoreCase) { "map" };
+    private static readonly HashSet<string> ProtectedSections = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly ISerializer _serializer = new SerializerBuilder()
         .WithNamingConvention(UnderscoredNamingConvention.Instance)
