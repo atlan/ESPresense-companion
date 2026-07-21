@@ -2,11 +2,19 @@
 	import { getContext } from 'svelte';
 	import { zoomIdentity } from 'd3-zoom';
 	import { getToastStore } from '$lib/toast/toastStore';
+	import { nodes } from '$lib/stores';
 	import type { LayerCakeContext } from '$lib/types';
 	const toastStore = getToastStore();
 	export let transform = zoomIdentity;
+	export let floorId: string | null = null;
 	$: cursorX = 0;
 	$: cursorY = 0;
+	let snappedNode: string | null = null;
+
+	// Cursor within this many screen pixels of a node marker snaps the readout to the node's
+	// exact configured coordinates - the raw cursor position inside a marker circle is otherwise
+	// off by up to the marker radius (~0.2m at typical zoom), which reads like a config mismatch.
+	const SNAP_PX = 14;
 
 	let copiedCoords: string[] = [];
 	let hasFocus = false;
@@ -41,6 +49,20 @@
 
 			cursorX = $xScale.invert(transformedX);
 			cursorY = $yScale.invert(transformedY);
+			snappedNode = null;
+
+			for (const n of $nodes ?? []) {
+				if (!n.location) continue;
+				if (floorId && n.floors && !n.floors.includes(floorId)) continue;
+				const nx = $xScale(n.location.x) * transform.k + transform.x;
+				const ny = $yScale(n.location.y) * transform.k + transform.y;
+				if (Math.hypot(adjustedX - nx, adjustedY - ny) <= SNAP_PX) {
+					cursorX = n.location.x;
+					cursorY = n.location.y;
+					snappedNode = n.name ?? n.id;
+					break;
+				}
+			}
 		} catch (error) {
 			console.error('Error updating coordinates:', error);
 		}
@@ -88,9 +110,13 @@
 
 <svelte:window onmousemove={updateCoordinates} onkeydown={handleKeydown} onblur={handleFocusOut} />
 
-<g transform="translate({$width - 120}, {$height - 40})">
-	<rect width="110" height="30" rx="4" fill="#2563eb" class="shadow-lg" />
-	<text x="55" y="19" text-anchor="middle" fill="white" font-size="12">
-		X: {Math.round(cursorX * 10) / 10}, Y: {Math.round(cursorY * 10) / 10}
+<g transform="translate({$width - (snappedNode ? 190 : 120)}, {$height - 40})">
+	<rect width={snappedNode ? 180 : 110} height="30" rx="4" fill={snappedNode ? '#059669' : '#2563eb'} class="shadow-lg" />
+	<text x={snappedNode ? 90 : 55} y="19" text-anchor="middle" fill="white" font-size="12">
+		{#if snappedNode}
+			{snappedNode}: {Math.round(cursorX * 10) / 10}, {Math.round(cursorY * 10) / 10}
+		{:else}
+			X: {Math.round(cursorX * 10) / 10}, Y: {Math.round(cursorY * 10) / 10}
+		{/if}
 	</text>
 </g>

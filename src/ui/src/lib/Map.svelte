@@ -141,7 +141,7 @@
 {#if bounds}
 	<LayerCake x="0" y="1" xRange={getXRange} yRange={getYRange} flatData={squareBounds} padding={{ top: 16, left: 16, bottom: 16, right: 16 }}>
 		<Svg bind:element={svg}>
-			<MapCoordinates {transform} />
+			<MapCoordinates {transform} {floorId} />
 			<AxisX {transform} />
 			<AxisY {transform} />
 			<Rooms {transform} {floorId} />
