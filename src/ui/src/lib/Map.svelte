@@ -123,6 +123,15 @@
 
 	setContext('colors', scaleOrdinal(schemeCategory10));
 
+	// On-screen zoom controls - wheel zoom needs Shift held and is easy to miss.
+	function zoomBy(factor: number) {
+		if (svg) select(svg).transition().duration(150).call(handler.scaleBy, factor);
+	}
+
+	function zoomReset() {
+		if (svg) select(svg).transition().duration(150).call(handler.transform, zoomIdentity);
+	}
+
 	$: {
 		if (svg) select(svg).call(handler);
 	}
@@ -147,6 +156,11 @@
 		{#if editable}
 			<FloorplanEditorPanel bind:floorId />
 		{/if}
+		<div class="absolute bottom-14 right-2 z-10 flex flex-col gap-1">
+			<button class="btn-icon preset-tonal shadow" onclick={() => zoomBy(1.4)} title="Zoom in" aria-label="Zoom in">+</button>
+			<button class="btn-icon preset-tonal shadow" onclick={() => zoomBy(1 / 1.4)} title="Zoom out" aria-label="Zoom out">−</button>
+			<button class="btn-icon preset-tonal shadow" onclick={zoomReset} title="Reset zoom" aria-label="Reset zoom">⌂</button>
+		</div>
 		<LayerCake x="0" y="1" xRange={getXRange} yRange={getYRange} flatData={squareBounds} padding={{ top: 16, left: 16, bottom: 16, right: 16 }}>
 			<Svg bind:element={svg}>
 				<MapCoordinates {transform} {floorId} />

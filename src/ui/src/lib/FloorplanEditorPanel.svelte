@@ -124,12 +124,16 @@
 		const mapDist = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
 		if (mapDist < 1e-6) return;
 		const factor = realDist / mapDist;
-		// Rescale around the FIRST clicked point so the measured feature stays put.
+		// Pivot: once an origin is set, rescale around MAP (0,0) so the aligned origin stays
+		// exactly put (scaling around the click point silently shifted a previously set origin -
+		// the red crosshair then appeared "somewhere else" on the image). Without an origin,
+		// rescale around the first clicked point so the measured feature stays under the cursor.
+		const pivot = $traceImage.originSet ? [0, 0] : p1;
 		$traceImage = {
 			...$traceImage,
 			widthM: Math.round($traceImage.widthM * factor * 100) / 100,
-			x: Math.round((p1[0] - (p1[0] - $traceImage.x) * factor) * 100) / 100,
-			y: Math.round((p1[1] - (p1[1] - $traceImage.y) * factor) * 100) / 100
+			x: Math.round((pivot[0] - (pivot[0] - $traceImage.x) * factor) * 100) / 100,
+			y: Math.round((pivot[1] - (pivot[1] - $traceImage.y) * factor) * 100) / 100
 		};
 		cancelImageTool();
 		ok('Scale applied - the clicked distance now measures ' + realDist + 'm');
@@ -201,10 +205,22 @@
 		if (!newFloorBounds || !newFloorName.trim() || busy) return;
 		busy = true;
 		try {
-			await post('/api/floorplan/floor', { name: newFloorName.trim(), bounds: newFloorBounds });
-			ok(`Floor '${newFloorName.trim()}' created - select it in the floor tabs to draw rooms`);
+			const res = await fetch(apiPath('/api/floorplan/floor'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name: newFloorName.trim(), bounds: newFloorBounds })
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.error ?? `HTTP ${res.status}`);
+			}
+			const data = await res.json();
+			ok(`Floor '${newFloorName.trim()}' created`);
 			newFloorBounds = null;
 			newFloorName = '';
+			// Jump straight to the new floor's tab (map falls back to the first floor for the
+			// ~1s until the config reload delivers it, then switches over).
+			if (data?.floorId) floorId = data.floorId;
 		} catch (e) {
 			fail(e, 'Failed to create floor');
 		} finally {
