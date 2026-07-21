@@ -15,12 +15,59 @@
 	$: selRoom = floor?.rooms?.find((r) => r.id === $selectedRoomId);
 	$: selRoomDirty = !!($selectedRoomId && $roomEdits[$selectedRoomId]);
 
+	// Nodes already announcing themselves over MQTT but not yet placed in the config - the most
+	// likely candidates when adding a node, offered as suggestions for the id field.
+	$: unplacedNodes = ($nodes ?? []).filter((n) => n.sourceType === 'Discovered');
+
 	let newNodeId = '';
 	let newNodeName = '';
 	let newRoomName = '';
+	let roomName = '';
+	let lastSelRoomId: string | null = null;
 	let busy = false;
 
+	// Seed the editable room name whenever the selection changes.
+	$: if ($selectedRoomId !== lastSelRoomId) {
+		lastSelRoomId = $selectedRoomId;
+		roomName = selRoom?.name ?? '';
+	}
+
+	// Prefill the new-node name from a matching discovered node when an id suggestion is picked.
+	$: {
+		const match = unplacedNodes.find((n) => n.id === newNodeId);
+		if (match?.name && !newNodeName) newNodeName = match.name;
+	}
+
 	let boundsEdit: number[][] | null = null;
+
+	let newFloorName = '';
+	let newFloorBounds: number[][] | null = null;
+
+	function startNewFloor() {
+		// Prefill x/y extent from the current floor, stack the z range on top of the highest floor.
+		const b = floor?.bounds;
+		const maxZ = Math.max(...($config?.floors ?? []).map((f) => f.bounds?.[1]?.[2] ?? 0), 0);
+		newFloorBounds = [
+			[0, 0, Math.round((maxZ + 0.3) * 100) / 100],
+			[b?.[1]?.[0] ?? 10, b?.[1]?.[1] ?? 10, Math.round((maxZ + 2.8) * 100) / 100]
+		];
+		newFloorName = '';
+	}
+
+	async function saveNewFloor() {
+		if (!newFloorBounds || !newFloorName.trim() || busy) return;
+		busy = true;
+		try {
+			await post('/api/floorplan/floor', { name: newFloorName.trim(), bounds: newFloorBounds });
+			ok(`Floor '${newFloorName.trim()}' created - select it in the floor tabs to draw rooms`);
+			newFloorBounds = null;
+			newFloorName = '';
+		} catch (e) {
+			fail(e, 'Failed to create floor');
+		} finally {
+			busy = false;
+		}
+	}
 
 	function setMode(mode: 'off' | 'nodes' | 'rooms') {
 		resetEditState();
@@ -119,8 +166,8 @@
 		const points = $roomEdits[selRoom.id] ?? selRoom.points;
 		busy = true;
 		try {
-			await post('/api/floorplan/room', { floorId, roomId: selRoom.id, points });
-			ok(`Room '${selRoom.name}' saved`);
+			await post('/api/floorplan/room', { floorId, roomId: selRoom.id, points, name: roomName.trim() || selRoom.name });
+			ok(`Room '${roomName.trim() || selRoom.name}' saved`);
 			const edits = { ...$roomEdits };
 			delete edits[selRoom.id];
 			$roomEdits = edits;
@@ -196,7 +243,15 @@
 		<div class="bg-surface-100-900/90 rounded-lg p-3 shadow space-y-2 text-sm">
 			{#if $pendingNode}
 				<p class="font-semibold">New node at ({$pendingNode.x}, {$pendingNode.y})</p>
-				<input class="input" placeholder="node id (e.g. kitchen_2)" bind:value={newNodeId} />
+				<input class="input" placeholder="node id (e.g. kitchen_2)" bind:value={newNodeId} list="floorplan-known-nodes" />
+				<datalist id="floorplan-known-nodes">
+					{#each unplacedNodes as n (n.id)}
+						<option value={n.id}>{n.name ?? n.id}</option>
+					{/each}
+				</datalist>
+				{#if unplacedNodes.length > 0}
+					<p class="text-xs text-surface-600-400">{unplacedNodes.length} discovered but unplaced node{unplacedNodes.length === 1 ? '' : 's'} - the id field suggests them.</p>
+				{/if}
 				<input class="input" placeholder="name (optional)" bind:value={newNodeName} />
 				<label class="label"><span>Z (height)</span><input class="input" type="number" step="0.1" bind:value={$pendingNode.z} /></label>
 				<div class="flex gap-2">
@@ -235,16 +290,36 @@
 				</div>
 				<p class="text-xs text-surface-600-400">Click the map to add corner points (at least 3).</p>
 			{:else if selRoom}
-				<p class="font-semibold">{selRoom.name}</p>
+				<input class="input font-semibold" bind:value={roomName} placeholder="room name" />
 				<div class="flex gap-2">
-					<button class="btn btn-sm preset-filled-success-500" onclick={saveSelectedRoom} disabled={busy || !selRoomDirty}>Save</button>
+					<button class="btn btn-sm preset-filled-success-500" onclick={saveSelectedRoom} disabled={busy || (!selRoomDirty && roomName.trim() === selRoom.name)}>Save</button>
 					<button class="btn btn-sm preset-filled-error-500" onclick={deleteSelectedRoom} disabled={busy}>Delete</button>
 					<button class="btn btn-sm preset-tonal" onclick={() => ($selectedRoomId = null)}>Deselect</button>
 				</div>
-				<p class="text-xs text-surface-600-400">Drag corners to move them. Click a small edge dot to insert a corner, double-click a corner to remove it.</p>
+				<p class="text-xs text-surface-600-400">Drag corners to move them. Click a small edge dot to insert a corner, double-click a corner to remove it. The name is editable above.</p>
 			{:else}
 				<p class="text-xs">Click a room to edit its outline.</p>
 				<button class="btn btn-sm preset-tonal" onclick={() => ($draftRoom = [])}>New room</button>
+				{#if newFloorBounds}
+					<div class="space-y-1">
+						<p class="font-semibold text-xs">New floor</p>
+						<input class="input" placeholder="floor name (e.g. Anbau)" bind:value={newFloorName} />
+						<p class="text-xs text-surface-600-400">Bounds [x, y, z] - z range prefilled on top of the highest floor:</p>
+						{#each newFloorBounds as corner, ci (ci)}
+							<div class="grid grid-cols-3 gap-1">
+								{#each corner as v, vi (vi)}
+									<input class="input" type="number" step="0.1" bind:value={newFloorBounds[ci][vi]} />
+								{/each}
+							</div>
+						{/each}
+						<div class="flex gap-2">
+							<button class="btn btn-sm preset-filled-success-500" onclick={saveNewFloor} disabled={busy || !newFloorName.trim()}>Create floor</button>
+							<button class="btn btn-sm preset-tonal" onclick={() => (newFloorBounds = null)}>Cancel</button>
+						</div>
+					</div>
+				{:else}
+					<button class="btn btn-sm preset-tonal" onclick={startNewFloor}>Add floor</button>
+				{/if}
 				{#if boundsEdit}
 					<div class="space-y-1">
 						<p class="font-semibold text-xs">Floor bounds [x, y, z]</p>

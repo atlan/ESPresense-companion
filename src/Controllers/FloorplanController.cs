@@ -185,6 +185,56 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
         return Ok(new { deleted = true });
     }
 
+    public class FloorUpsertRequest
+    {
+        /// <summary>Existing floor id to update; omit to create a new floor (then Name is required).</summary>
+        public string? FloorId { get; set; }
+        public string? Name { get; set; }
+        public double[][]? Bounds { get; set; }
+    }
+
+    [HttpPost("api/floorplan/floor")]
+    public async Task<IActionResult> UpsertFloor([FromBody] FloorUpsertRequest req)
+    {
+        var c = configLoader.Config;
+        if (c == null) return StatusCode(500, new { error = "Config not loaded" });
+
+        if (req.Bounds != null && (req.Bounds.Length != 2 || req.Bounds.Any(b => b.Length != 3)))
+            return BadRequest(new { error = "Bounds must be two [x,y,z] corner points" });
+
+        try
+        {
+            var floors = c.Floors.ToList();
+            ConfigFloor? floor = null;
+            if (!string.IsNullOrWhiteSpace(req.FloorId))
+            {
+                floor = floors.FirstOrDefault(f => string.Equals(f.GetId(), req.FloorId, StringComparison.OrdinalIgnoreCase));
+                if (floor == null) return NotFound(new { error = $"Floor '{req.FloorId}' not found" });
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(req.Name)) return BadRequest(new { error = "New floors need a name" });
+                if (req.Bounds == null) return BadRequest(new { error = "New floors need bounds (two [x,y,z] corner points)" });
+                floor = new ConfigFloor { Name = req.Name, Rooms = Array.Empty<ConfigRoom>() };
+                floors.Add(floor);
+            }
+
+            if (!string.IsNullOrWhiteSpace(req.Name)) floor.Name = req.Name;
+            if (req.Bounds != null) floor.Bounds = req.Bounds;
+
+            EnsureBackup();
+            c.Floors = floors.ToArray();
+            await configLoader.SaveSectionAsync("floors", c.Floors);
+            Log.Information("Floorplan editor: floor {Floor} saved", floor.GetId());
+            return Ok(new { saved = true, floorId = floor.GetId() });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Floorplan editor: failed to save floor");
+            return StatusCode(500, new { error = "Failed to save floor" });
+        }
+    }
+
     public class FloorBoundsRequest
     {
         public string FloorId { get; set; } = "";
