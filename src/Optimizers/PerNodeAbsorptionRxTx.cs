@@ -247,7 +247,10 @@ public class PerNodeAbsorptionRxTx : IOptimizer
             // Clamp initial guess within global bounds
             initialGuess[baseIndex] = Math.Clamp(nodeSettings?.Calibration?.RxAdjRssi ?? 0, optimization.RxAdjRssiMin, optimization.RxAdjRssiMax);
             // Clamp initial guess within global bounds
-            initialGuess[baseIndex + 1] = Math.Clamp(nodeSettings?.Calibration?.Absorption ?? ((optimization.AbsorptionMax - optimization.AbsorptionMin) / 2.0) + optimization.AbsorptionMin, optimization.AbsorptionMin, optimization.AbsorptionMax);
+            // Clamp against the EFFECTIVE (possibly overridden) bounds - stored absorption values can lie
+            // outside a narrower candidate range, and BfgsBMinimizer throws on an out-of-bounds start,
+            // silently voiding the whole candidate fit.
+            initialGuess[baseIndex + 1] = Math.Clamp(nodeSettings?.Calibration?.Absorption ?? targetAbsorption, absorptionMin, absorptionMax);
         }
         foreach (var txId in uniqueTxIds)
         {
@@ -272,7 +275,7 @@ public class PerNodeAbsorptionRxTx : IOptimizer
 
                 // Ensure values are within bounds (should be already)
                 rxAdjRssi = Math.Max(optimization.RxAdjRssiMin, Math.Min(rxAdjRssi, optimization.RxAdjRssiMax));
-                absorption = Math.Max(optimization.AbsorptionMin, Math.Min(absorption, optimization.AbsorptionMax));
+                absorption = Math.Max(absorptionMin, Math.Min(absorption, absorptionMax));
 
                 var n = or.Nodes.GetOrAdd(rxId);
                 n.RxAdjRssi = rxAdjRssi;

@@ -290,7 +290,9 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
                         MeanHoldoutRmse = holdRmses.Average(),
                         Folds = holdComposites.Count,
                         IsCurrent = candidate.Optimizer == currentOptimizer &&
-                                    (candidate.AbsorptionPenalty == null || Math.Abs(candidate.AbsorptionPenalty.Value - currentPenalty) < 0.001)
+                                    (candidate.AbsorptionPenalty == null || Math.Abs(candidate.AbsorptionPenalty.Value - currentPenalty) < 0.001) &&
+                                    (candidate.AbsorptionMin == null || Math.Abs(candidate.AbsorptionMin.Value - (optimization?.AbsorptionMin ?? 2)) < 0.001) &&
+                                    (candidate.AbsorptionMax == null || Math.Abs(candidate.AbsorptionMax.Value - (optimization?.AbsorptionMax ?? 4)) < 0.001)
                     });
                 }
 
