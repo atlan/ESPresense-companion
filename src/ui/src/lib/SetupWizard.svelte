@@ -39,7 +39,9 @@
 		nodeAName?: string;
 		nodeBName?: string;
 		avgAbsPercentError: number;
+		aboveThresholdFraction: number;
 		samples: number;
+		observedHours: number;
 		pairId: string;
 	}
 
@@ -271,22 +273,23 @@
 					</span>
 				</header>
 				<p class="text-sm text-surface-600-400 mb-3">
-					Same-floor node pairs whose distance error stays persistently high - usually an RF obstruction (wall, appliance) between them. Excluding such a pair from calibration keeps it from distorting both nodes' fit for all their other neighbors.
+					Same-floor node pairs whose distance error stays persistently high - usually an RF obstruction (wall, appliance) between them. Pairs only appear after at least 2 hours of observation with the error above threshold most of that time, so post-move calibration transients don't trigger false suggestions; moving a node resets its pairs' statistics.
 				</p>
 				{#if suggestions.length === 0}
-					<p class="text-sm text-surface-600-400">No persistently bad pairs detected.</p>
+					<p class="text-sm text-surface-600-400">No persistently bad pairs detected (pairs need 2h+ of consistently high error to appear here).</p>
 				{:else}
 					<div class="overflow-x-auto">
 						<table class="table table-compact">
 							<thead>
-								<tr><th>Pair</th><th>Avg error</th><th>Samples</th><th></th></tr>
+								<tr><th>Pair</th><th>Avg error</th><th>Bad</th><th>Observed</th><th></th></tr>
 							</thead>
 							<tbody>
 								{#each suggestions as s (s.pairId)}
 									<tr>
 										<td>{s.nodeAName ?? s.nodeA} ↔ {s.nodeBName ?? s.nodeB}</td>
 										<td>{(s.avgAbsPercentError * 100).toFixed(0)}%</td>
-										<td>{s.samples}</td>
+										<td>{(s.aboveThresholdFraction * 100).toFixed(0)}% of time</td>
+										<td>{s.observedHours < 48 ? `${s.observedHours.toFixed(1)}h` : `${(s.observedHours / 24).toFixed(1)}d`}</td>
 										<td>
 											<button class="btn btn-sm preset-filled-warning-500" onclick={() => excludePair(s)} disabled={pairBusy[s.pairId]}>
 												Exclude

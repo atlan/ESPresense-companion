@@ -60,7 +60,11 @@ public class ExcludedPairSuggestion
     public string? NodeBName { get; set; }
     /// <summary>Exponentially-weighted average of |percent error| across recent samples (0.5 = 50%).</summary>
     public double AvgAbsPercentError { get; set; }
+    /// <summary>Recent fraction of samples whose error exceeded the threshold (persistence measure, 1.0 = always bad).</summary>
+    public double AboveThresholdFraction { get; set; }
     public int Samples { get; set; }
+    /// <summary>How long this pair has been observed (wall-clock hours since first sample).</summary>
+    public double ObservedHours { get; set; }
     /// <summary>Config-format pair id, "node_a:node_b".</summary>
     public string PairId => $"{NodeA}:{NodeB}";
 }

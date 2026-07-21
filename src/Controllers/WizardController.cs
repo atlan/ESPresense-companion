@@ -50,6 +50,8 @@ public class WizardController(
             suggestions = pairErrorTracker.GetSuggestions(excluded),
             currentlyExcluded = excluded ?? new List<string>(),
             minSamples = PairErrorTracker.MinSamples,
+            minObservationHours = PairErrorTracker.MinObservation.TotalHours,
+            minAboveFraction = PairErrorTracker.MinAboveFraction,
             threshold = PairErrorTracker.SuggestionThreshold
         });
     }
