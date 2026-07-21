@@ -169,4 +169,51 @@ away_timeout: 120
         Assert.That(result, Does.Contain("absorption_min: 2"));
         Assert.That(result, Does.Contain("absorption_max: 4"));
     }
+
+    [Test]
+    public async Task SaveSectionAsync_ReplacesSectionContainingBlankLines()
+    {
+        // Regression: the old regex-based replacement had a greedy \n\s* that, at a BLANK line
+        // inside the section, also consumed the indentation of the following line - the rest of
+        // the old section stayed behind dedented to column 0 and corrupted the file into invalid
+        // YAML (happened live on a locators section with blank lines between sub-blocks).
+        var original = @"mqtt:
+  host: localhost
+
+locators:
+  nadaraya_watson:
+    enabled: true
+    bandwidth: 1.0
+
+  nelder_mead:
+    enabled: true
+
+  nearest_node:
+    enabled: true
+    max_distance: 2
+
+# Floors comment
+floors:
+  - id: ground
+";
+        await File.WriteAllTextAsync(_configPath, original);
+        var loader = new ConfigLoader(_tempDir);
+
+        await loader.SaveSectionAsync("locators", new ConfigLocators());
+
+        var result = await File.ReadAllTextAsync(_configPath);
+        var lines = result.Split('\n');
+
+        // No dedented leftovers of the old section content
+        Assert.That(lines, Has.None.EqualTo("nelder_mead:"));
+        Assert.That(result.Split("locators:").Length - 1, Is.EqualTo(1), "exactly one locators section");
+
+        // Following comment + section preserved on their own lines
+        Assert.That(lines, Does.Contain("# Floors comment"));
+        Assert.That(lines, Does.Contain("floors:"));
+
+        // Result must be parseable YAML
+        var deserializer = new YamlDotNet.Serialization.DeserializerBuilder().Build();
+        Assert.DoesNotThrow(() => deserializer.Deserialize<object>(result));
+    }
 }

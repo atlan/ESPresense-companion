@@ -98,20 +98,33 @@ public class ConfigLoader : BackgroundService
 
         var text = await File.ReadAllTextAsync(_configPath);
 
-        // Match from ^sectionName: through all indented/blank lines until next top-level key or EOF
-        var pattern = $@"^{Regex.Escape(sectionName)}:.*(\n([ \t]+.*)|\n\s*)*";
-        var match = Regex.Match(text, pattern, RegexOptions.Multiline);
+        // Line-based section replacement. The previous regex approach
+        // (^section:.*(\n([ \t]+.*)|\n\s*)*) had two real-world corruption modes:
+        // its greedy trailing \n\s* consumed the newline AND the indentation of the first line
+        // after a BLANK line inside the section, leaving the rest of the old section behind
+        // dedented to column 0 (invalid YAML, happened live on a locators save), and it could
+        // glue a following top-level comment onto the serialized section's last line.
+        // A section here spans from its "name:" line through all following indented or blank
+        // lines; it ends at the first column-0 line (next top-level key OR full-line comment -
+        // comments stay with whatever follows them).
+        var lines = text.Split('\n').ToList();
+        var start = lines.FindIndex(l => l.StartsWith(sectionName + ":"));
 
         string replaced;
-        if (match.Success)
+        if (start >= 0)
         {
-            // The section pattern's trailing `\n\s*` can consume the newline BEFORE a following
-            // top-level comment line - without re-adding a separator, the remainder gets glued
-            // onto the serialized section's last line (e.g. "color: '#7F7F7F'# some comment"),
-            // which is invalid or silently comment-eating YAML.
-            var rest = text[(match.Index + match.Length)..];
-            var separator = rest.Length > 0 && !rest.StartsWith("\n") ? "\n" : "";
-            replaced = text[..match.Index] + sectionYaml + separator + rest;
+            var end = start + 1;
+            while (end < lines.Count &&
+                   (lines[end].Length == 0 || lines[end][0] == ' ' || lines[end][0] == '\t' || lines[end].TrimEnd('\r').Length == 0))
+                end++;
+            // Leave trailing blank lines to the remainder so section spacing is preserved.
+            while (end - 1 > start && lines[end - 1].TrimEnd('\r').Length == 0)
+                end--;
+
+            var newLines = lines.Take(start)
+                .Concat(sectionYaml.Split('\n'))
+                .Concat(lines.Skip(end));
+            replaced = string.Join('\n', newLines);
         }
         else
         {
