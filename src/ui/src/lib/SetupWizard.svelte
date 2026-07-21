@@ -45,6 +45,67 @@
 		pairId: string;
 	}
 
+	interface WalkTestNodeLive {
+		nodeId: string;
+		nodeName?: string;
+		samples: number;
+		medianDistance: number;
+		mapDistance?: number;
+		percentError?: number;
+	}
+
+	interface WalkTestActive {
+		deviceId: string;
+		deviceName?: string;
+		x: number;
+		y: number;
+		z: number;
+		floorId?: string;
+		elapsedSecs: number;
+		remainingSecs: number;
+		totalSamples: number;
+		nodes: WalkTestNodeLive[];
+	}
+
+	interface WalkTestPointNode {
+		nodeId: string;
+		nodeName?: string;
+		samples: number;
+		medianDistance: number;
+		mapDistance: number;
+	}
+
+	interface WalkTestPoint {
+		id: string;
+		deviceId: string;
+		deviceName?: string;
+		x: number;
+		y: number;
+		z: number;
+		floorId?: string;
+		recordedAt: string;
+		nodes: WalkTestPointNode[];
+	}
+
+	interface WalkTestStatus {
+		active: WalkTestActive | null;
+		devices: { id: string; name?: string }[];
+		points: WalkTestPoint[];
+		defaultDurationSecs: number;
+	}
+
+	interface WalkPointSuggestion {
+		x: number;
+		y: number;
+		z: number;
+		floorId?: string;
+		floorName?: string;
+		reason: string;
+		nodeA: string;
+		nodeB: string;
+		pairErrorPercent: number;
+	}
+
 	let validation: { issues: ValidationIssue[]; hasErrors: boolean; hasWarnings: boolean } | null = null;
 	let health: HealthResult | null = null;
 	let suggestions: PairSuggestion[] = [];
@@ -53,13 +114,25 @@
 	let calibrateBusy = false;
 	let pairBusy: Record<string, boolean> = {};
 	let refreshTimer: ReturnType<typeof setInterval> | null = null;
+	let walkTimer: ReturnType<typeof setInterval> | null = null;
+
+	let walkStatus: WalkTestStatus | null = null;
+	let walkSuggestions: WalkPointSuggestion[] = [];
+	let wtDevice = '';
+	let wtX: number | null = null;
+	let wtY: number | null = null;
+	let wtZ: number | null = null;
+	let wtDuration = 120;
+	let wtBusy = false;
 
 	async function fetchAll() {
 		try {
-			const [vRes, hRes, sRes] = await Promise.all([
+			const [vRes, hRes, sRes, wRes, wsRes] = await Promise.all([
 				fetch(apiPath('/api/wizard/validation')),
 				fetch(apiPath('/api/wizard/health')),
-				fetch(apiPath('/api/wizard/excluded-pairs/suggestions'))
+				fetch(apiPath('/api/wizard/excluded-pairs/suggestions')),
+				fetch(apiPath('/api/wizard/walktest/status')),
+				fetch(apiPath('/api/wizard/walktest/suggest'))
 			]);
 			if (vRes.ok) validation = await vRes.json();
 			if (hRes.ok) health = await hRes.json();
@@ -68,11 +141,96 @@
 				suggestions = data.suggestions ?? [];
 				currentlyExcluded = data.currentlyExcludedFriendly ?? data.currentlyExcluded ?? [];
 			}
+			if (wRes.ok) {
+				walkStatus = await wRes.json();
+				if (!wtDevice && walkStatus?.devices?.length) wtDevice = walkStatus.devices[0].id;
+			}
+			if (wsRes.ok) {
+				const data = await wsRes.json();
+				walkSuggestions = data.suggestions ?? [];
+			}
 		} catch (error) {
 			console.error('Error fetching wizard data:', error);
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function fetchWalkStatus() {
+		try {
+			const res = await fetch(apiPath('/api/wizard/walktest/status'));
+			if (res.ok) walkStatus = await res.json();
+		} catch (error) {
+			console.error('Error fetching walk test status:', error);
+		}
+	}
+
+	async function startWalkTest() {
+		if (wtBusy || !wtDevice || wtX == null || wtY == null || wtZ == null) return;
+		wtBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/walktest/start'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ deviceId: wtDevice, x: wtX, y: wtY, z: wtZ, durationSecs: wtDuration })
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.error ?? `HTTP ${res.status}`);
+			}
+			toastStore.trigger({ message: 'Walk test started - keep the device in place', background: 'preset-filled-success-500' });
+			await fetchWalkStatus();
+		} catch (error) {
+			toastStore.trigger({
+				message: error instanceof Error ? error.message : 'Failed to start walk test',
+				background: 'preset-filled-error-500'
+			});
+		} finally {
+			wtBusy = false;
+		}
+	}
+
+	async function stopWalkTest(cancel: boolean) {
+		if (wtBusy) return;
+		wtBusy = true;
+		try {
+			const res = await fetch(apiPath(cancel ? '/api/wizard/walktest/cancel' : '/api/wizard/walktest/stop'), { method: 'POST' });
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.error ?? `HTTP ${res.status}`);
+			}
+			toastStore.trigger({
+				message: cancel ? 'Walk test cancelled' : 'Walk test point recorded',
+				background: cancel ? 'preset-filled-surface-500' : 'preset-filled-success-500'
+			});
+			await fetchWalkStatus();
+		} catch (error) {
+			toastStore.trigger({
+				message: error instanceof Error ? error.message : 'Walk test action failed',
+				background: 'preset-filled-error-500'
+			});
+		} finally {
+			wtBusy = false;
+		}
+	}
+
+	async function deleteWalkPoint(id: string) {
+		try {
+			const res = await fetch(apiPath(`/api/wizard/walktest/points/${id}`), { method: 'DELETE' });
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			await fetchWalkStatus();
+		} catch (error) {
+			toastStore.trigger({
+				message: error instanceof Error ? error.message : 'Failed to delete point',
+				background: 'preset-filled-error-500'
+			});
+		}
+	}
+
+	function useSuggestion(s: WalkPointSuggestion) {
+		wtX = s.x;
+		wtY = s.y;
+		wtZ = s.z;
 	}
 
 	async function calibrateNow() {
@@ -151,10 +309,15 @@
 	onMount(() => {
 		fetchAll();
 		refreshTimer = setInterval(fetchAll, 15000);
+		// Faster poll for the walk test progress while a session runs
+		walkTimer = setInterval(() => {
+			if (walkStatus?.active) fetchWalkStatus();
+		}, 3000);
 	});
 
 	onDestroy(() => {
 		if (refreshTimer) clearInterval(refreshTimer);
+		if (walkTimer) clearInterval(walkTimer);
 	});
 </script>
 
@@ -303,6 +466,121 @@
 				{/if}
 				{#if currentlyExcluded.length > 0}
 					<p class="text-xs text-surface-600-400 mt-3">Currently excluded: {currentlyExcluded.join(', ')}</p>
+				{/if}
+			</div>
+
+			<!-- 5. Walk test -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Walk Test</h2>
+					{#if walkStatus?.active}
+						<span class="badge preset-filled-primary-500">Running</span>
+					{/if}
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Place a tracked device at a known position and record its signal for a couple of minutes. Each recorded point acts as an extra reference transmitter with known coordinates for the calibration optimizer - node-to-node links alone give it only a handful of fixed distances to learn from.
+				</p>
+
+				{#if walkStatus?.active}
+					{@const a = walkStatus.active}
+					<div class="mb-3">
+						<p class="text-sm mb-2">
+							Recording <strong>{a.deviceName ?? a.deviceId}</strong> at ({a.x}, {a.y}, {a.z}) -
+							{Math.round(a.remainingSecs)}s remaining, {a.totalSamples} samples
+						</p>
+						<div class="overflow-x-auto mb-3">
+							<table class="table table-compact">
+								<thead>
+									<tr><th>Node</th><th>Samples</th><th>Measured</th><th>Map</th><th>Error</th></tr>
+								</thead>
+								<tbody>
+									{#each a.nodes as n (n.nodeId)}
+										<tr>
+											<td>{n.nodeName ?? n.nodeId}</td>
+											<td>{n.samples}</td>
+											<td>{n.medianDistance.toFixed(2)}m</td>
+											<td>{n.mapDistance != null ? n.mapDistance.toFixed(2) + 'm' : '-'}</td>
+											<td>{n.percentError != null ? (n.percentError * 100).toFixed(0) + '%' : '-'}</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+						<div class="flex gap-2">
+							<button class="btn preset-filled-success-500" onclick={() => stopWalkTest(false)} disabled={wtBusy}>Finish now</button>
+							<button class="btn preset-filled-surface-500" onclick={() => stopWalkTest(true)} disabled={wtBusy}>Cancel</button>
+						</div>
+					</div>
+				{:else}
+					{#if walkSuggestions.length > 0}
+						<div class="mb-3">
+							<p class="text-sm font-semibold mb-1">Suggested placements (worst-calibrated pairs first):</p>
+							<ul class="space-y-1">
+								{#each walkSuggestions as s}
+									<li class="flex items-center gap-2 text-sm">
+										<button class="btn btn-sm preset-tonal" onclick={() => useSuggestion(s)}>({s.x}, {s.y}, {s.z})</button>
+										<span class="text-surface-600-400">{s.reason}</span>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
+					<div class="flex flex-wrap items-end gap-3 mb-3">
+						<label class="label text-sm">
+							<span>Device</span>
+							<select class="select" bind:value={wtDevice}>
+								{#each walkStatus?.devices ?? [] as d (d.id)}
+									<option value={d.id}>{d.name ?? d.id}</option>
+								{/each}
+							</select>
+						</label>
+						<label class="label text-sm w-24">
+							<span>X</span>
+							<input class="input" type="number" step="0.1" bind:value={wtX} />
+						</label>
+						<label class="label text-sm w-24">
+							<span>Y</span>
+							<input class="input" type="number" step="0.1" bind:value={wtY} />
+						</label>
+						<label class="label text-sm w-24">
+							<span>Z</span>
+							<input class="input" type="number" step="0.1" bind:value={wtZ} />
+						</label>
+						<label class="label text-sm w-28">
+							<span>Duration (s)</span>
+							<input class="input" type="number" min="30" max="900" bind:value={wtDuration} />
+						</label>
+						<button class="btn preset-filled-primary-500" onclick={startWalkTest} disabled={wtBusy || !wtDevice || wtX == null || wtY == null || wtZ == null}>
+							Start
+						</button>
+					</div>
+					<p class="text-xs text-surface-600-400 mb-3">Place the device FIRST, then press Start. Coordinates are in map meters (same as node positions); Z is the absolute height including the floor offset.</p>
+				{/if}
+
+				{#if (walkStatus?.points ?? []).length > 0}
+					<p class="text-sm font-semibold mb-1">Recorded points (feeding the optimizer):</p>
+					<div class="overflow-x-auto">
+						<table class="table table-compact">
+							<thead>
+								<tr><th>Point</th><th>Device</th><th>Position</th><th>Nodes</th><th>Recorded</th><th></th></tr>
+							</thead>
+							<tbody>
+								{#each walkStatus?.points ?? [] as p (p.id)}
+									<tr>
+										<td>{p.id}</td>
+										<td>{p.deviceName ?? p.deviceId}</td>
+										<td>({p.x}, {p.y}, {p.z})</td>
+										<td>{p.nodes.length}</td>
+										<td>{new Date(p.recordedAt).toLocaleTimeString()}</td>
+										<td>
+											<button class="btn btn-sm preset-filled-surface-500" onclick={() => deleteWalkPoint(p.id)}>Delete</button>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-2">Points live in memory - an app restart clears them. Points whose receiving node was moved afterwards are ignored automatically.</p>
 				{/if}
 			</div>
 		{/if}

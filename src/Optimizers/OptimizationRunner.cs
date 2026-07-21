@@ -20,6 +20,7 @@ public class OptimizationRunner : BackgroundService
     private readonly object _optimizersLock = new();
     private string? _lastOptimizerMode;
     private readonly PairErrorTracker _pairErrorTracker;
+    private readonly WalkTestService _walkTest;
 
     // "Calibrate now" support: TriggerNow() completes the current TCS (waking whichever
     // InterruptibleDelay is pending) and opens a short skip window so ALL remaining delays in a
@@ -27,7 +28,7 @@ public class OptimizationRunner : BackgroundService
     private volatile TaskCompletionSource _triggerNow = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private DateTime _skipDelaysUntil = DateTime.MinValue;
 
-    public OptimizationRunner(State state, NodeSettingsStore nsd, ILogger<OptimizationRunner> logger, ConfigLoader cfg, ILeaseService leaseService, PairErrorTracker pairErrorTracker)
+    public OptimizationRunner(State state, NodeSettingsStore nsd, ILogger<OptimizationRunner> logger, ConfigLoader cfg, ILeaseService leaseService, PairErrorTracker pairErrorTracker, WalkTestService walkTest)
     {
         _state = state;
         _nsd = nsd;
@@ -35,6 +36,7 @@ public class OptimizationRunner : BackgroundService
         _cfg = cfg;
         _leaseService = leaseService;
         _pairErrorTracker = pairErrorTracker;
+        _walkTest = walkTest;
         _optimizers = new List<IOptimizer>();
 
         _cfg.ConfigChanged += (_, config) =>
@@ -172,6 +174,15 @@ public class OptimizationRunner : BackgroundService
                     // fit sees real accumulated variance instead of the single, just-taken sample -
                     // sampling itself now happens continuously in RunSnapshotSamplingLoopAsync.
                     var snapshots = _state.GetOptimizationSnapshots();
+
+                    // Walk test points act as extra reference transmitters with known positions.
+                    // They MUST go into both the fit input (os) and the Evaluate() snapshots -
+                    // fit and accept/reject gate seeing different data silently neutered the
+                    // cross-floor fix once before (see OptimizationResults.Evaluate history).
+                    var walkTestMeasures = _walkTest.GetExtraMeasures();
+                    if (walkTestMeasures.Count > 0)
+                        snapshots = snapshots.Append(new OptimizationSnapshot { Measures = walkTestMeasures }).ToList();
+
                     var os = new OptimizationSnapshot { Measures = snapshots.SelectMany(s => s.Measures).ToList() };
 
                     var baselineResults = new OptimizationResults();
@@ -230,6 +241,13 @@ public class OptimizationRunner : BackgroundService
 
                         foreach (var (id, result) in results.Nodes)
                         {
+                            // Only real config nodes get settings written - synthetic transmitters
+                            // (walk test points, anchored devices) also receive a fitted txRefRssi
+                            // from the optimizer, but publishing retained node settings under a
+                            // device id would pollute MQTT with bogus espresense/rooms/<device>/ topics.
+                            if (!_state.Nodes.ContainsKey(id))
+                                continue;
+
                             Log.Information("Applied {0,-20}: Absorption={1:0.00}, RxAdj={2:00}, TxAdj={3:00}, Error={4}",
                                 id, result.Absorption, result.RxAdjRssi, result.TxRefRssi, result.Error);
 

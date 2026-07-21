@@ -16,7 +16,8 @@ public class WizardController(
     PairErrorTracker pairErrorTracker,
     OptimizationRunner optimizationRunner,
     ConfigLoader configLoader,
-    State state) : ControllerBase
+    State state,
+    WalkTestService walkTest) : ControllerBase
 {
     /// <summary>Renders a config pair id ("node_a:node_b") with friendly node names for display.</summary>
     private string FriendlyPair(string pair)
@@ -117,5 +118,55 @@ public class WizardController(
             Log.Error(ex, "Failed to add excluded pairs");
             return StatusCode(500, new { error = "Failed to save excluded pairs" });
         }
+    }
+
+    // ─── Walk test ───────────────────────────────────────────────────────────
+
+    public class WalkTestStartRequest
+    {
+        public string DeviceId { get; set; } = "";
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Z { get; set; }
+        public int? DurationSecs { get; set; }
+    }
+
+    [HttpGet("api/wizard/walktest/status")]
+    public IActionResult WalkTestStatus()
+    {
+        return Ok(walkTest.Status());
+    }
+
+    [HttpPost("api/wizard/walktest/start")]
+    public IActionResult WalkTestStart([FromBody] WalkTestStartRequest req)
+    {
+        var (ok, error) = walkTest.Start(req.DeviceId, req.X, req.Y, req.Z, req.DurationSecs);
+        return ok ? Ok(new { started = true }) : BadRequest(new { error });
+    }
+
+    [HttpPost("api/wizard/walktest/stop")]
+    public IActionResult WalkTestStop()
+    {
+        var (ok, error, point) = walkTest.Stop();
+        return ok ? Ok(new { stopped = true, point }) : BadRequest(new { error });
+    }
+
+    [HttpPost("api/wizard/walktest/cancel")]
+    public IActionResult WalkTestCancel()
+    {
+        var (ok, error) = walkTest.Cancel();
+        return ok ? Ok(new { cancelled = true }) : BadRequest(new { error });
+    }
+
+    [HttpDelete("api/wizard/walktest/points/{id}")]
+    public IActionResult WalkTestDeletePoint(string id)
+    {
+        return walkTest.DeletePoint(id) ? Ok(new { deleted = true }) : NotFound(new { error = $"Point '{id}' not found" });
+    }
+
+    [HttpGet("api/wizard/walktest/suggest")]
+    public IActionResult WalkTestSuggest()
+    {
+        return Ok(new { suggestions = walkTest.SuggestPoints() });
     }
 }
