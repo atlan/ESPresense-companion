@@ -45,49 +45,44 @@
 		return Math.round(v * 100) / 100;
 	}
 
-	// ─── node dragging ───────────────────────────────────────────────────────
+	// ─── dragging (window-level) ─────────────────────────────────────────────
+	// Drags are tracked via window pointermove/pointerup instead of per-circle handlers with
+	// pointer capture - independent of event retargeting quirks and of the circle re-rendering
+	// mid-drag when the edit stores update.
 	let dragNodeId: string | null = null;
+	let dragNodeZ = 0;
+	let dragVertex: { roomId: string; index: number; stored: number[][] } | null = null;
 
-	function nodeDown(e: PointerEvent, id: string) {
+	function nodeDown(e: PointerEvent, n: { id: string; location: { z: number } }) {
 		e.stopPropagation();
 		e.preventDefault();
-		dragNodeId = id;
-		$selectedNodeId = id;
-		(e.target as Element).setPointerCapture(e.pointerId);
+		dragNodeId = n.id;
+		dragNodeZ = $nodeEdits[n.id]?.z ?? n.location.z;
+		$selectedNodeId = n.id;
 	}
 
-	function nodeMove(e: PointerEvent, n: { id: string; location: { z: number } }) {
-		if (dragNodeId !== n.id) return;
-		const m = toMap(e);
-		if (!m) return;
-		const z = $nodeEdits[n.id]?.z ?? n.location.z;
-		$nodeEdits = { ...$nodeEdits, [n.id]: { x: round(m.x), y: round(m.y), z } };
+	function vertexDown(e: PointerEvent, roomId: string, index: number, stored: number[][]) {
+		e.stopPropagation();
+		e.preventDefault();
+		dragVertex = { roomId, index, stored };
 	}
 
-	function nodeUp() {
+	function globalMove(e: PointerEvent) {
+		if (dragNodeId) {
+			const m = toMap(e);
+			if (!m) return;
+			$nodeEdits = { ...$nodeEdits, [dragNodeId]: { x: round(m.x), y: round(m.y), z: dragNodeZ } };
+		} else if (dragVertex) {
+			const m = toMap(e);
+			if (!m) return;
+			const pts = ($roomEdits[dragVertex.roomId] ?? dragVertex.stored).map((p) => [...p]);
+			pts[dragVertex.index] = [round(m.x), round(m.y)];
+			$roomEdits = { ...$roomEdits, [dragVertex.roomId]: pts };
+		}
+	}
+
+	function endDrag() {
 		dragNodeId = null;
-	}
-
-	// ─── room vertex dragging ────────────────────────────────────────────────
-	let dragVertex: { roomId: string; index: number } | null = null;
-
-	function vertexDown(e: PointerEvent, roomId: string, index: number) {
-		e.stopPropagation();
-		e.preventDefault();
-		dragVertex = { roomId, index };
-		(e.target as Element).setPointerCapture(e.pointerId);
-	}
-
-	function vertexMove(e: PointerEvent, stored: number[][]) {
-		if (!dragVertex) return;
-		const m = toMap(e);
-		if (!m) return;
-		const pts = (roomPoints(dragVertex.roomId, stored) ?? []).map((p) => [...p]);
-		pts[dragVertex.index] = [round(m.x), round(m.y)];
-		$roomEdits = { ...$roomEdits, [dragVertex.roomId]: pts };
-	}
-
-	function vertexUp() {
 		dragVertex = null;
 	}
 
@@ -133,6 +128,8 @@
 	}
 </script>
 
+<svelte:window onpointermove={globalMove} onpointerup={endDrag} />
+
 {#if $editMode !== 'off'}
 	<g transform={transform.toString()}>
 		<!-- Transparent capture layer for placement/draft clicks (below handles) -->
@@ -150,7 +147,7 @@
 		{#if $editMode === 'rooms'}
 			<!-- Room selection overlays first ... -->
 			{#each floor?.rooms ?? [] as room (room.id)}
-				{@const pts = roomPoints(room.id, room.points)}
+				{@const pts = $roomEdits[room.id] ?? room.points}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<path
 					d={polyPath(pts)}
@@ -166,7 +163,7 @@
 			     (SVG paint order = document order; corner handles sit exactly on shared edges,
 			     where a neighboring room's interior would otherwise swallow the pointer events) -->
 			{#each (floor?.rooms ?? []).filter((r) => r.id === $selectedRoomId) as room (room.id)}
-				{@const pts = roomPoints(room.id, room.points)}
+				{@const pts = $roomEdits[room.id] ?? room.points}
 				{#each pts as p, i (i)}
 					{@const next = pts[(i + 1) % pts.length]}
 					<!-- Edge midpoint: click to insert a vertex -->
@@ -195,9 +192,7 @@
 						stroke="white"
 						stroke-width={1.5 / transform.k}
 						style="cursor: grab; pointer-events: all;"
-						onpointerdown={(e) => vertexDown(e, room.id, i)}
-						onpointermove={(e) => vertexMove(e, room.points)}
-						onpointerup={vertexUp}
+						onpointerdown={(e) => vertexDown(e, room.id, i, room.points)}
 						onmousedown={blockZoom}
 						ontouchstart={blockZoom}
 						ondblclick={(e) => removeVertex(e, room.id, room.points, i)}
@@ -222,7 +217,7 @@
 
 		{#if $editMode === 'nodes'}
 			{#each floorNodes as n (n.id)}
-				{@const pos = nodePos(n)}
+				{@const pos = $nodeEdits[n.id] ?? n.location}
 				{@const dirty = !!$nodeEdits[n.id]}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<circle
@@ -233,9 +228,7 @@
 					stroke="white"
 					stroke-width={1.5 / transform.k}
 					style="cursor: grab;"
-					onpointerdown={(e) => nodeDown(e, n.id)}
-					onpointermove={(e) => nodeMove(e, n)}
-					onpointerup={nodeUp}
+					onpointerdown={(e) => nodeDown(e, n)}
 					onmousedown={blockZoom}
 					ontouchstart={blockZoom}
 				/>
