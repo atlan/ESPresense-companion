@@ -43,12 +43,24 @@ public class WalkTestService
 
     public class RawSample
     {
+        public int Tick;
         public string NodeId = "";
         public double Distance;
         public double Rssi;
         public double RefRssi;
         public double? DistVar;
         public double? RssiVar;
+    }
+
+    /// <summary>
+    /// One raw per-tick reading, persisted with the point - the wizard's locator replay needs the
+    /// REAL noisy per-sample values (what the locators see live), not the smoothed medians.
+    /// </summary>
+    public class RawTickEntry
+    {
+        public int T { get; set; }
+        public string N { get; set; } = "";
+        public double D { get; set; }
     }
 
     public class NodeAggregate
@@ -91,6 +103,9 @@ public class WalkTestService
         /// error, artificially degrading the baseline and biasing the accept/reject gate.
         /// </summary>
         public double? TxRefRssiEstimate { get; set; }
+
+        /// <summary>Raw per-tick node distances for locator replay (real live noise, not medians).</summary>
+        public List<RawTickEntry> Raw { get; set; } = new();
     }
 
     public class ActiveSession
@@ -101,6 +116,7 @@ public class WalkTestService
         public string? FloorId;
         public DateTime StartedAt;
         public int DurationSecs;
+        public int Tick;
         public readonly ConcurrentBag<RawSample> Samples = new();
         public CancellationTokenSource Cts = new();
     }
@@ -180,7 +196,22 @@ public class WalkTestService
         {
             active,
             devices,
-            points = _points.Values.OrderBy(p => p.RecordedAt).ToList(),
+            // Project without the Raw tick series - it's replay-only data and would bloat the
+            // 15s status poll (hundreds of entries per point).
+            points = _points.Values.OrderBy(p => p.RecordedAt).Select(p => new
+            {
+                id = p.Id,
+                deviceId = p.DeviceId,
+                deviceName = p.DeviceName,
+                x = p.X,
+                y = p.Y,
+                z = p.Z,
+                floorId = p.FloorId,
+                recordedAt = p.RecordedAt,
+                nodes = p.Nodes,
+                txRefRssiEstimate = p.TxRefRssiEstimate,
+                rawTicks = p.Raw.Count
+            }).ToList(),
             defaultDurationSecs = DefaultDurationSecs
         };
     }
@@ -250,12 +281,14 @@ public class WalkTestService
     private void SampleOnce(ActiveSession s)
     {
         if (!state.Devices.TryGetValue(s.DeviceId, out var device)) return;
+        var tick = s.Tick++;
         foreach (var (nodeId, dn) in device.Nodes)
         {
             if (!dn.Current || dn.Node is not { HasLocation: true }) continue;
             if (dn.Distance <= 0) continue;
             s.Samples.Add(new RawSample
             {
+                Tick = tick,
                 NodeId = nodeId,
                 Distance = dn.Distance,
                 Rssi = dn.Rssi,
@@ -347,7 +380,13 @@ public class WalkTestService
             FloorId = s.FloorId,
             RecordedAt = DateTime.UtcNow,
             Nodes = aggregates,
-            TxRefRssiEstimate = txRefEstimates.Count >= 2 ? Median(txRefEstimates) : null
+            TxRefRssiEstimate = txRefEstimates.Count >= 2 ? Median(txRefEstimates) : null,
+            // Keep the raw ticks only for nodes that made the aggregate cut (enough samples).
+            Raw = s.Samples
+                .Where(x => aggregates.Any(a => a.NodeId.Equals(x.NodeId, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(x => x.Tick)
+                .Select(x => new RawTickEntry { T = x.Tick, N = x.NodeId, D = x.Distance })
+                .ToList()
         };
         _points[point.Id] = point;
         SavePoints();
@@ -362,6 +401,9 @@ public class WalkTestService
         if (removed) SavePoints();
         return removed;
     }
+
+    /// <summary>All recorded points including raw tick data - for the locator replay.</summary>
+    public List<WalkTestPoint> GetPoints() => _points.Values.ToList();
 
     private readonly object _persistLock = new();
 

@@ -18,7 +18,8 @@ public class WizardController(
     ConfigLoader configLoader,
     State state,
     WalkTestService walkTest,
-    AutoTuneService autoTune) : ControllerBase
+    AutoTuneService autoTune,
+    LocatorTuneService locatorTune) : ControllerBase
 {
     /// <summary>Renders a config pair id ("node_a:node_b") with friendly node names for display.</summary>
     private string FriendlyPair(string pair)
@@ -196,5 +197,101 @@ public class WizardController(
     {
         var (ok, error) = await autoTune.Apply(req.CandidateKey);
         return ok ? Ok(new { applied = true }) : BadRequest(new { error });
+    }
+
+    // ─── Locator tune (walk-test replay) ────────────────────────────────────
+
+    [HttpGet("api/wizard/locatortune/status")]
+    public IActionResult LocatorTuneStatus()
+    {
+        return Ok(locatorTune.Status());
+    }
+
+    [HttpPost("api/wizard/locatortune/run")]
+    public IActionResult LocatorTuneRun()
+    {
+        // Synchronous - pure math over recorded points, finishes in well under a second.
+        return Ok(locatorTune.Run());
+    }
+
+    [HttpPost("api/wizard/locatortune/apply")]
+    public async Task<IActionResult> LocatorTuneApply([FromBody] AutoTuneApplyRequest req)
+    {
+        var (ok, error) = await locatorTune.Apply(req.CandidateKey);
+        return ok ? Ok(new { applied = true }) : BadRequest(new { error });
+    }
+
+    // ─── Settings (optimization + locators config) ──────────────────────────
+
+    public class WizardSettings
+    {
+        public int IntervalSecs { get; set; }
+        public int KeepSnapshotMins { get; set; }
+        public Dictionary<string, double> Limits { get; set; } = new();
+        public Dictionary<string, double> Weights { get; set; } = new();
+        public bool NadarayaWatsonEnabled { get; set; }
+        public double NadarayaWatsonBandwidth { get; set; }
+        public string NadarayaWatsonKernel { get; set; } = "gaussian";
+        public bool NelderMeadEnabled { get; set; }
+        public bool MleEnabled { get; set; }
+        public bool MultiFloorEnabled { get; set; }
+        public bool NearestNodeEnabled { get; set; }
+        public double? NearestNodeMaxDistance { get; set; }
+    }
+
+    [HttpGet("api/wizard/settings")]
+    public IActionResult GetSettings()
+    {
+        var c = configLoader.Config;
+        if (c == null) return StatusCode(500, new { error = "Config not loaded" });
+        return Ok(new WizardSettings
+        {
+            IntervalSecs = c.Optimization.IntervalSecs,
+            KeepSnapshotMins = c.Optimization.KeepSnapshotMins,
+            Limits = c.Optimization.Limits,
+            Weights = c.Optimization.Weights,
+            NadarayaWatsonEnabled = c.Locators.NadarayaWatson.Enabled,
+            NadarayaWatsonBandwidth = c.Locators.NadarayaWatson.Bandwidth,
+            NadarayaWatsonKernel = c.Locators.NadarayaWatson.Kernel,
+            NelderMeadEnabled = c.Locators.NelderMead.Enabled,
+            MleEnabled = c.Locators.Mle.Enabled,
+            MultiFloorEnabled = c.Locators.MultiFloor.Enabled,
+            NearestNodeEnabled = c.Locators.NearestNode.Enabled,
+            NearestNodeMaxDistance = c.Locators.NearestNode.MaxDistance
+        });
+    }
+
+    [HttpPost("api/wizard/settings")]
+    public async Task<IActionResult> SaveSettings([FromBody] WizardSettings s)
+    {
+        try
+        {
+            var c = configLoader.Config;
+            if (c == null) return StatusCode(500, new { error = "Config not loaded" });
+
+            c.Optimization.IntervalSecs = Math.Clamp(s.IntervalSecs, 15, 86400);
+            c.Optimization.KeepSnapshotMins = Math.Clamp(s.KeepSnapshotMins, 1, 120);
+            foreach (var (k, v) in s.Limits) c.Optimization.Limits[k] = v;
+            foreach (var (k, v) in s.Weights) c.Optimization.Weights[k] = v;
+
+            c.Locators.NadarayaWatson.Enabled = s.NadarayaWatsonEnabled;
+            c.Locators.NadarayaWatson.Bandwidth = s.NadarayaWatsonBandwidth;
+            c.Locators.NadarayaWatson.Kernel = s.NadarayaWatsonKernel;
+            c.Locators.NelderMead.Enabled = s.NelderMeadEnabled;
+            c.Locators.Mle.Enabled = s.MleEnabled;
+            c.Locators.MultiFloor.Enabled = s.MultiFloorEnabled;
+            c.Locators.NearestNode.Enabled = s.NearestNodeEnabled;
+            c.Locators.NearestNode.MaxDistance = s.NearestNodeMaxDistance;
+
+            await configLoader.SaveSectionAsync("optimization", c.Optimization);
+            await configLoader.SaveSectionAsync("locators", c.Locators);
+            Log.Information("Wizard settings saved (optimization + locators sections)");
+            return Ok(new { saved = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to save wizard settings");
+            return StatusCode(500, new { error = "Failed to save settings" });
+        }
     }
 }

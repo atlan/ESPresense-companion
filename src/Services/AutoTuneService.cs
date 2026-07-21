@@ -23,6 +23,8 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
         public string Key { get; set; } = "";
         public string Optimizer { get; set; } = "";
         public double? AbsorptionPenalty { get; set; }
+        public double? AbsorptionMin { get; set; }
+        public double? AbsorptionMax { get; set; }
         public string Label { get; set; } = "";
     }
 
@@ -106,6 +108,30 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
                 Label = $"per_node_absorption, penalty {penalty}"
             });
         }
+        // Absorption BOUNDS variants (limits.absorption_min/max) - a too-narrow window forces
+        // nodes with genuinely unusual RF surroundings against the rails; a too-wide one gives
+        // the fit rope to overfit. Tested at two penalty levels each.
+        foreach (var penalty in new[] { 1.0, 10.0 })
+        {
+            candidates.Add(new Candidate
+            {
+                Key = $"per_node_absorption:{penalty}:wide",
+                Optimizer = "per_node_absorption",
+                AbsorptionPenalty = penalty,
+                AbsorptionMin = 1.8,
+                AbsorptionMax = 5.5,
+                Label = $"per_node_absorption, penalty {penalty}, bounds 1.8-5.5 (wide)"
+            });
+            candidates.Add(new Candidate
+            {
+                Key = $"per_node_absorption:{penalty}:narrow",
+                Optimizer = "per_node_absorption",
+                AbsorptionPenalty = penalty,
+                AbsorptionMin = 2.0,
+                AbsorptionMax = 4.0,
+                Label = $"per_node_absorption, penalty {penalty}, bounds 2.0-4.0 (narrow)"
+            });
+        }
         candidates.Add(new Candidate
         {
             Key = "global_absorption",
@@ -120,7 +146,12 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
         return c.Optimizer switch
         {
             "global_absorption" => new GlobalAbsorptionRxTxOptimizer(state),
-            _ => new PerNodeAbsorptionRxTx(state) { AbsorptionPenaltyOverride = c.AbsorptionPenalty }
+            _ => new PerNodeAbsorptionRxTx(state)
+            {
+                AbsorptionPenaltyOverride = c.AbsorptionPenalty,
+                AbsorptionMinOverride = c.AbsorptionMin,
+                AbsorptionMaxOverride = c.AbsorptionMax
+            }
         };
     }
 
@@ -318,6 +349,10 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
         c.Optimization.Optimizer = result.Candidate.Optimizer;
         if (result.Candidate.AbsorptionPenalty.HasValue)
             c.Optimization.Weights["absorption_penalty"] = result.Candidate.AbsorptionPenalty.Value;
+        if (result.Candidate.AbsorptionMin.HasValue)
+            c.Optimization.Limits["absorption_min"] = result.Candidate.AbsorptionMin.Value;
+        if (result.Candidate.AbsorptionMax.HasValue)
+            c.Optimization.Limits["absorption_max"] = result.Candidate.AbsorptionMax.Value;
         await configLoader.SaveSectionAsync("optimization", c.Optimization);
         Log.Information("Auto-tune applied: optimizer={Optimizer}, penalty={Penalty}",
             result.Candidate.Optimizer, result.Candidate.AbsorptionPenalty);

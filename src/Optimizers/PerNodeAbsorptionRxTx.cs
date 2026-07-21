@@ -25,6 +25,10 @@ public class PerNodeAbsorptionRxTx : IOptimizer
     /// </summary>
     public double? AbsorptionPenaltyOverride { get; init; }
 
+    /// <summary>Auto-tune overrides for limits.absorption_min/max - same rationale as the penalty override.</summary>
+    public double? AbsorptionMinOverride { get; init; }
+    public double? AbsorptionMaxOverride { get; init; }
+
     public OptimizationResults Optimize(OptimizationSnapshot os, Dictionary<string, NodeSettings> existingSettings)
     {
         var or = new OptimizationResults();
@@ -76,7 +80,9 @@ public class PerNodeAbsorptionRxTx : IOptimizer
 
         if (optimization == null) return or;
 
-        var targetAbsorption = optimization.AbsorptionMin + (optimization.AbsorptionMax - optimization.AbsorptionMin) / 2.0;
+        var absorptionMin = AbsorptionMinOverride ?? optimization.AbsorptionMin;
+        var absorptionMax = AbsorptionMaxOverride ?? optimization.AbsorptionMax;
+        var targetAbsorption = absorptionMin + (absorptionMax - absorptionMin) / 2.0;
         double penaltyWeight = AbsorptionPenaltyOverride ?? optimization.AbsorptionPenaltyWeight;
 
         // Pre-calculate weights for each node based on RssiVar
@@ -221,8 +227,8 @@ public class PerNodeAbsorptionRxTx : IOptimizer
             int baseIndex = rxIndexMap[rxId];
             lowerBound[baseIndex] = optimization.RxAdjRssiMin;
             upperBound[baseIndex] = optimization.RxAdjRssiMax;
-            lowerBound[baseIndex + 1] = optimization.AbsorptionMin;
-            upperBound[baseIndex + 1] = optimization.AbsorptionMax;
+            lowerBound[baseIndex + 1] = absorptionMin;
+            upperBound[baseIndex + 1] = absorptionMax;
         }
 
         // For Tx nodes: txRefRssi bounds

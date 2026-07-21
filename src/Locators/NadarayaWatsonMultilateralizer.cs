@@ -11,6 +11,37 @@ namespace ESPresense.Locators;
 
 public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State state, NodeTelemetryStore nts) : ILocate
 {
+    /// <summary>
+    /// The core Nadaraya-Watson weighted-centroid estimate, factored out so the wizard's locator
+    /// replay can score candidate bandwidth/kernel values against walk-test ground truth using
+    /// EXACTLY the math the live locator runs - a reimplementation would silently drift.
+    /// </summary>
+    public static (Point3D est, double weightedError) Estimate(
+        IReadOnlyList<(Point3D loc, double dist)> heard, double bandwidth, string? kernel)
+    {
+        const double EPS = 1e-6;
+        var weights = kernel == "gaussian"
+            ? heard.Select(n => Math.Exp(-Math.Pow(n.dist, 2) / (2 * Math.Pow(Math.Max(bandwidth, EPS), 2)))).ToArray()
+            : heard.Select(n => 1.0 / (Math.Pow(n.dist, 2) + EPS)).ToArray();
+        var wSum = weights.Sum();
+        if (wSum < EPS) weights = heard.Select(n => 1.0 / (Math.Pow(n.dist, 2) + EPS)).ToArray();
+        wSum = weights.Sum();
+
+        var est = new Point3D(
+            heard.Zip(weights, (n, w) => n.loc.X * w).Sum() / wSum,
+            heard.Zip(weights, (n, w) => n.loc.Y * w).Sum() / wSum,
+            heard.Zip(weights, (n, w) => n.loc.Z * w).Sum() / wSum
+        );
+
+        var weightedError = heard.Zip(weights, (n, w) =>
+        {
+            double diff = est.DistanceTo(n.loc) - n.dist;
+            return w * diff * diff;
+        }).Sum() / wSum;
+
+        return (est, weightedError);
+    }
+
     public bool Locate(Scenario scenario)
     {
         var heard = device.Nodes.Values
@@ -51,27 +82,11 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             }
             else
             {
-                const double EPS = 1e-6;
                 var nwConfig = state.Config?.Locators?.NadarayaWatson;
-                var weights = nwConfig?.Kernel == "gaussian"
-                    ? heard.Select(n => Math.Exp(-Math.Pow(n.Distance, 2) / (2 * Math.Pow(Math.Max(nwConfig.Bandwidth, EPS), 2)))).ToArray()
-                    : heard.Select(n => 1.0 / (Math.Pow(n.Distance, 2) + EPS)).ToArray();
-                var wSum = weights.Sum();
-                if (wSum < EPS) weights = heard.Select(n => 1.0 / (Math.Pow(n.Distance, 2) + EPS)).ToArray();
-                wSum = weights.Sum();
-
-                est = new Point3D(
-                    heard.Zip(weights, (n, w) => n.Node!.Location.X * w).Sum() / wSum,
-                    heard.Zip(weights, (n, w) => n.Node!.Location.Y * w).Sum() / wSum,
-                    heard.Zip(weights, (n, w) => n.Node!.Location.Z * w).Sum() / wSum
-                );
-
-                weightedError = heard.Zip(weights, (n, w) =>
-                {
-                    double diff = est.DistanceTo(n.Node!.Location) - n.Distance;
-                    return w * diff * diff;
-                }).Sum() / wSum;
-
+                (est, weightedError) = Estimate(
+                    heard.Select(n => (n.Node!.Location, n.Distance)).ToList(),
+                    nwConfig?.Bandwidth ?? 0.5,
+                    nwConfig?.Kernel);
                 scenario.Error = weightedError;
             }
 

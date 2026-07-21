@@ -84,6 +84,7 @@ builder.Services.AddSingleton(sp => new WalkTestService(
     sp.GetRequiredService<NodeSettingsStore>(),
     Path.Combine(storageDir, "walktest-points.json")));
 builder.Services.AddSingleton<AutoTuneService>();
+builder.Services.AddSingleton<LocatorTuneService>();
 builder.Services.AddSingleton<WizardService>();
 // Registered as singleton + forwarded so WizardController can call TriggerNow() on the same instance.
 builder.Services.AddSingleton<OptimizationRunner>();

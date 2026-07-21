@@ -151,6 +151,47 @@
 	let tuneBusy = false;
 	let tuneTimer: ReturnType<typeof setInterval> | null = null;
 
+	interface LocatorTuneResult {
+		candidate: { key: string; bandwidth: number; kernel: string; label: string };
+		meanErrorM: number;
+		meanJitterM: number;
+		score: number;
+		ticks: number;
+		points: number;
+		isCurrent: boolean;
+	}
+
+	interface LocatorTuneState {
+		error?: string;
+		results: LocatorTuneResult[];
+		recommendation?: string;
+		pointsUsed: number;
+		ticksUsed: number;
+		ranAt?: string;
+	}
+
+	let locatorTune: LocatorTuneState | null = null;
+	let locatorTuneBusy = false;
+
+	interface WizardSettings {
+		intervalSecs: number;
+		keepSnapshotMins: number;
+		limits: Record<string, number>;
+		weights: Record<string, number>;
+		nadarayaWatsonEnabled: boolean;
+		nadarayaWatsonBandwidth: number;
+		nadarayaWatsonKernel: string;
+		nelderMeadEnabled: boolean;
+		mleEnabled: boolean;
+		multiFloorEnabled: boolean;
+		nearestNodeEnabled: boolean;
+		nearestNodeMaxDistance?: number;
+	}
+
+	let settings: WizardSettings | null = null;
+	let settingsBusy = false;
+	let settingsOpen = false;
+
 	let walkStatus: WalkTestStatus | null = null;
 	let walkSuggestions: WalkPointSuggestion[] = [];
 	let wtDevice = '';
@@ -266,6 +307,91 @@
 		wtX = s.x;
 		wtY = s.y;
 		wtZ = s.z;
+	}
+
+	async function fetchLocatorTune() {
+		try {
+			const res = await fetch(apiPath('/api/wizard/locatortune/status'));
+			if (res.ok) locatorTune = await res.json();
+		} catch (error) {
+			console.error('Error fetching locator tune status:', error);
+		}
+	}
+
+	async function runLocatorTune() {
+		if (locatorTuneBusy) return;
+		locatorTuneBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/locatortune/run'), { method: 'POST' });
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			locatorTune = await res.json();
+		} catch (error) {
+			toastStore.trigger({
+				message: error instanceof Error ? error.message : 'Locator tune failed',
+				background: 'preset-filled-error-500'
+			});
+		} finally {
+			locatorTuneBusy = false;
+		}
+	}
+
+	async function applyLocatorCandidate(r: LocatorTuneResult) {
+		const confirmed = await showConfirm({
+			title: 'Apply locator configuration',
+			body: `Set nadaraya_watson to "${r.candidate.label}" in the live config? Positioning behavior changes immediately.`
+		});
+		if (!confirmed) return;
+		try {
+			const res = await fetch(apiPath('/api/wizard/locatortune/apply'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ candidateKey: r.candidate.key })
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.error ?? `HTTP ${res.status}`);
+			}
+			toastStore.trigger({ message: `Applied: ${r.candidate.label}`, background: 'preset-filled-success-500' });
+			await fetchSettings();
+		} catch (error) {
+			toastStore.trigger({
+				message: error instanceof Error ? error.message : 'Failed to apply locator candidate',
+				background: 'preset-filled-error-500'
+			});
+		}
+	}
+
+	async function fetchSettings() {
+		try {
+			const res = await fetch(apiPath('/api/wizard/settings'));
+			if (res.ok) settings = await res.json();
+		} catch (error) {
+			console.error('Error fetching settings:', error);
+		}
+	}
+
+	async function saveSettings() {
+		if (settingsBusy || !settings) return;
+		settingsBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/settings'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(settings)
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.error ?? `HTTP ${res.status}`);
+			}
+			toastStore.trigger({ message: 'Settings saved to config', background: 'preset-filled-success-500' });
+		} catch (error) {
+			toastStore.trigger({
+				message: error instanceof Error ? error.message : 'Failed to save settings',
+				background: 'preset-filled-error-500'
+			});
+		} finally {
+			settingsBusy = false;
+		}
 	}
 
 	async function fetchTuneStatus() {
@@ -399,6 +525,8 @@
 	onMount(() => {
 		fetchAll();
 		fetchTuneStatus();
+		fetchLocatorTune();
+		fetchSettings();
 		refreshTimer = setInterval(fetchAll, 15000);
 		// Faster poll for the walk test progress while a session runs
 		walkTimer = setInterval(() => {
@@ -740,6 +868,125 @@
 						</table>
 					</div>
 					<p class="text-xs text-surface-600-400 mt-2">Holdout = mean composite score on pairs excluded from fitting (higher is better). A big train-vs-holdout gap indicates overfitting.</p>
+				{/if}
+			</div>
+
+			<!-- 7. Locator tuning via walk-test replay -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Locator Tuning</h2>
+					<button class="btn preset-filled-primary-500" onclick={runLocatorTune} disabled={locatorTuneBusy}>
+						{locatorTuneBusy ? 'Running...' : 'Run replay'}
+					</button>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Replays the raw per-tick readings of your recorded walk test points (real live noise, known true position) through nadaraya_watson bandwidth/kernel candidates. Scored on position accuracy AND jitter - how much the estimate wanders while the beacon sits still, i.e. the room-flapping symptom. The more walk points on different floors, the more representative the result.
+				</p>
+				{#if locatorTune?.error}
+					<p class="text-sm text-error-500">{locatorTune.error}</p>
+				{/if}
+				{#if locatorTune && !locatorTune.error && locatorTune.results.length > 0}
+					{#if locatorTune.recommendation}
+						<p class="text-sm font-semibold mb-2">{locatorTune.recommendation}</p>
+					{/if}
+					<div class="overflow-x-auto">
+						<table class="table table-compact">
+							<thead>
+								<tr><th>Candidate</th><th>Mean error</th><th>Jitter</th><th>Score</th><th>Ticks</th><th></th></tr>
+							</thead>
+							<tbody>
+								{#each locatorTune.results as r, i (r.candidate.key)}
+									<tr>
+										<td>{r.candidate.label}{r.isCurrent ? ' (current)' : ''}</td>
+										<td class={i === 0 ? 'font-bold text-success-500' : ''}>{r.meanErrorM.toFixed(2)}m</td>
+										<td>{r.meanJitterM.toFixed(2)}m</td>
+										<td>{r.score.toFixed(2)}</td>
+										<td>{r.ticks}</td>
+										<td>
+											{#if !r.isCurrent}
+												<button class="btn btn-sm preset-filled-warning-500" onclick={() => applyLocatorCandidate(r)}>Apply</button>
+											{/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-2">Based on {locatorTune.pointsUsed} walk point{locatorTune.pointsUsed === 1 ? '' : 's'}. Caveats: stationary noise only (no walking-motion dynamics), and the scenario/Kalman smoothing above the locators is not replayed.</p>
+				{/if}
+			</div>
+
+			<!-- 8. Settings -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Settings</h2>
+					<div class="flex gap-2">
+						<button class="btn preset-tonal" onclick={() => (settingsOpen = !settingsOpen)}>{settingsOpen ? 'Hide' : 'Show'}</button>
+						{#if settingsOpen}
+							<button class="btn preset-filled-primary-500" onclick={saveSettings} disabled={settingsBusy || !settings}>Save</button>
+						{/if}
+					</div>
+				</header>
+				{#if settingsOpen && settings}
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+						<div>
+							<h3 class="font-semibold text-sm mb-2">Optimization</h3>
+							<div class="grid grid-cols-2 gap-3">
+								<label class="label text-sm">
+									<span>Interval (s)</span>
+									<input class="input" type="number" min="15" bind:value={settings.intervalSecs} />
+								</label>
+								<label class="label text-sm">
+									<span>Snapshot window (min)</span>
+									<input class="input" type="number" min="1" max="120" bind:value={settings.keepSnapshotMins} />
+								</label>
+								<label class="label text-sm">
+									<span>Absorption min</span>
+									<input class="input" type="number" step="0.1" bind:value={settings.limits.absorption_min} />
+								</label>
+								<label class="label text-sm">
+									<span>Absorption max</span>
+									<input class="input" type="number" step="0.1" bind:value={settings.limits.absorption_max} />
+								</label>
+								<label class="label text-sm">
+									<span>Absorption penalty</span>
+									<input class="input" type="number" step="0.5" bind:value={settings.weights.absorption_penalty} />
+								</label>
+							</div>
+						</div>
+						<div>
+							<h3 class="font-semibold text-sm mb-2">Locators</h3>
+							<div class="space-y-2">
+								<div class="flex items-center gap-3">
+									<input type="checkbox" class="checkbox" bind:checked={settings.nadarayaWatsonEnabled} id="nw-en" />
+									<label for="nw-en" class="text-sm">nadaraya_watson</label>
+									<input class="input w-20" type="number" step="0.1" bind:value={settings.nadarayaWatsonBandwidth} title="bandwidth" />
+									<select class="select w-32" bind:value={settings.nadarayaWatsonKernel}>
+										<option value="gaussian">gaussian</option>
+										<option value="inverse_square">inverse</option>
+									</select>
+								</div>
+								<div class="flex items-center gap-3">
+									<input type="checkbox" class="checkbox" bind:checked={settings.nelderMeadEnabled} id="nm-en" />
+									<label for="nm-en" class="text-sm">nelder_mead</label>
+								</div>
+								<div class="flex items-center gap-3">
+									<input type="checkbox" class="checkbox" bind:checked={settings.mleEnabled} id="mle-en" />
+									<label for="mle-en" class="text-sm">mle</label>
+								</div>
+								<div class="flex items-center gap-3">
+									<input type="checkbox" class="checkbox" bind:checked={settings.multiFloorEnabled} id="mf-en" />
+									<label for="mf-en" class="text-sm">multi_floor</label>
+								</div>
+								<div class="flex items-center gap-3">
+									<input type="checkbox" class="checkbox" bind:checked={settings.nearestNodeEnabled} id="nn-en" />
+									<label for="nn-en" class="text-sm">nearest_node</label>
+									<input class="input w-20" type="number" step="0.5" bind:value={settings.nearestNodeMaxDistance} title="max distance" />
+								</div>
+							</div>
+						</div>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-3">Writes the optimization and locators sections of config.yaml directly - changes apply within a few seconds (config is polled), no restart needed. correlation/rmse weights and floor assignments are deliberately not exposed here.</p>
 				{/if}
 			</div>
 		{/if}
