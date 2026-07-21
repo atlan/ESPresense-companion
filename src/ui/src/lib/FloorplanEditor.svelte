@@ -148,7 +148,7 @@
 		/>
 
 		{#if $editMode === 'rooms'}
-			<!-- Room selection overlays + selected-room handles -->
+			<!-- Room selection overlays first ... -->
 			{#each floor?.rooms ?? [] as room (room.id)}
 				{@const pts = roomPoints(room.id, room.points)}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -160,44 +160,49 @@
 					style="pointer-events: {$draftRoom !== null ? 'none' : 'all'}; cursor: pointer;"
 					onclick={(e) => roomClick(e, room.id)}
 				/>
-				{#if $selectedRoomId === room.id}
-					{#each pts as p, i (i)}
-						{@const next = pts[(i + 1) % pts.length]}
-						<!-- Edge midpoint: click to insert a vertex -->
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<circle
-							cx={$xScale((p[0] + next[0]) / 2)}
-							cy={$yScale((p[1] + next[1]) / 2)}
-							r={hrSmall}
-							fill="#94a3b8"
-							opacity="0.7"
-							style="cursor: copy;"
-							onclick={(e) => insertVertex(e, room.id, room.points, i)}
-							onpointerdown={blockZoom}
-							onmousedown={blockZoom}
-							ontouchstart={blockZoom}
-						/>
-					{/each}
-					{#each pts as p, i (i)}
-						<!-- Vertex handle: drag to move, double-click to delete -->
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<circle
-							cx={$xScale(p[0])}
-							cy={$yScale(p[1])}
-							r={hr}
-							fill="#f59e0b"
-							stroke="white"
-							stroke-width={1.5 / transform.k}
-							style="cursor: grab;"
-							onpointerdown={(e) => vertexDown(e, room.id, i)}
-							onpointermove={(e) => vertexMove(e, room.points)}
-							onpointerup={vertexUp}
-							onmousedown={blockZoom}
-							ontouchstart={blockZoom}
-							ondblclick={(e) => removeVertex(e, room.id, room.points, i)}
-						/>
-					{/each}
-				{/if}
+			{/each}
+
+			<!-- ... handles LAST so no later room's transparent click area paints above them
+			     (SVG paint order = document order; corner handles sit exactly on shared edges,
+			     where a neighboring room's interior would otherwise swallow the pointer events) -->
+			{#each (floor?.rooms ?? []).filter((r) => r.id === $selectedRoomId) as room (room.id)}
+				{@const pts = roomPoints(room.id, room.points)}
+				{#each pts as p, i (i)}
+					{@const next = pts[(i + 1) % pts.length]}
+					<!-- Edge midpoint: click to insert a vertex -->
+					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+					<circle
+						cx={$xScale((p[0] + next[0]) / 2)}
+						cy={$yScale((p[1] + next[1]) / 2)}
+						r={hrSmall}
+						fill="#94a3b8"
+						opacity="0.7"
+						style="cursor: copy; pointer-events: all;"
+						onclick={(e) => insertVertex(e, room.id, room.points, i)}
+						onpointerdown={blockZoom}
+						onmousedown={blockZoom}
+						ontouchstart={blockZoom}
+					/>
+				{/each}
+				{#each pts as p, i (i)}
+					<!-- Vertex handle: drag to move, double-click to delete -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<circle
+						cx={$xScale(p[0])}
+						cy={$yScale(p[1])}
+						r={hr}
+						fill="#f59e0b"
+						stroke="white"
+						stroke-width={1.5 / transform.k}
+						style="cursor: grab; pointer-events: all;"
+						onpointerdown={(e) => vertexDown(e, room.id, i)}
+						onpointermove={(e) => vertexMove(e, room.points)}
+						onpointerup={vertexUp}
+						onmousedown={blockZoom}
+						ontouchstart={blockZoom}
+						ondblclick={(e) => removeVertex(e, room.id, room.points, i)}
+					/>
+				{/each}
 			{/each}
 
 			<!-- Draft room in progress -->
