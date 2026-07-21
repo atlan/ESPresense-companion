@@ -189,6 +189,11 @@
 		nearestNodeMaxDistance?: number;
 		timeout: number;
 		awayTimeout: number;
+		deviceRetention: string;
+		optimizer: string;
+		bfgsEnabled: boolean;
+		nelderMeadSigma: number;
+		mleSigma: number;
 		filteringProcessNoise: number;
 		filteringMeasurementNoise: number;
 		filteringMaxVelocity: number;
@@ -999,6 +1004,18 @@
 									<span>Absorption penalty</span>
 									<input class="input" type="number" step="0.5" bind:value={settings.weights.absorption_penalty} />
 								</label>
+								<label class="label text-sm">
+									<span>Optimizer</span>
+									<select class="select" bind:value={settings.optimizer}>
+										<option value="per_node_absorption">per_node_absorption</option>
+										<option value="global_absorption">global_absorption</option>
+										<option value="legacy">legacy</option>
+									</select>
+								</label>
+								<label class="label text-sm"><span>Tx ref min</span><input class="input" type="number" step="1" bind:value={settings.limits.tx_ref_rssi_min} /></label>
+								<label class="label text-sm"><span>Tx ref max</span><input class="input" type="number" step="1" bind:value={settings.limits.tx_ref_rssi_max} /></label>
+								<label class="label text-sm"><span>Rx adj min</span><input class="input" type="number" step="1" bind:value={settings.limits.rx_adj_rssi_min} /></label>
+								<label class="label text-sm"><span>Rx adj max</span><input class="input" type="number" step="1" bind:value={settings.limits.rx_adj_rssi_max} /></label>
 							</div>
 						</div>
 						<div>
@@ -1016,10 +1033,16 @@
 								<div class="flex items-center gap-3">
 									<input type="checkbox" class="checkbox" bind:checked={settings.nelderMeadEnabled} id="nm-en" />
 									<label for="nm-en" class="text-sm">nelder_mead</label>
+									<input class="input w-20" type="number" step="0.05" bind:value={settings.nelderMeadSigma} title="weighting sigma (rank-based)" />
 								</div>
 								<div class="flex items-center gap-3">
 									<input type="checkbox" class="checkbox" bind:checked={settings.mleEnabled} id="mle-en" />
 									<label for="mle-en" class="text-sm">mle</label>
+									<input class="input w-20" type="number" step="0.05" bind:value={settings.mleSigma} title="weighting sigma (rank-based)" />
+								</div>
+								<div class="flex items-center gap-3">
+									<input type="checkbox" class="checkbox" bind:checked={settings.bfgsEnabled} id="bfgs-en" />
+									<label for="bfgs-en" class="text-sm">bfgs</label>
 								</div>
 								<div class="flex items-center gap-3">
 									<input type="checkbox" class="checkbox" bind:checked={settings.multiFloorEnabled} id="mf-en" />
@@ -1039,6 +1062,7 @@
 							<div class="grid grid-cols-2 gap-3">
 								<label class="label text-sm"><span>Timeout (s)</span><input class="input" type="number" min="5" bind:value={settings.timeout} /></label>
 								<label class="label text-sm"><span>Away timeout (s)</span><input class="input" type="number" min="10" bind:value={settings.awayTimeout} /></label>
+								<label class="label text-sm"><span>Device retention</span><input class="input" placeholder="30d" bind:value={settings.deviceRetention} /></label>
 							</div>
 							<h3 class="font-semibold text-sm mb-2 mt-4">Filtering (Kalman)</h3>
 							<div class="grid grid-cols-2 gap-3">

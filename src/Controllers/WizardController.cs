@@ -240,6 +240,11 @@ public class WizardController(
 
         public int Timeout { get; set; }
         public int AwayTimeout { get; set; }
+        public string DeviceRetention { get; set; } = "30d";
+        public string Optimizer { get; set; } = "per_node_absorption";
+        public bool BfgsEnabled { get; set; }
+        public double NelderMeadSigma { get; set; }
+        public double MleSigma { get; set; }
 
         public double FilteringProcessNoise { get; set; }
         public double FilteringMeasurementNoise { get; set; }
@@ -291,6 +296,11 @@ public class WizardController(
             NearestNodeMaxDistance = c.Locators.NearestNode.MaxDistance,
             Timeout = c.Timeout,
             AwayTimeout = c.AwayTimeout,
+            DeviceRetention = c.DeviceRetention,
+            Optimizer = c.Optimization.Optimizer,
+            BfgsEnabled = c.Locators.Bfgs.Enabled,
+            NelderMeadSigma = c.Locators.NelderMead.Weighting.Props.TryGetValue("sigma", out var nmSigma) ? nmSigma : 0.3,
+            MleSigma = c.Locators.Mle.Weighting.Props.TryGetValue("sigma", out var mleSigma) ? mleSigma : 0.3,
             FilteringProcessNoise = c.Filtering.ProcessNoise,
             FilteringMeasurementNoise = c.Filtering.MeasurementNoise,
             FilteringMaxVelocity = c.Filtering.MaxVelocity,
@@ -341,6 +351,11 @@ public class WizardController(
 
             c.Timeout = Math.Clamp(s.Timeout, 5, 3600);
             c.AwayTimeout = Math.Clamp(s.AwayTimeout, 10, 86400);
+            if (!string.IsNullOrWhiteSpace(s.DeviceRetention)) c.DeviceRetention = s.DeviceRetention;
+            if (s.Optimizer is "legacy" or "global_absorption" or "per_node_absorption") c.Optimization.Optimizer = s.Optimizer;
+            c.Locators.Bfgs.Enabled = s.BfgsEnabled;
+            if (s.NelderMeadSigma > 0) c.Locators.NelderMead.Weighting.Props["sigma"] = s.NelderMeadSigma;
+            if (s.MleSigma > 0) c.Locators.Mle.Weighting.Props["sigma"] = s.MleSigma;
 
             c.Filtering.ProcessNoise = s.FilteringProcessNoise;
             c.Filtering.MeasurementNoise = s.FilteringMeasurementNoise;
@@ -374,6 +389,7 @@ public class WizardController(
             await configLoader.SaveSectionAsync("locators", c.Locators);
             await configLoader.SaveSectionAsync("timeout", c.Timeout);
             await configLoader.SaveSectionAsync("away_timeout", c.AwayTimeout);
+            await configLoader.SaveSectionAsync("device_retention", c.DeviceRetention);
             await configLoader.SaveSectionAsync("filtering", c.Filtering);
             await configLoader.SaveSectionAsync("history", c.History);
             await configLoader.SaveSectionAsync("map", c.Map);
