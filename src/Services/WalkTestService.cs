@@ -127,14 +127,16 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker)
             };
         }
 
-        // Devices with any current node reading are walk-test candidates; skip unnamed transient
-        // BLE noise unless nothing named is around (named/tracked devices are what a user would
-        // actually carry to a walk-test spot).
+        // Only deliberately TRACKED devices with current readings are walk-test candidates - merely
+        // discovered BLE devices (adverts with a name, e.g. random appliances) are not something
+        // the user carries to a walk-test spot, and showing them resurfaces devices the user has
+        // explicitly removed from the Devices page. Fallback to any current device only when
+        // nothing is tracked at all, so the feature stays usable on a fresh install.
         var candidates = state.Devices.Values
             .Where(d => !string.IsNullOrWhiteSpace(d.Id) && d.Nodes.Values.Any(dn => dn.Current))
             .ToList();
-        var named = candidates.Where(d => !string.IsNullOrWhiteSpace(d.Name) || d.Track).ToList();
-        var devices = (named.Count > 0 ? named : candidates)
+        var tracked = candidates.Where(d => d.Track).ToList();
+        var devices = (tracked.Count > 0 ? tracked : candidates)
             .Select(d => new { id = d.Id, name = d.Name })
             .OrderBy(d => d.name ?? d.id)
             .ToList();
