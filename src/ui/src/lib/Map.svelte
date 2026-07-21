@@ -145,7 +145,7 @@
 {#if bounds}
 	<div class="relative w-full h-full">
 		{#if editable}
-			<FloorplanEditorPanel {floorId} />
+			<FloorplanEditorPanel bind:floorId />
 		{/if}
 		<LayerCake x="0" y="1" xRange={getXRange} yRange={getYRange} flatData={squareBounds} padding={{ top: 16, left: 16, bottom: 16, right: 16 }}>
 			<Svg bind:element={svg}>

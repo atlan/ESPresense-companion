@@ -40,6 +40,15 @@ export interface TraceImage {
 }
 export const traceImage = writable<TraceImage | null>(null);
 
+/**
+ * Active image-calibration tool: 'origin' = next map click becomes the (0,0) point (image is
+ * shifted accordingly); 'scale' = collect two clicks on a known-length feature, then the panel
+ * asks for the real distance and rescales the image around the first click point.
+ */
+export const imageTool = writable<'none' | 'origin' | 'scale'>('none');
+/** Collected clicks for the 'scale' tool (map coordinates, max 2). */
+export const scalePoints = writable<number[][]>([]);
+
 export function resetEditState() {
 	selectedNodeId.set(null);
 	nodeEdits.set({});

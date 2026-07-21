@@ -3,7 +3,7 @@
 	import { zoomIdentity } from 'd3-zoom';
 	import { config, nodes } from '$lib/stores';
 	import { screenToMap } from '$lib/mapcoords';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage } from '$lib/floorplanEdit';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints } from '$lib/floorplanEdit';
 	import type { LayerCakeContext } from '$lib/types';
 
 	export let transform = zoomIdentity;
@@ -119,11 +119,17 @@
 		$roomEdits = { ...$roomEdits, [roomId]: pts };
 	}
 
-	// ─── map background clicks (place node / draft room) ─────────────────────
+	// ─── map background clicks (place node / draft room / image calibration) ──
 	function mapClick(e: MouseEvent) {
 		const m = toMap(e);
 		if (!m) return;
-		if ($editMode === 'nodes' && $placingNode) {
+		if ($imageTool === 'origin' && $traceImage) {
+			// Shift the image so the clicked spot becomes map (0,0).
+			$traceImage = { ...$traceImage, x: round($traceImage.x - m.x), y: round($traceImage.y - m.y) };
+			$imageTool = 'none';
+		} else if ($imageTool === 'scale') {
+			if ($scalePoints.length < 2) $scalePoints = [...$scalePoints, [m.x, m.y]];
+		} else if ($editMode === 'nodes' && $placingNode) {
 			const zBase = floor?.bounds?.[0]?.[2] ?? 0;
 			$pendingNode = { x: round(m.x), y: round(m.y), z: round(zBase + 0.25) };
 			$placingNode = false;
@@ -194,9 +200,23 @@
 			width={20000}
 			height={20000}
 			fill="transparent"
-			style="pointer-events: {($editMode === 'nodes' && $placingNode) || ($editMode === 'rooms' && $draftRoom !== null) ? 'all' : 'none'}; cursor: crosshair;"
+			style="pointer-events: {($editMode === 'nodes' && $placingNode) || ($editMode === 'rooms' && $draftRoom !== null) || $imageTool !== 'none' ? 'all' : 'none'}; cursor: crosshair;"
 			onclick={mapClick}
 		/>
+
+		<!-- Image calibration markers: origin crosshair at (0,0) while aligning, scale points/line -->
+		{#if $traceImage && ($imageTool !== 'none' || $scalePoints.length > 0)}
+			<line x1={$xScale(0) - 12 / transform.k} y1={$yScale(0)} x2={$xScale(0) + 12 / transform.k} y2={$yScale(0)} stroke="#ef4444" stroke-width={1.5 / transform.k} />
+			<line x1={$xScale(0)} y1={$yScale(0) - 12 / transform.k} x2={$xScale(0)} y2={$yScale(0) + 12 / transform.k} stroke="#ef4444" stroke-width={1.5 / transform.k} />
+		{/if}
+		{#if $scalePoints.length > 0}
+			{#each $scalePoints as p, i (i)}
+				<circle cx={$xScale(p[0])} cy={$yScale(p[1])} r={5 / transform.k} fill="#ef4444" stroke="white" stroke-width={1 / transform.k} />
+			{/each}
+			{#if $scalePoints.length === 2}
+				<line x1={$xScale($scalePoints[0][0])} y1={$yScale($scalePoints[0][1])} x2={$xScale($scalePoints[1][0])} y2={$yScale($scalePoints[1][1])} stroke="#ef4444" stroke-width={1.5 / transform.k} stroke-dasharray={`${5 / transform.k} ${3 / transform.k}`} />
+			{/if}
+		{/if}
 
 		{#if $editMode === 'rooms'}
 			<!-- Room selection overlays first ... -->

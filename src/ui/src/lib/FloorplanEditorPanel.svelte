@@ -3,7 +3,7 @@
 	import { config, nodes } from '$lib/stores';
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { showConfirm } from '$lib/modal/modalStore';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, resetEditState } from '$lib/floorplanEdit';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, resetEditState } from '$lib/floorplanEdit';
 
 	const toastStore = getToastStore();
 
@@ -73,14 +73,73 @@
 		if (!confirmed) return;
 		busy = true;
 		try {
-			const res = await fetch(apiPath(`/api/floorplan/floor/${floorId}`), { method: 'DELETE' });
+			const deletedId = floorId;
+			const res = await fetch(apiPath(`/api/floorplan/floor/${deletedId}`), { method: 'DELETE' });
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
 			}
 			ok('Floor deleted');
+			// Don't leave the UI staring at the deleted floor: clear the tracing aid and
+			// switch to the first remaining floor.
+			$traceImage = null;
+			$imageTool = 'none';
+			$scalePoints = [];
+			$selectedRoomId = null;
+			floorId = ($config?.floors ?? []).find((f) => f.id !== deletedId)?.id ?? null;
 		} catch (e) {
 			fail(e, 'Failed to delete floor');
+		} finally {
+			busy = false;
+		}
+	}
+
+	let scaleRealDistance: number | null = null;
+
+	function startScaleTool() {
+		$scalePoints = [];
+		scaleRealDistance = null;
+		$imageTool = 'scale';
+	}
+
+	function cancelImageTool() {
+		$imageTool = 'none';
+		$scalePoints = [];
+		scaleRealDistance = null;
+	}
+
+	function applyScale() {
+		if (!$traceImage || $scalePoints.length !== 2 || !scaleRealDistance || scaleRealDistance <= 0) return;
+		const [p1, p2] = $scalePoints;
+		const mapDist = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+		if (mapDist < 1e-6) return;
+		const factor = scaleRealDistance / mapDist;
+		// Rescale around the FIRST clicked point so the measured feature stays put.
+		$traceImage = {
+			...$traceImage,
+			widthM: Math.round($traceImage.widthM * factor * 100) / 100,
+			x: Math.round((p1[0] - (p1[0] - $traceImage.x) * factor) * 100) / 100,
+			y: Math.round((p1[1] - (p1[1] - $traceImage.y) * factor) * 100) / 100
+		};
+		cancelImageTool();
+		ok('Scale applied - the clicked distance now measures ' + scaleRealDistance + 'm');
+	}
+
+	async function boundsFromImage() {
+		if (!$traceImage || !floorId || busy) return;
+		const img = $traceImage;
+		const z0 = floor?.bounds?.[0]?.[2] ?? 0;
+		const z1 = floor?.bounds?.[1]?.[2] ?? z0 + 2.5;
+		const bounds = [
+			[Math.min(0, Math.round(img.x * 10) / 10), Math.min(0, Math.round(img.y * 10) / 10), z0],
+			[Math.round((img.x + img.widthM) * 10) / 10, Math.round((img.y + img.widthM * img.aspect) * 10) / 10, z1]
+		];
+		busy = true;
+		try {
+			await post('/api/floorplan/floor-bounds', { floorId, bounds });
+			ok('Floor bounds set from image extent (z range kept)');
+		} catch (e) {
+			fail(e, 'Failed to set bounds');
 		} finally {
 			busy = false;
 		}
@@ -416,21 +475,39 @@
 				{#if $traceImage}
 					<div class="space-y-1 border-t border-surface-300-700 pt-2">
 						<p class="font-semibold text-xs">Tracing image</p>
-						<div class="grid grid-cols-3 gap-1">
-							<label class="label text-xs"><span>X</span><input class="input" type="number" step="0.1" bind:value={$traceImage.x} /></label>
-							<label class="label text-xs"><span>Y</span><input class="input" type="number" step="0.1" bind:value={$traceImage.y} /></label>
-							<label class="label text-xs"><span>Width (m)</span><input class="input" type="number" step="0.1" min="0.5" bind:value={$traceImage.widthM} /></label>
-						</div>
-						<label class="label text-xs"><span>Opacity: {Math.round($traceImage.opacity * 100)}%</span>
-							<input class="input" type="range" min="0.1" max="1" step="0.05" bind:value={$traceImage.opacity} />
-						</label>
-						<div class="flex gap-2">
-							<button class="btn btn-sm {$traceImage.movable ? 'preset-filled-warning-500' : 'preset-tonal'}" onclick={() => ($traceImage = $traceImage ? { ...$traceImage, movable: !$traceImage.movable } : null)}>
-								{$traceImage.movable ? 'Moving (drag image)' : 'Move'}
-							</button>
-							<button class="btn btn-sm preset-tonal" onclick={() => ($traceImage = null)}>Remove</button>
-						</div>
-						<p class="text-xs text-surface-600-400">Set the width to the real-world width of the imaged area (e.g. measure one known wall), drag the image into place, then lower opacity and draw rooms over it. Session-only - not saved.</p>
+						{#if $imageTool === 'scale'}
+							<p class="text-xs">Click the two ends of a feature with a KNOWN length on the image (e.g. a measured wall). {$scalePoints.length}/2 points set.</p>
+							{#if $scalePoints.length === 2}
+								<label class="label text-xs"><span>Real distance (m)</span>
+									<input class="input" type="number" step="0.01" min="0.1" bind:value={scaleRealDistance} />
+								</label>
+								<div class="flex gap-2">
+									<button class="btn btn-sm preset-filled-success-500" onclick={applyScale} disabled={!scaleRealDistance || scaleRealDistance <= 0}>Apply scale</button>
+									<button class="btn btn-sm preset-tonal" onclick={cancelImageTool}>Cancel</button>
+								</div>
+							{:else}
+								<button class="btn btn-sm preset-tonal" onclick={cancelImageTool}>Cancel</button>
+							{/if}
+						{:else if $imageTool === 'origin'}
+							<p class="text-xs">Click the point on the image that should become the map origin (0,0) - usually the building's top-left corner. The red crosshair marks the current origin.</p>
+							<button class="btn btn-sm preset-tonal" onclick={cancelImageTool}>Cancel</button>
+						{:else}
+							<div class="flex flex-wrap gap-2">
+								<button class="btn btn-sm preset-tonal" onclick={() => ($imageTool = 'origin')}>Set origin</button>
+								<button class="btn btn-sm preset-tonal" onclick={startScaleTool}>Measure scale</button>
+								<button class="btn btn-sm {$traceImage.movable ? 'preset-filled-warning-500' : 'preset-tonal'}" onclick={() => ($traceImage = $traceImage ? { ...$traceImage, movable: !$traceImage.movable } : null)}>
+									{$traceImage.movable ? 'Moving (drag image)' : 'Move'}
+								</button>
+							</div>
+							<div class="flex flex-wrap gap-2">
+								<button class="btn btn-sm preset-tonal" onclick={boundsFromImage} disabled={busy}>Set floor bounds from image</button>
+								<button class="btn btn-sm preset-tonal" onclick={() => ($traceImage = null)}>Remove</button>
+							</div>
+							<label class="label text-xs"><span>Opacity: {Math.round($traceImage.opacity * 100)}%</span>
+								<input class="input" type="range" min="0.1" max="1" step="0.05" bind:value={$traceImage.opacity} />
+							</label>
+							<p class="text-xs text-surface-600-400">Workflow: 1. Measure scale (two clicks on a known distance) → 2. Set origin (click the building corner) → 3. Set floor bounds from image → 4. draw rooms over it. Session-only - not saved.</p>
+						{/if}
 					</div>
 				{:else}
 					<button class="btn btn-sm preset-tonal" onclick={() => traceInput.click()}>Load tracing image</button>
