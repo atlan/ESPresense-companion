@@ -10,7 +10,7 @@
 	export let floorId: string | null = null;
 	export let svgEl: SVGElement | undefined = undefined;
 
-	const { xScale, yScale, padding } = getContext<LayerCakeContext>('LayerCake');
+	const { xScale, yScale } = getContext<LayerCakeContext>('LayerCake');
 
 	$: floor = $config?.floors.find((f) => f.id === floorId);
 	$: floorNodes = ($nodes ?? []).filter((n) => n.location && (!floorId || n.floors?.includes(floorId)));
@@ -31,7 +31,7 @@
 
 	function toMap(e: PointerEvent | MouseEvent): { x: number; y: number } | null {
 		if (!svgEl) return null;
-		return screenToMap(svgEl as SVGSVGElement, e.clientX, e.clientY, $padding, transform, $xScale, $yScale);
+		return screenToMap(svgEl as SVGSVGElement, e.clientX, e.clientY, transform, $xScale, $yScale);
 	}
 
 	// d3-zoom starts its pan gesture from mousedown/touchstart on the SVG - stopping only
@@ -124,8 +124,9 @@
 		const m = toMap(e);
 		if (!m) return;
 		if ($imageTool === 'origin' && $traceImage) {
-			// Shift the image so the clicked spot becomes map (0,0).
-			$traceImage = { ...$traceImage, x: round($traceImage.x - m.x), y: round($traceImage.y - m.y) };
+			// Shift the image so the clicked spot becomes map (0,0) and LOCK it - an aligned
+			// origin must not be nudged accidentally; re-setting the origin is the only way to move it.
+			$traceImage = { ...$traceImage, x: round($traceImage.x - m.x), y: round($traceImage.y - m.y), movable: false, originSet: true };
 			$imageTool = 'none';
 		} else if ($imageTool === 'scale') {
 			if ($scalePoints.length < 2) $scalePoints = [...$scalePoints, [m.x, m.y]];

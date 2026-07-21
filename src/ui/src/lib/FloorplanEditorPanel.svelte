@@ -177,7 +177,8 @@
 					widthM: boundsW,
 					aspect: img.height / img.width,
 					opacity: 0.4,
-					movable: true
+					movable: true,
+					originSet: false
 				};
 			};
 			img.src = url;
@@ -524,8 +525,13 @@
 							<div class="flex flex-wrap gap-2">
 								<button class="btn btn-sm preset-tonal" onclick={() => ($imageTool = 'origin')}>Set origin</button>
 								<button class="btn btn-sm preset-tonal" onclick={startScaleTool}>Measure scale</button>
-								<button class="btn btn-sm {$traceImage.movable ? 'preset-filled-warning-500' : 'preset-tonal'}" onclick={() => ($traceImage = $traceImage ? { ...$traceImage, movable: !$traceImage.movable } : null)}>
-									{$traceImage.movable ? 'Moving (drag image)' : 'Move'}
+								<button
+									class="btn btn-sm {$traceImage.movable ? 'preset-filled-warning-500' : 'preset-tonal'}"
+									onclick={() => ($traceImage = $traceImage ? { ...$traceImage, movable: !$traceImage.movable } : null)}
+									disabled={$traceImage.originSet}
+									title={$traceImage.originSet ? 'Origin is set - the image is locked. Re-run Set origin to reposition.' : ''}
+								>
+									{$traceImage.originSet ? 'Locked (origin set)' : $traceImage.movable ? 'Moving (drag image)' : 'Move'}
 								</button>
 							</div>
 							<div class="flex flex-wrap gap-2">

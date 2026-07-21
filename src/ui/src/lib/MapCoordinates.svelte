@@ -37,12 +37,13 @@
 			const screenCTM = svg.getScreenCTM();
 			if (!screenCTM) return;
 
-			// Convert screen coordinates to SVG coordinates
+			// Convert screen coordinates to SVG coordinates. LayerCake positions the <svg>
+			// element itself by the padding (CSS top/left), so the CTM already accounts for it -
+			// subtracting it again shifted the readout towards the top-left.
 			const svgPoint = point.matrixTransform(screenCTM.inverse());
 
-			// Adjust for padding from context
-			const adjustedX = svgPoint.x - ($padding?.left ?? 0);
-			const adjustedY = svgPoint.y - ($padding?.top ?? 0);
+			const adjustedX = svgPoint.x;
+			const adjustedY = svgPoint.y;
 
 			const transformedX = (adjustedX - transform.x) / transform.k;
 			const transformedY = (adjustedY - transform.y) / transform.k;

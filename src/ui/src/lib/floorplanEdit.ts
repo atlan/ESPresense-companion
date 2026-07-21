@@ -37,6 +37,8 @@ export interface TraceImage {
 	aspect: number; // height / width of the source image
 	opacity: number;
 	movable: boolean;
+	/** True once "Set origin" was used - the image is then locked against dragging. */
+	originSet?: boolean;
 }
 export const traceImage = writable<TraceImage | null>(null);
 
