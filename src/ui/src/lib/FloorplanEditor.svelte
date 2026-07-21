@@ -34,6 +34,13 @@
 		return screenToMap(svgEl as SVGSVGElement, e.clientX, e.clientY, $padding, transform, $xScale, $yScale);
 	}
 
+	// d3-zoom starts its pan gesture from mousedown/touchstart on the SVG - stopping only
+	// pointerdown is NOT enough (they are separate events that bubble independently), which made
+	// dragging a handle pan the whole map instead of moving the handle.
+	function blockZoom(e: Event) {
+		e.stopPropagation();
+	}
+
 	function round(v: number): number {
 		return Math.round(v * 100) / 100;
 	}
@@ -166,7 +173,9 @@
 							opacity="0.7"
 							style="cursor: copy;"
 							onclick={(e) => insertVertex(e, room.id, room.points, i)}
-							onpointerdown={(e) => e.stopPropagation()}
+							onpointerdown={blockZoom}
+							onmousedown={blockZoom}
+							ontouchstart={blockZoom}
 						/>
 					{/each}
 					{#each pts as p, i (i)}
@@ -183,6 +192,8 @@
 							onpointerdown={(e) => vertexDown(e, room.id, i)}
 							onpointermove={(e) => vertexMove(e, room.points)}
 							onpointerup={vertexUp}
+							onmousedown={blockZoom}
+							ontouchstart={blockZoom}
 							ondblclick={(e) => removeVertex(e, room.id, room.points, i)}
 						/>
 					{/each}
@@ -220,6 +231,8 @@
 					onpointerdown={(e) => nodeDown(e, n.id)}
 					onpointermove={(e) => nodeMove(e, n)}
 					onpointerup={nodeUp}
+					onmousedown={blockZoom}
+					ontouchstart={blockZoom}
 				/>
 				<text
 					x={$xScale(pos.x)}
