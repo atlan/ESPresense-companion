@@ -95,11 +95,18 @@
 		}
 	}
 
-	let scaleRealDistance: number | null = null;
+	// Text field instead of type=number: number inputs reject "4,5" in non-German browser
+	// locales (silently - the bound value just stays empty). Parsed manually, comma accepted.
+	let scaleRealDistance = '';
+
+	function parseDistance(v: string): number | null {
+		const n = parseFloat(v.replace(',', '.'));
+		return Number.isFinite(n) && n > 0 ? n : null;
+	}
 
 	function startScaleTool() {
 		$scalePoints = [];
-		scaleRealDistance = null;
+		scaleRealDistance = '';
 		$imageTool = 'scale';
 	}
 
@@ -107,15 +114,16 @@
 		$imageTool = 'none';
 		$scalePoints = [];
 		$boundsPoints = [];
-		scaleRealDistance = null;
+		scaleRealDistance = '';
 	}
 
 	function applyScale() {
-		if (!$traceImage || $scalePoints.length !== 2 || !scaleRealDistance || scaleRealDistance <= 0) return;
+		const realDist = parseDistance(scaleRealDistance);
+		if (!$traceImage || $scalePoints.length !== 2 || !realDist) return;
 		const [p1, p2] = $scalePoints;
 		const mapDist = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
 		if (mapDist < 1e-6) return;
-		const factor = scaleRealDistance / mapDist;
+		const factor = realDist / mapDist;
 		// Rescale around the FIRST clicked point so the measured feature stays put.
 		$traceImage = {
 			...$traceImage,
@@ -124,7 +132,7 @@
 			y: Math.round((p1[1] - (p1[1] - $traceImage.y) * factor) * 100) / 100
 		};
 		cancelImageTool();
-		ok('Scale applied - the clicked distance now measures ' + scaleRealDistance + 'm');
+		ok('Scale applied - the clicked distance now measures ' + realDist + 'm');
 	}
 
 	function startBoundsDraw() {
@@ -499,11 +507,11 @@
 						{#if $imageTool === 'scale'}
 							<p class="text-xs">Click the two ends of a feature with a KNOWN length on the image (e.g. a measured wall). {$scalePoints.length}/2 points set.</p>
 							{#if $scalePoints.length === 2}
-								<label class="label text-xs"><span>Real distance (m)</span>
-									<input class="input" type="number" step="0.01" min="0.1" bind:value={scaleRealDistance} />
+								<label class="label text-xs"><span>Real distance (m) - comma or dot both work</span>
+									<input class="input" type="text" inputmode="decimal" placeholder="e.g. 4,50" bind:value={scaleRealDistance} />
 								</label>
 								<div class="flex gap-2">
-									<button class="btn btn-sm preset-filled-success-500" onclick={applyScale} disabled={!scaleRealDistance || scaleRealDistance <= 0}>Apply scale</button>
+									<button class="btn btn-sm preset-filled-success-500" onclick={applyScale} disabled={!parseDistance(scaleRealDistance)}>Apply scale</button>
 									<button class="btn btn-sm preset-tonal" onclick={cancelImageTool}>Cancel</button>
 								</div>
 							{:else}
