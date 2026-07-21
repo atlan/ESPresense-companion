@@ -18,8 +18,15 @@ namespace ESPresense.Services;
 /// anchoring writes retained device settings over MQTT that would need careful restore. Sampling
 /// Device.Nodes directly is side-effect free.
 /// </summary>
-public class WalkTestService(State state, PairErrorTracker pairErrorTracker)
+public class WalkTestService(State state, PairErrorTracker pairErrorTracker, NodeSettingsStore nodeSettings)
 {
+    /// <summary>
+    /// The txRefRssi value Evaluate()/the fit fall back to for transmitters without stored
+    /// settings. Walk test measures are RSSI-shifted at synthesis time so the beacon's effective
+    /// reference matches this default - see RecordPoint's self-calibration.
+    /// </summary>
+    private const double DefaultTxRefRssi = -59;
+
     public class RawSample
     {
         public string NodeId = "";
@@ -56,6 +63,14 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker)
         public string? FloorId { get; set; }
         public DateTime RecordedAt { get; set; }
         public List<NodeAggregate> Nodes { get; set; } = new();
+        /// <summary>
+        /// Self-calibrated estimate of the beacon's txRefRssi (median over same-floor nodes of
+        /// rssi + 10*absorption*log10(mapDistance), using each rx node's calibration at record
+        /// time). Without this, Evaluate() falls back to -59 for the unknown transmitter while a
+        /// real beacon may sit at e.g. -83 - every walk measure would then carry a ~24dB baseline
+        /// error, artificially degrading the baseline and biasing the accept/reject gate.
+        /// </summary>
+        public double? TxRefRssiEstimate { get; set; }
     }
 
     public class ActiveSession
@@ -287,6 +302,18 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker)
             return null;
         }
 
+        // Self-calibrate the beacon's reference RSSI from same-floor nodes with known distances
+        // and their current calibration - only same-floor measures feed the fit anyway.
+        var txRefEstimates = new List<double>();
+        foreach (var agg in aggregates)
+        {
+            if (agg.MapDistance < 0.5) continue;
+            if (!state.Nodes.TryGetValue(agg.NodeId, out var node)) continue;
+            if (s.FloorId != null && !(node.Floors?.Any(f => string.Equals(f.Id, s.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)) continue;
+            var absorption = nodeSettings.Get(agg.NodeId)?.Calibration?.Absorption ?? 2.7;
+            txRefEstimates.Add(agg.MedianRssi + 10 * absorption * Math.Log10(agg.MapDistance));
+        }
+
         var point = new WalkTestPoint
         {
             Id = $"wt{Interlocked.Increment(ref _pointCounter)}",
@@ -297,7 +324,8 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker)
             Z = s.Z,
             FloorId = s.FloorId,
             RecordedAt = DateTime.UtcNow,
-            Nodes = aggregates
+            Nodes = aggregates,
+            TxRefRssiEstimate = txRefEstimates.Count >= 2 ? Median(txRefEstimates) : null
         };
         _points[point.Id] = point;
         Log.Information("Walk test point {Id} recorded: {Nodes} nodes, {Samples} raw samples (device {Device} at {X},{Y},{Z})",
@@ -320,6 +348,11 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker)
         foreach (var point in _points.Values)
         {
             var txFloorIds = point.FloorId != null ? new[] { point.FloorId } : null;
+            // Shift the point's RSSI values so the beacon's effective reference equals the -59
+            // default that Evaluate()/the fit use for unknown transmitters (the log-distance model
+            // is linear in txRefRssi, so a constant RSSI shift is exactly equivalent). Without
+            // this, baseline evaluation would apply a large constant error to every walk measure.
+            var rssiShift = point.TxRefRssiEstimate.HasValue ? DefaultTxRefRssi - point.TxRefRssiEstimate.Value : 0;
             foreach (var agg in point.Nodes)
             {
                 if (!state.Nodes.TryGetValue(agg.NodeId, out var node) || !node.HasLocation) continue;
@@ -345,10 +378,10 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker)
                     Rx = rx,
                     Distance = agg.MedianDistance,
                     DistVar = agg.DistVar,
-                    Rssi = agg.MedianRssi,
+                    Rssi = agg.MedianRssi + rssiShift,
                     RssiRxAdj = null,
                     RssiVar = null,
-                    RefRssi = agg.RefRssi
+                    RefRssi = DefaultTxRefRssi
                 });
             }
         }
