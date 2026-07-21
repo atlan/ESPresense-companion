@@ -14,6 +14,9 @@
 	import AxisY from './AxisY.svelte';
 	import MapCoordinates from './MapCoordinates.svelte';
 	import CalibrationSpot from './CalibrationSpot.svelte';
+	import FloorplanEditor from './FloorplanEditor.svelte';
+	import FloorplanEditorPanel from './FloorplanEditorPanel.svelte';
+	import { editMode } from '$lib/floorplanEdit';
 
 	let svg: SVGElement;
 	let transform = zoomIdentity;
@@ -24,6 +27,7 @@
 	export let exclusive: boolean = false;
 	export let calibrate: boolean = false;
 	export let calibrationSpot: { x: number; y: number } | null = null;
+	export let editable: boolean = false;
 	export let onselected: ((item: Device | Node) => void) | undefined = undefined;
 
 	$: floor = $config?.floors.find((f) => f.id === floorId) ?? $config?.floors.find((f) => f != null);
@@ -139,19 +143,29 @@
 <svelte:window onkeydown={handleKeyboard} />
 
 {#if bounds}
-	<LayerCake x="0" y="1" xRange={getXRange} yRange={getYRange} flatData={squareBounds} padding={{ top: 16, left: 16, bottom: 16, right: 16 }}>
-		<Svg bind:element={svg}>
-			<MapCoordinates {transform} {floorId} />
-			<AxisX {transform} />
-			<AxisY {transform} />
-			<Rooms {transform} {floorId} />
-			<Nodes {transform} {floorId} {deviceId} {nodeId} onselected={selectedNode} onhovered={hoveredNode} />
-			<Devices {transform} {floorId} {deviceId} {exclusive} onselected={selectedDevice} onhovered={hoveredDevice} />
-			{#if calibrate && calibrationSpot}
-				<CalibrationSpot {transform} {bounds} bind:position={calibrationSpot} />
-			{/if}
-		</Svg>
-	</LayerCake>
+	<div class="relative w-full h-full">
+		{#if editable}
+			<FloorplanEditorPanel {floorId} />
+		{/if}
+		<LayerCake x="0" y="1" xRange={getXRange} yRange={getYRange} flatData={squareBounds} padding={{ top: 16, left: 16, bottom: 16, right: 16 }}>
+			<Svg bind:element={svg}>
+				<MapCoordinates {transform} {floorId} />
+				<AxisX {transform} />
+				<AxisY {transform} />
+				<Rooms {transform} {floorId} />
+				{#if !editable || $editMode !== 'nodes'}
+					<Nodes {transform} {floorId} {deviceId} {nodeId} onselected={selectedNode} onhovered={hoveredNode} />
+				{/if}
+				<Devices {transform} {floorId} {deviceId} {exclusive} onselected={selectedDevice} onhovered={hoveredDevice} />
+				{#if calibrate && calibrationSpot}
+					<CalibrationSpot {transform} {bounds} bind:position={calibrationSpot} />
+				{/if}
+				{#if editable}
+					<FloorplanEditor {transform} {floorId} svgEl={svg} />
+				{/if}
+			</Svg>
+		</LayerCake>
+	</div>
 {:else}
 	<div>Loading...</div>
 {/if}

@@ -13,6 +13,7 @@ public class ConfigLoader : BackgroundService
     private Task _toWait;
     private DateTime _lastModified;
     private readonly string _configPath;
+    public string ConfigPath => _configPath;
     public Config? Config { get; private set; }
 
     public ConfigLoader(string configDir)
