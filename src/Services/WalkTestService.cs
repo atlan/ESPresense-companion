@@ -127,9 +127,14 @@ public class WalkTestService(State state, PairErrorTracker pairErrorTracker)
             };
         }
 
-        // Devices with any current node reading are walk-test candidates.
-        var devices = state.Devices.Values
-            .Where(d => d.Nodes.Values.Any(dn => dn.Current))
+        // Devices with any current node reading are walk-test candidates; skip unnamed transient
+        // BLE noise unless nothing named is around (named/tracked devices are what a user would
+        // actually carry to a walk-test spot).
+        var candidates = state.Devices.Values
+            .Where(d => !string.IsNullOrWhiteSpace(d.Id) && d.Nodes.Values.Any(dn => dn.Current))
+            .ToList();
+        var named = candidates.Where(d => !string.IsNullOrWhiteSpace(d.Name) || d.Track).ToList();
+        var devices = (named.Count > 0 ? named : candidates)
             .Select(d => new { id = d.Id, name = d.Name })
             .OrderBy(d => d.name ?? d.id)
             .ToList();
