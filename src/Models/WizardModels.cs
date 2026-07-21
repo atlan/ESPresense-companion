@@ -39,6 +39,8 @@ public class HealthGateNode
     public string? Version { get; set; }
     /// <summary>Seconds since last telemetry payload arrived, null if never seen.</summary>
     public double? TelemetryAgeSecs { get; set; }
+    /// <summary>Seconds the node has been offline (null while online).</summary>
+    public double? OfflineSecs { get; set; }
     public bool Stale { get; set; }
 }
 

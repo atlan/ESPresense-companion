@@ -13,6 +13,9 @@ public class NodeTelemetryStore : BackgroundService
     // or a wedged node that still holds its TCP session) - tracking when telemetry actually last
     // ARRIVED lets the wizard health gate distinguish "online and alive" from "online but stuck".
     private readonly ConcurrentDictionary<string, DateTime> _teleReceivedAt = new();
+    // When the online/offline status last FLIPPED - lets consumers apply a grace period so a node
+    // that just went offline (e.g. mid-reboot after a firmware update) isn't immediately reported.
+    private readonly ConcurrentDictionary<string, DateTime> _statusChangedAt = new();
 
     /// <summary>
     /// Initializes a new instance of <see cref="NodeTelemetryStore"/> and stores the provided MQTT coordinator reference.
@@ -53,13 +56,16 @@ public class NodeTelemetryStore : BackgroundService
 
         _mqttCoordinator.NodeStatusReceivedAsync += arg =>
         {
+            var changed = !_onlineById.TryGetValue(arg.NodeId, out var prev) || prev != arg.Online;
             _onlineById.AddOrUpdate(arg.NodeId, _ => arg.Online, (_, _) => arg.Online);
+            if (changed) _statusChangedAt[arg.NodeId] = DateTime.UtcNow;
             return Task.CompletedTask;
         };
 
         _mqttCoordinator.NodeStatusRemovedAsync += arg =>
         {
             _onlineById.TryRemove(arg.NodeId, out _);
+            _statusChangedAt.TryRemove(arg.NodeId, out _);
             return Task.CompletedTask;
         };
 
@@ -94,6 +100,12 @@ public class NodeTelemetryStore : BackgroundService
     public virtual DateTime? LastReceivedAt(string id)
     {
         return _teleReceivedAt.TryGetValue(id, out var at) ? at : null;
+    }
+
+    /// <summary>When the node's online/offline status last changed, or null if no status was ever received.</summary>
+    public virtual DateTime? StatusChangedAt(string id)
+    {
+        return _statusChangedAt.TryGetValue(id, out var at) ? at : null;
     }
 
     /// <summary>

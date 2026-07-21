@@ -117,6 +117,25 @@ public class PairErrorTracker(State state)
         }
     }
 
+    public record PairErrorSnapshot(string NodeA, string NodeB, double Ewma, int Samples, TimeSpan Observed);
+
+    /// <summary>
+    /// Snapshot of all tracked pair error EWMAs - used by the wizard's placement sanity check so it
+    /// judges nodes on SMOOTHED recent error instead of one instantaneous RSSI reading (which made
+    /// the check flicker in and out of the validation list).
+    /// </summary>
+    public List<PairErrorSnapshot> GetPairErrors()
+    {
+        var now = DateTime.UtcNow;
+        var result = new List<PairErrorSnapshot>();
+        foreach (var stat in _stats.Values)
+        {
+            lock (stat)
+                result.Add(new PairErrorSnapshot(stat.NodeA, stat.NodeB, stat.Ewma, stat.Samples, now - stat.FirstSampleAt));
+        }
+        return result;
+    }
+
     public List<ExcludedPairSuggestion> GetSuggestions(IEnumerable<string>? alreadyExcluded)
     {
         var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

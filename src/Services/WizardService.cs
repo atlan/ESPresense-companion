@@ -9,7 +9,7 @@ namespace ESPresense.Services;
 /// RSSI-vs-map placement sanity checks, and the node health gate. Read-only over State -
 /// heuristic checks surface issues for the user, they never block config loading.
 /// </summary>
-public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader configLoader)
+public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader configLoader, PairErrorTracker pairErrorTracker)
 {
     /// <summary>Rooms smaller than this (m^2) are flagged - multilateration noise (~0.5-2m) makes them hard to hit.</summary>
     private const double MinRoomAreaM2 = 1.0;
@@ -20,8 +20,17 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
     /// <summary>Median |percent| distance error above which a node's placement is flagged as suspicious.</summary>
     private const double PlacementErrorThreshold = 0.5;
 
+    /// <summary>Minimum tracked samples per pair (~30s cadence) before it feeds the placement check - keeps the check stable instead of flickering with RSSI noise.</summary>
+    private const int PlacementMinSamples = 10;
+
     /// <summary>Online nodes whose last telemetry is older than this are considered stuck/stale.</summary>
     private static readonly TimeSpan TelemetryStaleAfter = TimeSpan.FromSeconds(150);
+
+    /// <summary>A node must be offline this long before the health gate reports it - a brief MQTT drop (e.g. a reboot after a firmware update) shouldn't page anyone.</summary>
+    private static readonly TimeSpan OfflineGrace = TimeSpan.FromMinutes(2);
+
+    /// <summary>Fallback reference for nodes without any status timestamp (e.g. never seen since app start).</summary>
+    private static readonly DateTime StartedAt = DateTime.UtcNow;
 
     public WizardValidationResult Validate()
     {
@@ -163,26 +172,30 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
     }
 
     /// <summary>
-    /// Compares each node's live RSSI-estimated distances against its coordinate-implied distances
-    /// to same-floor neighbors. A node whose MEDIAN error is large probably has a wrong position
-    /// entered (the classic wrong-Z / transposed-coordinates case); a single bad pair is more
-    /// likely an RF obstruction and stays quiet here (that's what excluded_pairs is for).
+    /// Compares each node's RSSI-estimated distances against its coordinate-implied distances to
+    /// same-floor neighbors, using the PairErrorTracker's smoothed EWMAs (>= ~5 min of samples per
+    /// pair) rather than one instantaneous reading - an instantaneous check flickered in and out of
+    /// the issue list with normal RSSI noise. A node whose MEDIAN error is large probably has a
+    /// wrong position entered (the classic wrong-Z / transposed-coordinates case); a single bad
+    /// pair is more likely an RF obstruction and stays quiet here (that's what excluded_pairs is
+    /// for). Because the tracker resets a node's pairs when its position changes, this check also
+    /// re-evaluates cleanly after a node is moved.
     /// </summary>
     private void CheckNodePlacementSanity(WizardValidationResult result)
     {
+        var pairErrors = pairErrorTracker.GetPairErrors()
+            .Where(p => p.Samples >= PlacementMinSamples)
+            .ToList();
+
         foreach (var (id, node) in state.Nodes)
         {
             if (!node.HasLocation) continue;
 
-            var errors = new List<double>();
-            foreach (var rx in node.RxNodes.Values)
-            {
-                if (!rx.Current || rx.Rx is not { HasLocation: true } rxNode) continue;
-                if (!SameFloor(node, rxNode)) continue;
-                var mapDist = rx.MapDistance;
-                if (mapDist <= 0 || rx.Distance <= 0) continue;
-                errors.Add(Math.Abs((rx.Distance - mapDist) / mapDist));
-            }
+            var errors = pairErrors
+                .Where(p => p.NodeA.Equals(id, StringComparison.OrdinalIgnoreCase) ||
+                            p.NodeB.Equals(id, StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Ewma)
+                .ToList();
 
             if (errors.Count < 2) continue;
 
@@ -195,8 +208,8 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
                     Severity = ValidationSeverity.Warning,
                     Category = "placement_mismatch",
                     NodeId = id,
-                    Message = $"Node '{node.Name ?? id}': RSSI-estimated distances to {errors.Count} same-floor neighbors disagree with its map position " +
-                              $"(median error {median:P0}). Check the entered X/Y/Z - a wrong height or transposed coordinates typically looks exactly like this."
+                    Message = $"Node '{node.Name ?? id}': RSSI-estimated distances to {errors.Count} same-floor neighbors have disagreed with its map position " +
+                              $"over the last minutes (median error {median:P0}). Check the entered X/Y/Z - a wrong height or transposed coordinates typically looks exactly like this."
                 });
             }
         }
@@ -216,6 +229,7 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
             var lastAt = nts.LastReceivedAt(id);
             var age = lastAt.HasValue ? (now - lastAt.Value).TotalSeconds : (double?)null;
             var stale = online && (age is null || age > TelemetryStaleAfter.TotalSeconds);
+            var offlineSince = online ? (double?)null : (now - (nts.StatusChangedAt(id) ?? StartedAt)).TotalSeconds;
 
             var n = new HealthGateNode
             {
@@ -224,11 +238,14 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
                 Online = online,
                 Version = tele?.Version,
                 TelemetryAgeSecs = age,
+                OfflineSecs = offlineSince,
                 Stale = stale
             };
             result.Nodes.Add(n);
 
-            if (!online) result.OfflineNodes.Add(id);
+            // Grace period: a node mid-reboot (firmware update, power blip) goes offline for well
+            // under a minute - only report it once it's been gone long enough to be a real problem.
+            if (!online && offlineSince > OfflineGrace.TotalSeconds) result.OfflineNodes.Add(id);
             if (stale) result.StaleNodes.Add(id);
         }
 
