@@ -85,6 +85,7 @@
 		floorId?: string;
 		recordedAt: string;
 		nodes: WalkTestPointNode[];
+		rawTicks?: number;
 	}
 
 	interface WalkTestStatus {
@@ -220,6 +221,7 @@
 			if (wRes.ok) {
 				walkStatus = await wRes.json();
 				if (!wtDevice && walkStatus?.devices?.length) wtDevice = walkStatus.devices[0].id;
+				checkNewRawPoints();
 			}
 			if (wsRes.ok) {
 				const data = await wsRes.json();
@@ -232,10 +234,26 @@
 		}
 	}
 
+	let lastRawPointCount = -1;
+
+	// Auto-rerun the locator replay whenever a new point with raw data appears (manual stop OR
+	// server-side auto-finish) - the replay result is a snapshot of its last run and would
+	// otherwise keep showing a stale "no raw data" error after the first recording.
+	function checkNewRawPoints() {
+		const count = walkStatus?.points?.filter((p) => (p.rawTicks ?? 0) > 0).length ?? 0;
+		if (lastRawPointCount >= 0 && count > lastRawPointCount && !locatorTuneBusy) {
+			runLocatorTune();
+		}
+		lastRawPointCount = count;
+	}
+
 	async function fetchWalkStatus() {
 		try {
 			const res = await fetch(apiPath('/api/wizard/walktest/status'));
-			if (res.ok) walkStatus = await res.json();
+			if (res.ok) {
+				walkStatus = await res.json();
+				checkNewRawPoints();
+			}
 		} catch (error) {
 			console.error('Error fetching walk test status:', error);
 		}
@@ -883,7 +901,11 @@
 					Replays the raw per-tick readings of your recorded walk test points (real live noise, known true position) through nadaraya_watson bandwidth/kernel candidates. Scored on position accuracy AND jitter - how much the estimate wanders while the beacon sits still, i.e. the room-flapping symptom. The more walk points on different floors, the more representative the result.
 				</p>
 				{#if locatorTune?.error}
-					<p class="text-sm text-error-500">{locatorTune.error}</p>
+					{#if (walkStatus?.points?.filter((p) => (p.rawTicks ?? 0) > 0).length ?? 0) > 0}
+						<p class="text-sm text-surface-600-400">Walk points with raw data are available - press "Run replay".</p>
+					{:else}
+						<p class="text-sm text-error-500">{locatorTune.error}</p>
+					{/if}
 				{/if}
 				{#if locatorTune && !locatorTune.error && locatorTune.results.length > 0}
 					{#if locatorTune.recommendation}
