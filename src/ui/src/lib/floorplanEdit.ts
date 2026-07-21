@@ -45,9 +45,11 @@ export const traceImage = writable<TraceImage | null>(null);
  * shifted accordingly); 'scale' = collect two clicks on a known-length feature, then the panel
  * asks for the real distance and rescales the image around the first click point.
  */
-export const imageTool = writable<'none' | 'origin' | 'scale'>('none');
+export const imageTool = writable<'none' | 'origin' | 'scale' | 'bounds'>('none');
 /** Collected clicks for the 'scale' tool (map coordinates, max 2). */
 export const scalePoints = writable<number[][]>([]);
+/** Collected clicks for the 'bounds' tool: two opposite corners of the floor extent. */
+export const boundsPoints = writable<number[][]>([]);
 
 export function resetEditState() {
 	selectedNodeId.set(null);

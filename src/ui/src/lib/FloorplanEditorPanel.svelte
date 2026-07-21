@@ -3,7 +3,7 @@
 	import { config, nodes } from '$lib/stores';
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { showConfirm } from '$lib/modal/modalStore';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, resetEditState } from '$lib/floorplanEdit';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, boundsPoints, resetEditState } from '$lib/floorplanEdit';
 
 	const toastStore = getToastStore();
 
@@ -85,6 +85,7 @@
 			$traceImage = null;
 			$imageTool = 'none';
 			$scalePoints = [];
+			$boundsPoints = [];
 			$selectedRoomId = null;
 			floorId = ($config?.floors ?? []).find((f) => f.id !== deletedId)?.id ?? null;
 		} catch (e) {
@@ -105,6 +106,7 @@
 	function cancelImageTool() {
 		$imageTool = 'none';
 		$scalePoints = [];
+		$boundsPoints = [];
 		scaleRealDistance = null;
 	}
 
@@ -125,19 +127,25 @@
 		ok('Scale applied - the clicked distance now measures ' + scaleRealDistance + 'm');
 	}
 
-	async function boundsFromImage() {
-		if (!$traceImage || !floorId || busy) return;
-		const img = $traceImage;
+	function startBoundsDraw() {
+		$boundsPoints = [];
+		$imageTool = 'bounds';
+	}
+
+	async function saveDrawnBounds() {
+		if ($boundsPoints.length !== 2 || !floorId || busy) return;
+		const [p1, p2] = $boundsPoints;
 		const z0 = floor?.bounds?.[0]?.[2] ?? 0;
 		const z1 = floor?.bounds?.[1]?.[2] ?? z0 + 2.5;
 		const bounds = [
-			[Math.min(0, Math.round(img.x * 10) / 10), Math.min(0, Math.round(img.y * 10) / 10), z0],
-			[Math.round((img.x + img.widthM) * 10) / 10, Math.round((img.y + img.widthM * img.aspect) * 10) / 10, z1]
+			[Math.min(p1[0], p2[0]), Math.min(p1[1], p2[1]), z0],
+			[Math.max(p1[0], p2[0]), Math.max(p1[1], p2[1]), z1]
 		];
 		busy = true;
 		try {
 			await post('/api/floorplan/floor-bounds', { floorId, bounds });
-			ok('Floor bounds set from image extent (z range kept)');
+			ok('Floor bounds saved (z range kept)');
+			cancelImageTool();
 		} catch (e) {
 			fail(e, 'Failed to set bounds');
 		} finally {
@@ -467,7 +475,20 @@
 						</div>
 					</div>
 				{:else}
-					<button class="btn btn-sm preset-tonal" onclick={startBoundsEdit}>Edit floor bounds</button>
+					{#if $imageTool === 'bounds'}
+						<div class="space-y-1">
+							<p class="text-xs">Click two opposite corners of the floor's extent on the map ({$boundsPoints.length}/2). Dimension chains outside the outline don't matter - just frame the actual living area.</p>
+							<div class="flex gap-2">
+								<button class="btn btn-sm preset-filled-success-500" onclick={saveDrawnBounds} disabled={busy || $boundsPoints.length !== 2}>Save bounds</button>
+								<button class="btn btn-sm preset-tonal" onclick={cancelImageTool}>Cancel</button>
+							</div>
+						</div>
+					{:else}
+						<div class="flex gap-2">
+							<button class="btn btn-sm preset-tonal" onclick={startBoundsDraw}>Draw bounds</button>
+							<button class="btn btn-sm preset-tonal" onclick={startBoundsEdit}>Edit floor bounds</button>
+						</div>
+					{/if}
 				{/if}
 
 				<!-- Tracing image (scale template) -->
@@ -500,13 +521,12 @@
 								</button>
 							</div>
 							<div class="flex flex-wrap gap-2">
-								<button class="btn btn-sm preset-tonal" onclick={boundsFromImage} disabled={busy}>Set floor bounds from image</button>
 								<button class="btn btn-sm preset-tonal" onclick={() => ($traceImage = null)}>Remove</button>
 							</div>
 							<label class="label text-xs"><span>Opacity: {Math.round($traceImage.opacity * 100)}%</span>
 								<input class="input" type="range" min="0.1" max="1" step="0.05" bind:value={$traceImage.opacity} />
 							</label>
-							<p class="text-xs text-surface-600-400">Workflow: 1. Measure scale (two clicks on a known distance) → 2. Set origin (click the building corner) → 3. Set floor bounds from image → 4. draw rooms over it. Session-only - not saved.</p>
+							<p class="text-xs text-surface-600-400">Workflow: 1. Measure scale (two clicks on a known distance) → 2. Set origin (click the building corner) → 3. Draw bounds (frame the living area) → 4. draw rooms over it. Session-only - not saved.</p>
 						{/if}
 					</div>
 				{:else}

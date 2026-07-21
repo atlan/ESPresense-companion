@@ -3,7 +3,7 @@
 	import { zoomIdentity } from 'd3-zoom';
 	import { config, nodes } from '$lib/stores';
 	import { screenToMap } from '$lib/mapcoords';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints } from '$lib/floorplanEdit';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, boundsPoints } from '$lib/floorplanEdit';
 	import type { LayerCakeContext } from '$lib/types';
 
 	export let transform = zoomIdentity;
@@ -129,6 +129,8 @@
 			$imageTool = 'none';
 		} else if ($imageTool === 'scale') {
 			if ($scalePoints.length < 2) $scalePoints = [...$scalePoints, [m.x, m.y]];
+		} else if ($imageTool === 'bounds') {
+			if ($boundsPoints.length < 2) $boundsPoints = [...$boundsPoints, [round(m.x), round(m.y)]];
 		} else if ($editMode === 'nodes' && $placingNode) {
 			const zBase = floor?.bounds?.[0]?.[2] ?? 0;
 			$pendingNode = { x: round(m.x), y: round(m.y), z: round(zBase + 0.25) };
@@ -208,6 +210,29 @@
 		{#if $traceImage && ($imageTool !== 'none' || $scalePoints.length > 0)}
 			<line x1={$xScale(0) - 12 / transform.k} y1={$yScale(0)} x2={$xScale(0) + 12 / transform.k} y2={$yScale(0)} stroke="#ef4444" stroke-width={1.5 / transform.k} />
 			<line x1={$xScale(0)} y1={$yScale(0) - 12 / transform.k} x2={$xScale(0)} y2={$yScale(0) + 12 / transform.k} stroke="#ef4444" stroke-width={1.5 / transform.k} />
+		{/if}
+		{#if $boundsPoints.length > 0}
+			{#each $boundsPoints as p, i (i)}
+				<circle cx={$xScale(p[0])} cy={$yScale(p[1])} r={5 / transform.k} fill="#22c55e" stroke="white" stroke-width={1 / transform.k} />
+			{/each}
+			{#if $boundsPoints.length === 2}
+				{@const bx0 = $xScale(Math.min($boundsPoints[0][0], $boundsPoints[1][0]))}
+				{@const bx1 = $xScale(Math.max($boundsPoints[0][0], $boundsPoints[1][0]))}
+				{@const by0 = $yScale(Math.min($boundsPoints[0][1], $boundsPoints[1][1]))}
+				{@const by1 = $yScale(Math.max($boundsPoints[0][1], $boundsPoints[1][1]))}
+				<rect
+					x={Math.min(bx0, bx1)}
+					y={Math.min(by0, by1)}
+					width={Math.abs(bx1 - bx0)}
+					height={Math.abs(by1 - by0)}
+					fill="#22c55e"
+					fill-opacity="0.08"
+					stroke="#22c55e"
+					stroke-width={2 / transform.k}
+					stroke-dasharray={`${6 / transform.k} ${4 / transform.k}`}
+					style="pointer-events: none;"
+				/>
+			{/if}
 		{/if}
 		{#if $scalePoints.length > 0}
 			{#each $scalePoints as p, i (i)}
