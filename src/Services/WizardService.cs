@@ -245,8 +245,8 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
 
             // Grace period: a node mid-reboot (firmware update, power blip) goes offline for well
             // under a minute - only report it once it's been gone long enough to be a real problem.
-            if (!online && offlineSince > OfflineGrace.TotalSeconds) result.OfflineNodes.Add(id);
-            if (stale) result.StaleNodes.Add(id);
+            if (!online && offlineSince > OfflineGrace.TotalSeconds) result.OfflineNodes.Add(node.Name ?? id);
+            if (stale) result.StaleNodes.Add(node.Name ?? id);
         }
 
         result.FirmwareVersions = result.Nodes

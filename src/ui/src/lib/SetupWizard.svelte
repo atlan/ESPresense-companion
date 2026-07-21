@@ -66,7 +66,7 @@
 			if (sRes.ok) {
 				const data = await sRes.json();
 				suggestions = data.suggestions ?? [];
-				currentlyExcluded = data.currentlyExcluded ?? [];
+				currentlyExcluded = data.currentlyExcludedFriendly ?? data.currentlyExcluded ?? [];
 			}
 		} catch (error) {
 			console.error('Error fetching wizard data:', error);

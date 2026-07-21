@@ -15,8 +15,21 @@ public class WizardController(
     WizardService wizard,
     PairErrorTracker pairErrorTracker,
     OptimizationRunner optimizationRunner,
-    ConfigLoader configLoader) : ControllerBase
+    ConfigLoader configLoader,
+    State state) : ControllerBase
 {
+    /// <summary>Renders a config pair id ("node_a:node_b") with friendly node names for display.</summary>
+    private string FriendlyPair(string pair)
+    {
+        var parts = pair.Split(':', 2);
+        if (parts.Length != 2) return pair;
+        var a = parts[0].Trim();
+        var b = parts[1].Trim();
+        state.Nodes.TryGetValue(a, out var nodeA);
+        state.Nodes.TryGetValue(b, out var nodeB);
+        return $"{nodeA?.Name ?? a} ↔ {nodeB?.Name ?? b}";
+    }
+
     [HttpGet("api/wizard/validation")]
     public WizardValidationResult GetValidation()
     {
@@ -49,6 +62,7 @@ public class WizardController(
         {
             suggestions = pairErrorTracker.GetSuggestions(excluded),
             currentlyExcluded = excluded ?? new List<string>(),
+            currentlyExcludedFriendly = (excluded ?? new List<string>()).Select(FriendlyPair).ToList(),
             minSamples = PairErrorTracker.MinSamples,
             minObservationHours = PairErrorTracker.MinObservation.TotalHours,
             minAboveFraction = PairErrorTracker.MinAboveFraction,
