@@ -406,7 +406,9 @@
 	}
 </script>
 
-<div class="absolute top-2 left-2 z-10 flex flex-col gap-2 w-80 max-w-[90vw]">
+<!-- top-14 clears the absolutely-positioned floor-tabs header (3em tall, centered) - at
+     phone widths the tabs extend far enough left to overlap a top-2 toolbar. -->
+<div class="absolute top-14 left-2 z-10 flex flex-col gap-2 w-80 max-w-[90vw]">
 	<div class="flex gap-1 bg-surface-100-900/90 rounded-lg p-1 shadow">
 		<button class="btn btn-sm {$editMode === 'off' ? 'preset-filled-primary-500' : 'preset-tonal'}" onclick={() => setMode('off')}>View</button>
 		<button class="btn btn-sm {$editMode !== 'off' ? 'preset-filled-primary-500' : 'preset-tonal'}" onclick={() => setMode('rooms')}>Edit</button>
