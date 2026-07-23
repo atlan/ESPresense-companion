@@ -831,9 +831,9 @@
 
 				{#if (walkStatus?.points ?? []).length > 0}
 					<p class="text-sm font-semibold mb-1">Recorded points (feeding the optimizer):</p>
-					<div class="overflow-x-auto">
+					<div class="overflow-x-auto overflow-y-auto max-h-64">
 						<table class="table table-compact">
-							<thead>
+							<thead class="sticky top-0 bg-surface-100-900">
 								<tr><th>Point</th><th>Device</th><th>Position</th><th>Nodes</th><th>Recorded</th><th></th></tr>
 							</thead>
 							<tbody>
