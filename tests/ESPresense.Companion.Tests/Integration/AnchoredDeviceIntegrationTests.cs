@@ -237,7 +237,8 @@ public class AnchoredDeviceIntegrationTests
             _deviceSettingsStore,
             _nodeTelemetryStore,
             Mock.Of<IMapper>(),
-            Mock.Of<GlobalEventDispatcher>()
+            Mock.Of<GlobalEventDispatcher>(),
+            new WalkTestService(_state, new PairErrorTracker(_state), mockNodeSettingsStore.Object, null)
         );
 
         // Act
@@ -299,7 +300,8 @@ public class AnchoredDeviceIntegrationTests
             _deviceSettingsStore,
             _nodeTelemetryStore,
             Mock.Of<IMapper>(),
-            Mock.Of<GlobalEventDispatcher>()
+            Mock.Of<GlobalEventDispatcher>(),
+            new WalkTestService(_state, new PairErrorTracker(_state), mockNodeSettingsStore.Object, null)
         );
 
         // Act

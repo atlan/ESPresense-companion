@@ -27,8 +27,9 @@ public class StateController : ControllerBase
     private readonly DeviceSettingsStore _dss;
     private readonly IMapper _mapper;
     private readonly GlobalEventDispatcher _eventDispatcher;
+    private readonly WalkTestService _walkTest;
 
-    public StateController(ILogger<StateController> logger, State state, ConfigLoader config, NodeSettingsStore nsd, DeviceSettingsStore dss, NodeTelemetryStore nts, IMapper mapper, GlobalEventDispatcher eventDispatcher)
+    public StateController(ILogger<StateController> logger, State state, ConfigLoader config, NodeSettingsStore nsd, DeviceSettingsStore dss, NodeTelemetryStore nts, IMapper mapper, GlobalEventDispatcher eventDispatcher, WalkTestService walkTest)
     {
         _logger = logger;
         _state = state;
@@ -37,6 +38,7 @@ public class StateController : ControllerBase
         _dss = dss;
         _mapper = mapper;
         _eventDispatcher = eventDispatcher;
+        _walkTest = walkTest;
     }
 
     /// <summary>
@@ -178,6 +180,26 @@ public class StateController : ControllerBase
                     mapDistances.Add(mapDistance);
                     actualDistances.Add(deviceNode.Distance);
                 }
+            }
+        }
+
+        // Recorded walk-test points as extra transmitter rows: ground truth at record time
+        // (median measured vs. stored map distance per hearing node). Deliberately NOT part of
+        // the R/RMSE stats above - those reflect the live pairs of the last 30 seconds.
+        foreach (var p in _walkTest.GetPoints().OrderBy(p => p.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            var rowName = $"walk {p.Id} ({p.X:0.#}/{p.Y:0.#}/{p.Z:0.#})";
+            c.WalkPoints.Add(rowName);
+            var txM = c.Matrix.GetOrAdd(rowName);
+            foreach (var n in p.Nodes)
+            {
+                var rxM = txM.GetOrAdd(n.NodeName ?? n.NodeId);
+                rxM["mapDistance"] = n.MapDistance;
+                rxM["distance"] = n.MedianDistance;
+                rxM["rssi"] = n.MedianRssi;
+                rxM["diff"] = n.MedianDistance - n.MapDistance;
+                rxM["percent"] = n.MapDistance != 0 ? (n.MedianDistance - n.MapDistance) / n.MapDistance : 0;
+                if (n.DistVar is not null) rxM["var"] = n.DistVar.Value;
             }
         }
 

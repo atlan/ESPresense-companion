@@ -47,7 +47,8 @@ public class StateControllerAnchorTests
             _mockDeviceSettingsStore.Object,
             nodeTelemetryStore,
             _mockMapper.Object,
-            mockEventDispatcher.Object
+            mockEventDispatcher.Object,
+            new WalkTestService(_state, new PairErrorTracker(_state), _mockNodeSettingsStore.Object, null)
         );
     }
 

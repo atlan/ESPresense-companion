@@ -268,6 +268,8 @@ export interface CalibrationResponse {
 	r?: number;
 	optimizerState?: OptimizerState;
 	anchored?: string[];
+	/** Matrix row keys that are recorded walk-test points (ground truth), not live nodes. */
+	walkPoints?: string[];
 }
 
 /**

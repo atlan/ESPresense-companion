@@ -79,6 +79,11 @@
 		return $calibration?.anchored?.includes(txName) ?? false;
 	}
 
+	// Recorded walk-test points appear as extra Tx rows (ground truth at record time)
+	function isWalkPoint(txName: string): boolean {
+		return $calibration?.walkPoints?.includes(txName) ?? false;
+	}
+
 	let data_point: DataPoint = 0;
 
 	const toastStore = getToastStore();
@@ -239,9 +244,9 @@
 						<tbody>
 							{#each Object.entries($calibration.matrix).sort((a, b) => a[0].localeCompare(b[0])) as [id1, n1] (id1)}
 								<tr>
-									<td style="text-align: right; white-space: nowrap;">Tx: {id1}{#if isAnchored(id1)} 📍{/if}</td>
+									<td style="text-align: right; white-space: nowrap;">Tx: {id1}{#if isAnchored(id1)} 📍{/if}{#if isWalkPoint(id1)} 🚶{/if}</td>
 									{#each rxColumns as id2 (id2)}
-										<td style="text-align: center; {coloring(n1[id2]?.percent)}" use:tooltip={n1[id2] ? `Map Distance ${n1[id2].mapDistance?.toFixed(1)} - Measured ${n1[id2]?.distance?.toFixed(1)} = Error ${n1[id2]?.diff?.toFixed(1)}` : 'No beacon Received in last 30 seconds'}
+										<td style="text-align: center; {coloring(n1[id2]?.percent)}" use:tooltip={n1[id2] ? `Map Distance ${n1[id2].mapDistance?.toFixed(1)} - Measured ${n1[id2]?.distance?.toFixed(1)} = Error ${n1[id2]?.diff?.toFixed(1)}` : isWalkPoint(id1) ? 'Not heard during this walk recording' : 'No beacon Received in last 30 seconds'}
 											>{#if n1[id2]}{value(n1[id2], data_point)}{/if}</td
 										>
 									{/each}
@@ -250,6 +255,9 @@
 						</tbody>
 					</table>
 				</div>
+				{#if ($calibration?.walkPoints?.length ?? 0) > 0}
+					<p class="text-xs text-surface-600-400">🚶 = recorded walk-test point (median measured vs. true distance at record time - ground truth, not live). 📍 = anchored device.</p>
+				{/if}
 			</div>
 		</div>
 		{:else}
