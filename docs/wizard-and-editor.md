@@ -20,10 +20,19 @@ and hand-formatting **inside** the rewritten sections are lost (the backups pres
 | **Configuration Checks** | Floor bounds entered min/max-swapped (the classic ceiling-height-instead-of-absolute-Z mistake), degenerate/too-small room polygons (<1 m²), overlapping rooms beyond a shared edge, nodes outside their floor bounds, and an RSSI placement sanity check: a node whose *median* smoothed distance error across same-floor neighbors exceeds 50% probably has wrong coordinates entered. |
 | **Calibration** | "Calibrate now" wakes the optimizer immediately (skips the full warmup after a restart too) — replaces manually lowering `interval_secs` and restarting. |
 | **Problem Pair Suggestions** | Same-floor node pairs whose distance error stays persistently high (≥2 h observation, error above 40% for ≥75% of recent samples). Confirming a pair appends it to `optimization.excluded_pairs`. Moving a node resets its pairs' statistics. |
-| **Walk Test** | Place a tracked device at a *known* position and record for 30–900 s. The recorded point acts as an extra reference transmitter with known coordinates in every calibration fit (the beacon's reference RSSI is self-calibrated at record time). Raw per-tick readings are stored for the locator replay. Points persist in `.storage/walktest-points.json`; points whose receiving node moved afterwards are ignored automatically. Placement suggestions point to the currently worst-calibrated pairs. |
+| **Walk Test** | Place a tracked device at a *known* position and record for 30–900 s. The recorded point acts as an extra reference transmitter with known coordinates in every calibration fit (the beacon's reference RSSI is self-calibrated at record time). Raw per-tick readings are stored for the locator replay. Points persist in `.storage/walktest-points.json`; points whose receiving node moved afterwards are ignored automatically. Placement suggestions point to the currently worst-calibrated pairs. Coordinates can be typed in, taken from a suggestion, or picked on the map (see below). |
 | **Optimizer Tuning** | Fits each optimizer/penalty/absorption-bounds candidate on collected measures and scores it on held-out node pairs (3-fold cross-validation, folds split by whole pair to avoid leakage). Walk-test measures count as extra data. Apply writes the winning configuration. |
 | **Locator Tuning** | Replays the walk-test points' raw per-tick readings (real live noise at a known true position) through nadaraya_watson bandwidth/kernel candidates, using the live locator's own math. Scored on mean 2D error **and** jitter (how much the estimate wanders while the beacon sits still). Caveats: stationary noise only; the scenario/Kalman smoothing above the locators is not replayed. |
 | **Settings** | Edits every remaining config section: optimization (interval, snapshot window, limits, penalty, optimizer mode), locators (toggles, NW bandwidth/kernel, weighting sigmas), timeout/away_timeout/device_retention, filtering (Kalman), history, map, gps, mqtt. Deliberately not exposed: `weights.correlation/rmse` (they define the scoring target) and locator `floors` arrays. |
+
+### Picking a walk-test spot on the map
+
+The main map has a walk icon button directly below the **View**/**Edit** toggle (view mode only).
+Activating it turns the cursor into a crosshair; clicking the map jumps straight to the Setup tab
+with the walk-test form prefilled: X/Y from the clicked point, Z set to the clicked floor's base
+height (its lower z bound — adjust it if the device sits on furniture). Clicking the button again
+or switching to Edit mode cancels the picker. The deep link is a plain URL
+(`/calibration?tab=setup&walk_x=..&walk_y=..&walk_z=..`), so it is bookmarkable too.
 
 ## Floorplan editor (main map)
 
