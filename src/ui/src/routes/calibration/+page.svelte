@@ -3,8 +3,11 @@
 	import DeviceCalibrationManager from '$lib/DeviceCalibrationManager.svelte';
 	import SetupWizard from '$lib/SetupWizard.svelte';
 	import CalibrationTabs from '$lib/CalibrationTabs.svelte';
+	import { page } from '$app/stores';
 
-	let calibrationType = 'node';
+	// ?tab=setup (etc.) preselects a tab - the map's walk-point picker deep-links here.
+	const initialTab = $page.url.searchParams.get('tab');
+	let calibrationType = initialTab === 'device' || initialTab === 'setup' ? initialTab : 'node';
 </script>
 
 <svelte:head>

@@ -3,7 +3,8 @@
 	import { zoomIdentity } from 'd3-zoom';
 	import { config, nodes } from '$lib/stores';
 	import { screenToMap } from '$lib/mapcoords';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, boundsPoints } from '$lib/floorplanEdit';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, pickingWalkPoint, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, boundsPoints } from '$lib/floorplanEdit';
+	import { gotoWalkSetup } from '$lib/urls';
 	import type { LayerCakeContext } from '$lib/types';
 
 	export let transform = zoomIdentity;
@@ -141,6 +142,16 @@
 		}
 	}
 
+	// Walk-test point picker: jump to the calibration setup page with the clicked spot prefilled.
+	// Z is the clicked floor's base height (its local "0") - the wizard field is editable anyway.
+	function walkPickClick(e: MouseEvent) {
+		const m = toMap(e);
+		if (!m) return;
+		const zBase = floor?.bounds?.[0]?.[2] ?? 0;
+		$pickingWalkPoint = false;
+		gotoWalkSetup(round(m.x), round(m.y), round(zBase));
+	}
+
 	function roomClick(e: MouseEvent, roomId: string) {
 		if ($draftRoom !== null) return; // drafting: click-through appends vertices via mapClick
 		e.stopPropagation();
@@ -169,6 +180,12 @@
 </script>
 
 <svelte:window onpointermove={globalMove} onpointerup={endDrag} />
+
+{#if $pickingWalkPoint}
+	<!-- Walk-picker capture layer: independent of edit mode (usable straight from view mode) -->
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<rect x={-10000} y={-10000} width={20000} height={20000} fill="transparent" style="pointer-events: all; cursor: crosshair;" onclick={walkPickClick} />
+{/if}
 
 {#if $editMode !== 'off'}
 	<g transform={transform.toString()}>

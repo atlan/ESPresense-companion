@@ -17,6 +17,12 @@ export const placingNode = writable<boolean>(false);
 /** A newly placed (not yet saved) node: position chosen by click, id/name entered in the panel. */
 export const pendingNode = writable<{ x: number; y: number; z: number } | null>(null);
 
+/**
+ * Walk-test point picker (works in view mode): when true, the map shows a crosshair cursor and
+ * the next click jumps to the calibration setup page with the clicked coordinates prefilled.
+ */
+export const pickingWalkPoint = writable<boolean>(false);
+
 // rooms mode
 export const selectedRoomId = writable<string | null>(null);
 /** Unsaved polygon edits per room id. */
@@ -60,6 +66,7 @@ export function resetEditState() {
 	nodeEdits.set({});
 	placingNode.set(false);
 	pendingNode.set(null);
+	pickingWalkPoint.set(false);
 	selectedRoomId.set(null);
 	roomEdits.set({});
 	draftRoom.set(null);

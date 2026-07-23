@@ -232,6 +232,30 @@
 	let wtDuration = 120;
 	let wtBusy = false;
 
+	// Walk-point deep link (?walk_x=..&walk_y=..&walk_z=.. from the map's picker): prefill the
+	// start form and scroll to the walk-test card once it has rendered.
+	let walkCardEl: HTMLElement | null = null;
+	let pendingWalkScroll = false;
+
+	$: if (pendingWalkScroll && !loading && walkCardEl) {
+		pendingWalkScroll = false;
+		const el = walkCardEl;
+		setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+	}
+
+	function applyWalkDeepLink() {
+		const params = new URLSearchParams(window.location.search);
+		const x = parseFloat(params.get('walk_x') ?? '');
+		const y = parseFloat(params.get('walk_y') ?? '');
+		const z = parseFloat(params.get('walk_z') ?? '');
+		if (Number.isFinite(x) && Number.isFinite(y)) {
+			wtX = x;
+			wtY = y;
+			wtZ = Number.isFinite(z) ? z : 0;
+			pendingWalkScroll = true;
+		}
+	}
+
 	async function fetchAll() {
 		try {
 			const [vRes, hRes, sRes, wRes, wsRes] = await Promise.all([
@@ -571,6 +595,7 @@
 	}
 
 	onMount(() => {
+		applyWalkDeepLink();
 		fetchAll();
 		fetchTuneStatus();
 		fetchLocatorTune();
@@ -742,7 +767,7 @@
 			</div>
 
 			<!-- 5. Walk test -->
-			<div class="card p-4">
+			<div class="card p-4" bind:this={walkCardEl}>
 				<header class="flex items-center justify-between mb-3">
 					<h2 class="text-lg font-semibold">Walk Test</h2>
 					{#if walkStatus?.active}

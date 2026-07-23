@@ -46,3 +46,11 @@ export function gotoCalibration(target?: Device | string | null) {
 	const id = typeof target === 'string' ? target : target?.id;
 	goto(resolve(id ? `/calibration/devices/${id}` : '/calibration'));
 }
+
+/**
+ * Open the calibration page on the Setup tab with the walk-test coordinates prefilled
+ * (used by the map's walk-point picker).
+ */
+export function gotoWalkSetup(x: number, y: number, z: number) {
+	goto(`${resolve('/calibration')}?tab=setup&walk_x=${x}&walk_y=${y}&walk_z=${z}`);
+}
