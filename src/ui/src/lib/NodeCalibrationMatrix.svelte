@@ -84,6 +84,18 @@
 		return $calibration?.walkPoints?.includes(txName) ?? false;
 	}
 
+	// Row order: real nodes first, then anchored devices, then walk points - each group
+	// numeric-aware (wt2 before wt10; plain localeCompare sorted them lexicographically).
+	let sortedRows: Array<[string, any]> = [];
+	$: {
+		const walkSet = new Set($calibration?.walkPoints ?? []);
+		const anchorSet = new Set($calibration?.anchored ?? []);
+		const rank = (k: string) => (walkSet.has(k) ? 2 : anchorSet.has(k) ? 1 : 0);
+		sortedRows = Object.entries($calibration?.matrix ?? {}).sort(
+			(a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0], undefined, { numeric: true })
+		);
+	}
+
 	let data_point: DataPoint = 0;
 
 	const toastStore = getToastStore();
@@ -229,20 +241,21 @@
 						</div>
 					</div>
 				</div>
-				<div class="overflow-x-auto">
+				<!-- Height-capped: the walk-point rows can make this table very tall -->
+				<div class="overflow-x-auto overflow-y-auto max-h-[65vh]">
 					<table class="table">
 						<thead>
 							<tr>
-								<th style="text-align: center; color: oklch(1 0 none);">Name</th>
+								<th class="sticky top-0 z-10 bg-surface-100-900" style="text-align: center; color: oklch(1 0 none);">Name</th>
 								{#each rxColumns as id}
-									<th class="h-32 whitespace-nowrap px-2 py-1 min-w-10" style="position: relative;">
+									<th class="h-32 whitespace-nowrap px-2 py-1 min-w-10 sticky top-0 z-10 bg-surface-100-900">
 										<div style="writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg); position: absolute; bottom: 8px; left: 50%; transform-origin: center; transform: translateX(-50%) rotate(180deg); white-space: nowrap; color: oklch(1 0 none);">Rx: {id}</div>
 									</th>
 								{/each}
 							</tr>
 						</thead>
 						<tbody>
-							{#each Object.entries($calibration.matrix).sort((a, b) => a[0].localeCompare(b[0])) as [id1, n1] (id1)}
+							{#each sortedRows as [id1, n1] (id1)}
 								<tr>
 									<td style="text-align: right; white-space: nowrap;">Tx: {id1}{#if isAnchored(id1)} 📍{/if}{#if isWalkPoint(id1)} 🚶{/if}</td>
 									{#each rxColumns as id2 (id2)}
