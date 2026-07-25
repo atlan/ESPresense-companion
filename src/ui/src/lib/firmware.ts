@@ -1,9 +1,11 @@
-import { readable, writable, derived } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 import { apiPath } from '$lib/api';
 import type { FirmwareManifest, Release, WorkflowRun } from '$lib/types';
 
 export const updateMethod: SvelteStore<string> = writable('self');
-export const firmwareSource: SvelteStore<string> = writable('release');
+// Empty by default: no GitHub source is queried until the user actively picks one
+// (keeps the anonymous 60 req/h GitHub API budget untouched on page load).
+export const firmwareSource: SvelteStore<string> = writable('');
 export const flavor: SvelteStore<string> = writable();
 export const version: SvelteStore<string> = writable();
 export const artifact: SvelteStore<string> = writable();
@@ -32,150 +34,106 @@ export const flavorNames = derived(firmwareTypes, (a) =>
 	}, new Map<string, string>())
 );
 
-export const artifacts = readable<Map<string, WorkflowRun[]>>(new Map(), function start(set) {
+// GitHub-backed firmware sources (releases / fork releases / CI artifacts).
+//
+// Lazy + source-scoped to respect GitHub's 60 req/h anonymous rate limit: nothing is
+// fetched on page load. A source is polled only while the update UI is mounted AND it
+// is the selected source (see setActiveSource / deactivateSources, wired to
+// VersionPicker's lifecycle + firmwareSource). Refresh interval: 60 min.
+const REFRESH_MS = 60 * 60000;
+
+function lazySource<T>(fetchImpl: () => Promise<Map<string, T[]>>) {
+	const { subscribe, set } = writable<Map<string, T[]>>(new Map());
+	let interval: ReturnType<typeof setInterval> | null = null;
 	let errors = 0;
 	let outstanding = false;
 
-	async function fetchData() {
+	async function run() {
+		if (outstanding) return;
+		outstanding = true;
 		try {
-			const res = await fetch('https://api.github.com/repos/ESPresense/ESPresense/actions/workflows/build.yml/runs?status=success&per_page=100', { credentials: 'same-origin' });
-			const data: { workflow_runs: WorkflowRun[] } = await res.json();
-			const wf = data.workflow_runs.filter((i) => i.head_repository.full_name === 'ESPresense/ESPresense' && i.status == 'completed' && (i.pull_requests.length > 0 || (i.head_branch == 'main' && Date.now() - +new Date(i.created_at) < 1000 * 60 * 60 * 24 * 7)));
-
-			set(
-				wf.reduce((p: Map<string, WorkflowRun[]>, c) => {
-					if (p.has(c.head_branch)) {
-						p.get(c.head_branch)?.push(c);
-					} else {
-						p.set(c.head_branch, [c]);
-					}
-					return p;
-				}, new Map<string, WorkflowRun[]>())
-			);
-
+			set(await fetchImpl());
 			errors = 0;
-			outstanding = false;
 		} catch (ex) {
-			outstanding = false;
-			if (++errors > 5) set(new Map<string, WorkflowRun[]>());
+			if (++errors > 5) set(new Map<string, T[]>());
 			console.log(ex);
+		} finally {
+			outstanding = false;
 		}
 	}
 
-	const interval = setInterval(() => {
-		if (outstanding) return;
-		outstanding = true;
-		fetchData();
-	}, 60000);
-
-	fetchData();
-
-	return function stop() {
-		clearInterval(interval);
-	};
-});
-
-export const releases = readable<Map<string, Release[]>>(new Map(), function start(set) {
-	let errors = 0;
-	let outstanding = false;
-
-	/**
-	 * Fetches releases from the ESPresense GitHub repository, filters and groups them, and updates the releases store.
-	 *
-	 * Fetches https://api.github.com/repos/ESPresense/ESPresense/releases, keeps only releases with more than 5 assets,
-	 * groups them into a Map keyed by "Beta" (prerelease) or "Release" (non-prerelease), and calls `set` with that Map.
-	 * On success resets the local `errors` counter and clears `outstanding`. On failure increments `errors`, logs the
-	 * exception, clears `outstanding`, and if errors exceed 5 replaces the store with an empty Map.
-	 */
-	async function fetchData() {
-		try {
-			const res = await fetch('https://api.github.com/repos/ESPresense/ESPresense/releases', { credentials: 'same-origin' });
-			const data: Release[] = await res.json();
-
-			const response = data
-				.filter((i) => i.assets.length > 5)
-				.reduce((p: Map<string, Release[]>, c) => {
-					const key = c.prerelease ? 'Beta' : 'Release';
-					if (p.get(key)) {
-						p.get(key)?.push(c);
-					} else {
-						p.set(key, [c]);
-					}
-					return p;
-				}, new Map<string, Release[]>());
-
-			set(response);
-
-			errors = 0;
-			outstanding = false;
-		} catch (ex) {
-			outstanding = false;
-			if (++errors > 5) set(new Map<string, Release[]>());
-			console.log(ex);
+	return {
+		subscribe,
+		activate() {
+			if (interval) return; // already polling this source
+			run();
+			interval = setInterval(run, REFRESH_MS);
+		},
+		deactivate() {
+			if (interval) {
+				clearInterval(interval);
+				interval = null;
+			}
 		}
-	}
-
-	const interval = setInterval(() => {
-		if (outstanding) return;
-		outstanding = true;
-		fetchData();
-	}, 15 * 60000);
-
-	fetchData();
-
-	return function stop() {
-		clearInterval(interval);
 	};
-});
+}
 
-// Releases of the personal node-firmware fork (github.com/atlan/ESPresense) - same
-// shape as `releases` above, but no >5-assets filter: unlike upstream's per-release
-// per-board build matrix, a fork release may legitimately ship just one board's
-// firmware.bin, so only >0 assets are required.
-export const forkReleases = readable<Map<string, Release[]>>(new Map(), function start(set) {
-	let errors = 0;
-	let outstanding = false;
+function groupReleases(data: Release[], minAssets: number): Map<string, Release[]> {
+	return data
+		.filter((i) => i.assets.length > minAssets)
+		.reduce((p: Map<string, Release[]>, c) => {
+			const key = c.prerelease ? 'Beta' : 'Release';
+			const arr = p.get(key);
+			if (arr) arr.push(c);
+			else p.set(key, [c]);
+			return p;
+		}, new Map<string, Release[]>());
+}
 
-	async function fetchData() {
-		try {
-			const res = await fetch('https://api.github.com/repos/atlan/ESPresense/releases', { credentials: 'same-origin' });
-			const data: Release[] = await res.json();
+async function fetchReleases(): Promise<Map<string, Release[]>> {
+	const res = await fetch('https://api.github.com/repos/ESPresense/ESPresense/releases', { credentials: 'same-origin' });
+	return groupReleases(await res.json(), 5);
+}
 
-			const response = data
-				.filter((i) => i.assets.length > 0)
-				.reduce((p: Map<string, Release[]>, c) => {
-					const key = c.prerelease ? 'Beta' : 'Release';
-					if (p.get(key)) {
-						p.get(key)?.push(c);
-					} else {
-						p.set(key, [c]);
-					}
-					return p;
-				}, new Map<string, Release[]>());
+// Fork releases (github.com/atlan/ESPresense): no >5-assets filter - unlike upstream's
+// per-board build matrix, a fork release may legitimately ship just one board's firmware.
+async function fetchForkReleases(): Promise<Map<string, Release[]>> {
+	const res = await fetch('https://api.github.com/repos/atlan/ESPresense/releases', { credentials: 'same-origin' });
+	return groupReleases(await res.json(), 0);
+}
 
-			set(response);
+async function fetchArtifacts(): Promise<Map<string, WorkflowRun[]>> {
+	const res = await fetch('https://api.github.com/repos/ESPresense/ESPresense/actions/workflows/build.yml/runs?status=success&per_page=100', { credentials: 'same-origin' });
+	const data: { workflow_runs: WorkflowRun[] } = await res.json();
+	const wf = data.workflow_runs.filter((i) => i.head_repository.full_name === 'ESPresense/ESPresense' && i.status == 'completed' && (i.pull_requests.length > 0 || (i.head_branch == 'main' && Date.now() - +new Date(i.created_at) < 1000 * 60 * 60 * 24 * 7)));
+	return wf.reduce((p: Map<string, WorkflowRun[]>, c) => {
+		const arr = p.get(c.head_branch);
+		if (arr) arr.push(c);
+		else p.set(c.head_branch, [c]);
+		return p;
+	}, new Map<string, WorkflowRun[]>());
+}
 
-			errors = 0;
-			outstanding = false;
-		} catch (ex) {
-			outstanding = false;
-			if (++errors > 5) set(new Map<string, Release[]>());
-			console.log(ex);
-		}
-	}
+export const releases = lazySource<Release>(fetchReleases);
+export const forkReleases = lazySource<Release>(fetchForkReleases);
+export const artifacts = lazySource<WorkflowRun>(fetchArtifacts);
 
-	const interval = setInterval(() => {
-		if (outstanding) return;
-		outstanding = true;
-		fetchData();
-	}, 15 * 60000);
+/** Poll exactly the selected GitHub source and stop the others. */
+export function setActiveSource(src: string): void {
+	releases.deactivate();
+	forkReleases.deactivate();
+	artifacts.deactivate();
+	if (src === 'release') releases.activate();
+	else if (src === 'fork') forkReleases.activate();
+	else if (src === 'artifact') artifacts.activate();
+}
 
-	fetchData();
-
-	return function stop() {
-		clearInterval(interval);
-	};
-});
+/** Stop all GitHub polling (call when the update UI unmounts). */
+export function deactivateSources(): void {
+	releases.deactivate();
+	forkReleases.deactivate();
+	artifacts.deactivate();
+}
 
 export function getFirmwareUrl(firmwareSource: string, version: string, artifact: string, firmware: string): string | null {
 	if (firmware) {

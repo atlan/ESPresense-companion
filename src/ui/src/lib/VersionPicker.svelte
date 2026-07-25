@@ -1,10 +1,11 @@
 <script>
-	import { releases, artifacts, forkReleases } from './firmware';
+	import { onDestroy } from 'svelte';
+	import { releases, artifacts, forkReleases, setActiveSource, deactivateSources } from './firmware';
 	export let version = '';
 	export let artifact = '';
 	export let flavor = '-';
 	export let updateMethod = 'self'; // 'self', 'manual', 'recovery'
-	export let firmwareSource = 'release'; // 'release', 'artifact', 'fork'
+	export let firmwareSource = ''; // '' (none, default - fetches nothing), 'release', 'artifact', 'fork'
 	export let forkAsset = '';
 
 	// atlan/ESPresense has no board/flavor catalog like the upstream firmwareTypes
@@ -15,6 +16,11 @@
 	$: if (selectedForkRelease && !selectedForkRelease.assets.some((a) => a.name === forkAsset)) {
 		forkAsset = selectedForkRelease.assets[0]?.name ?? '';
 	}
+
+	// Fetch only the currently-selected GitHub source, and only while this picker is
+	// mounted; unmounting stops all polling. Keeps GitHub API calls near zero at idle.
+	$: setActiveSource(firmwareSource);
+	onDestroy(deactivateSources);
 </script>
 
 <div class="card mb-6 space-y-6 border border-surface-300-700 bg-surface-50-950 p-6 shadow-lg rounded-lg">
@@ -56,6 +62,7 @@
 					<label class="block" for="source">
 						<span class="block text-sm font-medium text-surface-700-300 mb-2">Source</span>
 						<select id="source" class="select w-full bg-surface-100-900 border-surface-300-600 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 rounded-md" bind:value={firmwareSource}>
+							<option value="" disabled>— select a source —</option>
 							<option value="release">🏷️ GitHub Releases</option>
 							<option value="artifact">🔨 GitHub Artifacts</option>
 							<option value="fork">🔱 My Fork</option>
