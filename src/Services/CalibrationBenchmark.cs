@@ -215,7 +215,13 @@ public class CalibrationBenchmark(
         }
         result.Floors = result.Floors.OrderByDescending(f => f.MedianErrorM).ToList();
 
-        var previous = _history.LastOrDefault(r => r.Error == null);
+        // Only against a run replayed with the SAME what-if parameters. Observed 2026-07-26: a plain
+        // run was reported as "12 cm worse" than a predecessor replayed with refRssi -77 and the
+        // consistency filter on - two different questions, and the difference between the answers is
+        // not a change in accuracy. Comparing across override sets makes the yardstick lie in exactly
+        // the situation it exists for, namely deciding whether a change helped.
+        var signature = Signature(overrides);
+        var previous = _history.LastOrDefault(r => r.Error == null && Signature(r.Overrides) == signature);
         if (previous?.MedianErrorM is { } before && result.MedianErrorM is { } now)
         {
             result.DeltaMedianM = Round(now - before);
@@ -230,7 +236,8 @@ public class CalibrationBenchmark(
         }
         else
         {
-            result.Verdict = $"Baseline: median {result.MedianErrorM:0.00} m, 90th percentile " +
+            var scope = overrides == null ? "" : " for these replay settings";
+            result.Verdict = $"Baseline{scope}: median {result.MedianErrorM:0.00} m, 90th percentile " +
                              $"{result.P90ErrorM:0.00} m over {result.Ticks} ticks from {result.PointsUsed} points.";
         }
 
@@ -289,6 +296,10 @@ public class CalibrationBenchmark(
         recomputed++;
         return Math.Pow(10, (refRssi - rssi) / (10.0 * absorption));
     }
+
+    /// <summary>Identifies the question a run was asking, so only like is compared with like.</summary>
+    private static string Signature(BenchmarkOverrides? o) =>
+        o == null ? "as-recorded" : $"{o.RefRssi}|{o.Absorption}|{o.ConsistencyFilter}";
 
     private static void Bump(Dictionary<string, int> counter, string key)
         => counter[key] = counter.TryGetValue(key, out var n) ? n + 1 : 1;
