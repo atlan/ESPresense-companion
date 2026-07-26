@@ -67,6 +67,11 @@ public class CalibrationBenchmark(
         var skippedNoData = 0;
         var recomputed = 0;
         var dropped = 0;
+        var floorHits = 0;
+        var floorChecked = 0;
+        var floorHitPerFloor = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var floorTotalPerFloor = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var confusion = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var point in points)
         {
@@ -79,13 +84,35 @@ public class CalibrationBenchmark(
 
             foreach (var tick in point.Raw.GroupBy(r => r.T))
             {
-                var heard = new List<(Point3D loc, double dist)>();
+                var audible = new List<(Node node, double dist)>();
                 foreach (var entry in tick)
                 {
                     if (!state.Nodes.TryGetValue(entry.N, out var node) || !node.HasLocation) continue;
-                    if (!(node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)) continue;
-                    heard.Add((node.Location, DistanceFor(entry, overrides, ref recomputed)));
+                    audible.Add((node, DistanceFor(entry, overrides, ref recomputed)));
                 }
+
+                // Scored on every audible node, deliberately BEFORE the same-floor cut below: that
+                // cut is given the answer, so an error figure computed after it cannot say anything
+                // about whether the floor would have been found in the first place.
+                if (GuessFloor(audible, result.Bandwidth, result.Kernel) is { } guess)
+                {
+                    floorChecked++;
+                    if (string.Equals(guess, point.FloorId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        floorHits++;
+                        Bump(floorHitPerFloor, point.FloorId!);
+                    }
+                    else
+                    {
+                        Bump(confusion, $"{point.FloorId} -> {guess}");
+                    }
+                    Bump(floorTotalPerFloor, point.FloorId!);
+                }
+
+                var heard = audible
+                    .Where(a => a.node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)
+                    .Select(a => (loc: a.node.Location, dist: a.dist))
+                    .ToList();
                 if (heard.Count < MinNodesPerTick) continue;
 
                 // Optional, so the effect can be measured before it is adopted live.
@@ -165,15 +192,27 @@ public class CalibrationBenchmark(
         result.MeanErrorM = Round(allErrors.Average());
         result.MeanJitterM = jitters.Count > 0 ? Round(jitters.Average()) : null;
         result.RoomHitRate = roomChecked > 0 ? Math.Round((double)roomHits / roomChecked, 3) : null;
+        result.FloorTicksChecked = floorChecked;
+        result.FloorHitRate = floorChecked > 0 ? Math.Round((double)floorHits / floorChecked, 3) : null;
+        result.FloorConfusion = confusion
+            .OrderByDescending(kv => kv.Value)
+            .Take(5)
+            .Select(kv => new BenchmarkConfusion { Pair = kv.Key, Ticks = kv.Value })
+            .ToList();
 
         foreach (var (floorId, errs) in perFloor)
+        {
+            floorTotalPerFloor.TryGetValue(floorId, out var fTotal);
+            floorHitPerFloor.TryGetValue(floorId, out var fHit);
             result.Floors.Add(new BenchmarkFloor
             {
                 FloorId = floorId,
                 Ticks = errs.Count,
                 MedianErrorM = Round(Median(errs)),
-                P90ErrorM = Round(Percentile(errs, 0.90))
+                P90ErrorM = Round(Percentile(errs, 0.90)),
+                FloorHitRate = fTotal > 0 ? Math.Round((double)fHit / fTotal, 3) : null
             });
+        }
         result.Floors = result.Floors.OrderByDescending(f => f.MedianErrorM).ToList();
 
         var previous = _history.LastOrDefault(r => r.Error == null);
@@ -193,6 +232,19 @@ public class CalibrationBenchmark(
         {
             result.Verdict = $"Baseline: median {result.MedianErrorM:0.00} m, 90th percentile " +
                              $"{result.P90ErrorM:0.00} m over {result.Ticks} ticks from {result.PointsUsed} points.";
+        }
+
+        // Appended rather than folded in: the distance figures above are all measured on the correct
+        // floor, so they say nothing about this. A run can improve by centimetres while sending the
+        // device to the wrong storey, and that is the failure a resident actually notices.
+        if (result.FloorHitRate is { } fhr)
+        {
+            result.Verdict += fhr >= 0.95
+                ? $" Floor found on {fhr:P0} of ticks."
+                : $" Floor found on only {fhr:P0} of ticks - the room and distance figures above are " +
+                  "measured on the correct floor and do not reflect this.";
+            var worst = result.FloorConfusion.FirstOrDefault();
+            if (worst != null && fhr < 0.95) result.Verdict += $" Most common mix-up: {worst.Pair}.";
         }
 
         Log.Information("Benchmark: median {Median:0.00} m, p90 {P90:0.00} m, room hit {Hit:P0}, {Ticks} ticks",
@@ -236,6 +288,68 @@ public class CalibrationBenchmark(
         var absorption = o.Absorption ?? recordedAbsorption;
         recomputed++;
         return Math.Pow(10, (refRssi - rssi) / (10.0 * absorption));
+    }
+
+    private static void Bump(Dictionary<string, int> counter, string key)
+        => counter[key] = counter.TryGetValue(key, out var n) ? n + 1 : 1;
+
+    /// <summary>
+    /// Which floor would the live locator have landed on for this tick?
+    ///
+    /// Floor detection is not a separate algorithm in ESPresense - <see cref="State.GetScenarios"/>
+    /// builds one scenario PER FLOOR and <see cref="MultiScenarioLocator"/> publishes whichever wins
+    /// on confidence. So scoring it means doing exactly that: fit every floor from the nodes on it
+    /// and see which one comes out ahead. The arithmetic below mirrors
+    /// <see cref="NadarayaWatsonMultilateralizer.Locate"/> including its two-node branch, because
+    /// that branch exists precisely to keep sparsely-covered floors competitive - skipping it here
+    /// would score a system that is not the one running.
+    ///
+    /// One honest approximation: the live code counts only nodes currently ONLINE as the coverage
+    /// denominator, and a recording does not say who was online at the time. Nodes with a position
+    /// are counted instead, which understates confidence on a floor that had a node down. It shifts
+    /// both floors in the same direction, so comparisons between runs stay sound.
+    /// </summary>
+    private string? GuessFloor(IReadOnlyList<(Node node, double dist)> audible, double bandwidth, string? kernel)
+    {
+        string? best = null;
+        var bestConfidence = 0;
+
+        foreach (var floor in state.Floors.Values)
+        {
+            var heard = audible.Where(a => a.node.Floors?.Contains(floor) ?? false)
+                               .OrderBy(a => a.dist)
+                               .ToList();
+            if (heard.Count <= 1) continue;
+
+            Point3D est;
+            double error;
+            double? pearson;
+
+            if (heard.Count < 3 || floor.Bounds == null)
+            {
+                est = Point3D.MidPoint(heard[0].node.Location, heard[1].node.Location);
+                error = heard.Average(n => Math.Pow(est.DistanceTo(n.node.Location) - n.dist, 2));
+                pearson = null;
+            }
+            else
+            {
+                (est, error) = NadarayaWatsonMultilateralizer.Estimate(
+                    heard.Select(n => (n.node.Location, n.dist)).ToList(), bandwidth, kernel);
+                pearson = MathUtils.CalculatePearsonCorrelation(
+                    heard.Select(n => n.dist).ToList(),
+                    heard.Select(n => est.DistanceTo(n.node.Location)).ToList());
+            }
+
+            var possible = state.Nodes.Values.Count(n => (n.Floors?.Contains(floor) ?? false) && n.HasLocation);
+            var confidence = MathUtils.CalculateConfidence(error, pearson, heard.Count, possible);
+            if (confidence > bestConfidence)
+            {
+                bestConfidence = confidence;
+                best = floor.Id;
+            }
+        }
+
+        return best;
     }
 
     private static double? Round(double v) => Math.Round(v, 2);
@@ -295,6 +409,14 @@ public class BenchmarkResult
     /// <summary>Fraction of ticks placed in the same room as the ground truth - what presence automations actually depend on.</summary>
     public double? RoomHitRate { get; set; }
 
+    /// <summary>Fraction of ticks whose winning floor scenario was the floor the point is actually
+    /// on. Scored across all audible nodes, unlike every distance figure here, which is measured
+    /// with the floor already known.</summary>
+    public double? FloorHitRate { get; set; }
+    public int FloorTicksChecked { get; set; }
+    /// <summary>The most frequent wrong answers, as "true -> guessed".</summary>
+    public List<BenchmarkConfusion> FloorConfusion { get; set; } = new();
+
     /// <summary>Parameters this run was replayed with, null when it measured the state as recorded.</summary>
     public BenchmarkOverrides? Overrides { get; set; }
     /// <summary>Readings whose distance was recomputed from the stored level.</summary>
@@ -315,6 +437,14 @@ public class BenchmarkFloor
     public int Ticks { get; set; }
     public double? MedianErrorM { get; set; }
     public double? P90ErrorM { get; set; }
+    /// <summary>How often ticks truly on this floor were assigned to it.</summary>
+    public double? FloorHitRate { get; set; }
+}
+
+public class BenchmarkConfusion
+{
+    public string Pair { get; set; } = "";
+    public int Ticks { get; set; }
 }
 
 public class BenchmarkPoint

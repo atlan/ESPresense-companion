@@ -132,10 +132,12 @@
 		medianErrorM?: number;
 		p90ErrorM?: number;
 		roomHitRate?: number;
+		floorHitRate?: number;
+		floorConfusion: { pair: string; ticks: number }[];
 		pointsUsed: number;
 		pointsWithLevels: number;
 		verdict?: string;
-		floors: { floorId: string; medianErrorM?: number; ticks: number }[];
+		floors: { floorId: string; medianErrorM?: number; ticks: number; floorHitRate?: number }[];
 	}
 
 	interface SetupCandidate {
@@ -997,20 +999,40 @@
 							<span>Median <strong>{b.medianErrorM?.toFixed(2)} m</strong></span>
 							<span>90th pct <strong>{b.p90ErrorM?.toFixed(2)} m</strong></span>
 							<span>Right room <strong>{Math.round((b.roomHitRate ?? 0) * 100)}%</strong></span>
+							{#if b.floorHitRate != null}
+								<span>Right floor <strong class={b.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>{Math.round(b.floorHitRate * 100)}%</strong></span>
+							{/if}
 							<span class="text-surface-600-400">{b.pointsUsed} points, {b.pointsWithLevels} with signal levels</span>
 						</div>
 						{#if b.floors.length > 0}
 							<div class="overflow-x-auto">
 								<table class="table table-compact">
-									<thead><tr><th>Floor</th><th>Median</th><th>Ticks</th></tr></thead>
+									<thead><tr><th>Floor</th><th>Median</th><th>Found</th><th>Ticks</th></tr></thead>
 									<tbody>
 										{#each b.floors as f}
-											<tr><td>{f.floorId}</td><td>{f.medianErrorM?.toFixed(2)} m</td><td>{f.ticks}</td></tr>
+											<tr>
+												<td>{f.floorId}</td>
+												<td>{f.medianErrorM?.toFixed(2)} m</td>
+												<td class={f.floorHitRate != null && f.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>
+													{f.floorHitRate != null ? `${Math.round(f.floorHitRate * 100)}%` : '-'}
+												</td>
+												<td>{f.ticks}</td>
+											</tr>
 										{/each}
 									</tbody>
 								</table>
 							</div>
 						{/if}
+						{#if (b.floorConfusion ?? []).length > 0}
+							<p class="text-xs text-surface-600-400 mt-2">
+								Wrong floor most often: {b.floorConfusion.map((c) => `${c.pair} (${c.ticks}x)`).join(', ')}
+							</p>
+						{/if}
+						<p class="text-xs text-surface-600-400 mt-2">
+							"Found" is the only figure here scored without knowing the answer - median, 90th percentile
+							and room are all measured on the correct floor, so a run can improve by centimetres while
+							sending the device upstairs.
+						</p>
 					{/if}
 				{:else}
 					<p class="text-sm text-surface-600-400">Not run yet. Needs at least one walk test point.</p>
