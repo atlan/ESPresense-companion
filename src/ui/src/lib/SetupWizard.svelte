@@ -861,7 +861,7 @@
 					{/if}
 
 					{#if diagnostics.issues.length > 0}
-						<ul class="space-y-2 mb-3">
+						<ul class="space-y-2 mb-3 max-h-80 overflow-y-auto pr-2">
 							{#each diagnostics.issues as issue}
 								<li class="flex items-start gap-2">
 									<span class="badge {severityClass(issue.severity)} shrink-0 mt-0.5">{issue.category}</span>
@@ -877,7 +877,7 @@
 							Measured here: spots with a node within 1.5 m averaged 1.1 m position error, spots beyond it
 							2.5 m. Distance to the third-nearest node made no difference - one node close enough is what counts.
 						</p>
-						<div class="overflow-x-auto max-h-64">
+						<div class="overflow-x-auto overflow-y-auto max-h-80">
 							<table class="table table-compact">
 								<thead><tr><th>Room</th><th>Floor</th><th>Nearest node</th><th>Worst corner</th><th>In range</th></tr></thead>
 								<tbody>
@@ -959,7 +959,7 @@
 					{#if refStatus.warning}<p class="text-sm text-warning-600-400 mb-2">{refStatus.warning}</p>{/if}
 					{#if refStatus.contextNote}<p class="text-sm text-warning-600-400 mb-2">{refStatus.contextNote}</p>{/if}
 					{#if refStatus.nodes.length > 0}
-						<div class="overflow-x-auto max-h-48">
+						<div class="overflow-x-auto overflow-y-auto max-h-48">
 							<table class="table table-compact">
 								<thead><tr><th>Node</th><th>Readings</th><th>Level</th></tr></thead>
 								<tbody>
