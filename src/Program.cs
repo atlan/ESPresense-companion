@@ -93,6 +93,7 @@ builder.Services.AddSingleton<DeviceIdentityTracker>();
 builder.Services.AddSingleton<WizardDiagnostics>();
 builder.Services.AddSingleton<WalkPointPlanner>();
 builder.Services.AddSingleton<CalibrationSweepService>();
+builder.Services.AddSingleton<LocatorSweepService>();
 builder.Services.AddSingleton<DeviceSetupService>();
 builder.Services.AddSingleton(sp => new CalibrationBenchmark(
     sp.GetRequiredService<State>(),

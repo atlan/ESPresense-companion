@@ -18,6 +18,7 @@ public class WizardController(
     CalibrationBenchmark benchmark,
     WalkPointPlanner walkPointPlanner,
     CalibrationSweepService calibrationSweep,
+    LocatorSweepService locatorSweep,
     PairErrorTracker pairErrorTracker,
     OptimizationRunner optimizationRunner,
     ConfigLoader configLoader,
@@ -113,6 +114,10 @@ public class WizardController(
     /// <summary>Fits the calibration several ways and scores each against the recorded walk points.</summary>
     [HttpPost("api/wizard/calibration-sweep")]
     public SweepResult RunCalibrationSweep([FromBody] SweepRequest? req) => calibrationSweep.Run(req);
+
+    /// <summary>Replays the walk points through the real scenario competition to see which locators earn their place.</summary>
+    [HttpPost("api/wizard/locator-sweep")]
+    public LocatorSweepResult RunLocatorSweep([FromBody] LocatorSweepRequest? req) => locatorSweep.Run(req);
 
     [HttpGet("api/wizard/validation")]
     public WizardValidationResult GetValidation()

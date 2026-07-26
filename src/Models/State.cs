@@ -15,6 +15,12 @@ public class State
     private readonly NodeTelemetryStore _nts;
 
     /// <summary>
+    /// Exposed so an offline replay can build the same locators the live path builds. Read-only on
+    /// purpose - the store is fed from MQTT and nothing outside should be writing to it.
+    /// </summary>
+    public NodeTelemetryStore NodeTelemetry => _nts;
+
+    /// <summary>
     /// Initializes a new State, wiring telemetry and configuration handling.
     /// </summary>
     /// <remarks>
