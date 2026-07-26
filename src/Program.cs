@@ -90,11 +90,16 @@ builder.Services.AddSingleton<WizardService>();
 builder.Services.AddSingleton<DeviceIdentityTracker>();
 builder.Services.AddSingleton<WizardDiagnostics>();
 builder.Services.AddSingleton<DeviceSetupService>();
+builder.Services.AddSingleton(sp => new NodeMoveTracker(
+    sp.GetRequiredService<State>(),
+    sp.GetRequiredService<NodeSettingsStore>(),
+    Path.Combine(storageDir, "node-moves.json")));
 // Registered as singleton + forwarded so WizardController can call TriggerNow() on the same instance.
 builder.Services.AddSingleton<OptimizationRunner>();
 
 builder.Services.AddHostedService<MultiScenarioLocator>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<OptimizationRunner>());
+builder.Services.AddHostedService(provider => provider.GetRequiredService<NodeMoveTracker>());
 builder.Services.AddHostedService(provider => provider.GetRequiredService<DeviceTracker>());
 builder.Services.AddHostedService(provider => provider.GetRequiredService<DeviceSettingsStore>());
 builder.Services.AddHostedService(provider => provider.GetRequiredService<NodeSettingsStore>());

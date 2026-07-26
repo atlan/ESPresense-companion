@@ -467,7 +467,7 @@ public class WalkTestService
             foreach (var agg in point.Nodes)
             {
                 if (!state.Nodes.TryGetValue(agg.NodeId, out var node) || !node.HasLocation) continue;
-                if (node.Location.DistanceTo(agg.NodeLocationAtRecord) > 0.05) continue;
+                if (node.Location.DistanceTo(agg.NodeLocationAtRecord) > NodeMoveTracker.MoveThresholdM) continue;
 
                 var tx = new OptNode
                 {

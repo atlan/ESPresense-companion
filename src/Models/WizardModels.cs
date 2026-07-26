@@ -98,6 +98,9 @@ public class WizardDiagnosticsResult
 
     /// <summary>Device ids whose address rotates, so the address-based split check cannot cover them.</summary>
     public List<string> RotatingAddressIds { get; set; } = new();
+
+    /// <summary>Nodes relocated recently - their history against the old geometry is gone.</summary>
+    public List<ESPresense.Services.NodeMove> NodeMoves { get; set; } = new();
 }
 
 public class FitQuality

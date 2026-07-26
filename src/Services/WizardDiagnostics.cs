@@ -17,7 +17,9 @@ public class WizardDiagnostics(
     State state,
     NodeSettingsStore nodeSettings,
     ConfigLoader configLoader,
-    DeviceIdentityTracker identityTracker)
+    DeviceIdentityTracker identityTracker,
+    NodeMoveTracker moveTracker,
+    WalkTestService walkTest)
 {
     /// <summary>Pairs closer than this count as "near". Chosen because measured error stays within a
     /// couple of dB below it and diverges sharply above - see the field data in the roadmap.</summary>
@@ -41,6 +43,7 @@ public class WizardDiagnostics(
         var config = configLoader.Config;
 
         CheckSplitIdentities(result);
+        CheckNodeMoves(result);
         CheckClampedParameters(config, result);
         AnalyzeSignals(config, result);
 
@@ -83,6 +86,54 @@ public class WizardDiagnostics(
         foreach (var id in identityTracker.GetRotatingIds())
             result.RotatingAddressIds.Add(id);
     }
+
+    /// <summary>
+    /// Surfaces relocations and what they cost. Both consequences are already handled correctly
+    /// elsewhere - walk measures get skipped, pair statistics get dropped - but silently, so a node
+    /// quietly stops contributing history and nothing says why.
+    /// </summary>
+    private void CheckNodeMoves(WizardDiagnosticsResult result)
+    {
+        foreach (var move in moveTracker.GetMoves(MoveReportWindow))
+        {
+            // Count what this specific move invalidated, so the message is concrete rather than a warning.
+            var affectedPoints = 0;
+            var affectedMeasures = 0;
+            foreach (var point in walkTest.GetPoints())
+            {
+                var lost = point.Nodes.Count(a =>
+                    string.Equals(a.NodeId, move.NodeId, StringComparison.OrdinalIgnoreCase) &&
+                    state.Nodes.TryGetValue(a.NodeId, out var n) && n.HasLocation &&
+                    n.Location.DistanceTo(a.NodeLocationAtRecord) > NodeMoveTracker.MoveThresholdM);
+                if (lost <= 0) continue;
+                affectedPoints++;
+                affectedMeasures += lost;
+            }
+
+            result.NodeMoves.Add(move);
+
+            var reseeded = move.AbsorptionReseededTo is { } a
+                ? $"Its absorption was re-seeded to the fleet median ({a:0.00}) so the next fit starts neutral; "
+                : "";
+            var walk = affectedMeasures > 0
+                ? $"{affectedMeasures} walk measures across {affectedPoints} points are no longer counted, "
+                : "";
+
+            result.Issues.Add(new ValidationIssue
+            {
+                Severity = ValidationSeverity.Warning,
+                Category = "moved",
+                NodeId = move.NodeId,
+                Message = $"Node '{move.NodeName ?? move.NodeId}' moved {move.DistanceM:0.00} m on " +
+                          $"{move.At:yyyy-MM-dd HH:mm} UTC. {walk}and its pair-error history was reset - " +
+                          $"measurements taken against the old geometry cannot be reused. {reseeded}" +
+                          "Expect its calibration to wander for a few runs until it re-converges."
+            });
+        }
+    }
+
+    /// <summary>How far back a relocation is still worth reporting.</summary>
+    private static readonly TimeSpan MoveReportWindow = TimeSpan.FromDays(30);
 
     /// <summary>
     /// A parameter resting exactly on its limit means the optimizer wanted to go further and was not
