@@ -54,7 +54,15 @@ public class WizardController(
     public object GetBenchmark() => new { last = benchmark.Last, history = benchmark.History };
 
     [HttpPost("api/wizard/benchmark/run")]
-    public BenchmarkResult RunBenchmark([FromBody] BenchmarkRunRequest? req) => benchmark.Run(req?.Label);
+    public BenchmarkResult RunBenchmark([FromBody] BenchmarkRunRequest? req)
+    {
+        // Overrides only bite on points that carry per-tick levels; without them the recorded
+        // distance is all there is and the run measures the state as recorded.
+        var overrides = req?.RefRssi != null || req?.Absorption != null
+            ? new BenchmarkOverrides { RefRssi = req.RefRssi, Absorption = req.Absorption }
+            : null;
+        return benchmark.Run(req?.Label, overrides);
+    }
 
     // ── Gefuehrte Geraete-Einrichtung ──────────────────────────────────────────────
     // rssi@1m gehoert zum Geraet und faellt bei der Knoten-zu-Knoten-Kalibrierung nicht ab.
@@ -546,4 +554,8 @@ public class BenchmarkRunRequest
 {
     /// <summary>Free-text note so a run can be recognised later ("nach Absorptionsgrenze 2.0").</summary>
     public string? Label { get; set; }
+    /// <summary>Replay with this device reference level instead of the recorded one.</summary>
+    public double? RefRssi { get; set; }
+    /// <summary>Replay with this path-loss exponent instead of the one each node used.</summary>
+    public double? Absorption { get; set; }
 }

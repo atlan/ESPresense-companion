@@ -43,9 +43,9 @@ public class CalibrationBenchmark(
 
     public IReadOnlyList<BenchmarkResult> History => _history;
 
-    public BenchmarkResult Run(string? label = null)
+    public BenchmarkResult Run(string? label = null, BenchmarkOverrides? overrides = null)
     {
-        var result = new BenchmarkResult { RanAt = DateTime.UtcNow, Label = label };
+        var result = new BenchmarkResult { RanAt = DateTime.UtcNow, Label = label, Overrides = overrides };
 
         var points = walkTest.GetPoints().Where(p => p.Raw.Count > 0 && p.FloorId != null).ToList();
         if (points.Count == 0)
@@ -65,6 +65,7 @@ public class CalibrationBenchmark(
         var roomHits = 0;
         var roomChecked = 0;
         var skippedNoData = 0;
+        var recomputed = 0;
 
         foreach (var point in points)
         {
@@ -82,7 +83,7 @@ public class CalibrationBenchmark(
                 {
                     if (!state.Nodes.TryGetValue(entry.N, out var node) || !node.HasLocation) continue;
                     if (!(node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)) continue;
-                    heard.Add((node.Location, entry.D));
+                    heard.Add((node.Location, DistanceFor(entry, overrides, ref recomputed)));
                 }
                 if (heard.Count < MinNodesPerTick) continue;
                 heard.Sort((a, b) => a.dist.CompareTo(b.dist));
@@ -142,6 +143,7 @@ public class CalibrationBenchmark(
         // adjustment are baked in and invisible to a replay. Reported rather than silently mixed,
         // because a run whose mix has shifted is not comparable with the previous one.
         result.PointsWithLevels = points.Count(p => p.SupportsCalibrationReplay);
+        result.RecomputedTicks = recomputed;
         result.PointsSkipped = skippedNoData;
         result.Ticks = allErrors.Count;
         result.MedianErrorM = Round(Median(allErrors));
@@ -191,6 +193,35 @@ public class CalibrationBenchmark(
         while (_history.Count > MaxHistory) _history.RemoveAt(0);
         Save();
         return result;
+    }
+
+    /// <summary>
+    /// Distance for one recorded reading. Without overrides, or on a point recorded before levels
+    /// were stored, this is simply what the node reported at the time.
+    ///
+    /// With overrides it is recomputed from the stored level, which is the only way to score a
+    /// calibration change at all: the recorded distance is a DERIVED value the node produced with
+    /// the reference level and absorption in force back then, so replaying it can only ever
+    /// reproduce that state. The node's formula is
+    /// <c>d = 10^((refRssi - rssi) / (10 * absorption))</c>, and since the tick carries refRssi,
+    /// rssi and the resulting distance, the absorption it used can be recovered exactly - no
+    /// assumption needed, and nothing extra had to be stored.
+    /// </summary>
+    private static double DistanceFor(WalkTestService.RawTickEntry e, BenchmarkOverrides? o, ref int recomputed)
+    {
+        if (o == null || e.R is not { } rssi || e.Ref is not { } recordedRef || e.D <= 0) return e.D;
+
+        // Recover the absorption the node used. At exactly 1 m log10(d) is zero and it is
+        // undetermined - fall back rather than divide by zero.
+        var logD = Math.Log10(e.D);
+        if (Math.Abs(logD) < 1e-6) return e.D;
+        var recordedAbsorption = (recordedRef - rssi) / (10.0 * logD);
+        if (recordedAbsorption is <= 0.1 or > 10) return e.D;   // implausible, do not build on it
+
+        var refRssi = o.RefRssi ?? recordedRef;
+        var absorption = o.Absorption ?? recordedAbsorption;
+        recomputed++;
+        return Math.Pow(10, (refRssi - rssi) / (10.0 * absorption));
     }
 
     private static double? Round(double v) => Math.Round(v, 2);
@@ -250,6 +281,11 @@ public class BenchmarkResult
     /// <summary>Fraction of ticks placed in the same room as the ground truth - what presence automations actually depend on.</summary>
     public double? RoomHitRate { get; set; }
 
+    /// <summary>Parameters this run was replayed with, null when it measured the state as recorded.</summary>
+    public BenchmarkOverrides? Overrides { get; set; }
+    /// <summary>Readings whose distance was recomputed from the stored level.</summary>
+    public int RecomputedTicks { get; set; }
+
     public double? DeltaMedianM { get; set; }
     public string? Verdict { get; set; }
 
@@ -273,4 +309,17 @@ public class BenchmarkPoint
     public int Ticks { get; set; }
     public double? MedianErrorM { get; set; }
     public double? P90ErrorM { get; set; }
+}
+
+/// <summary>
+/// What-if parameters for a replay. Leaving a field null keeps the value the recording was made
+/// with, so a run with everything null reproduces the recorded state and can be used to verify the
+/// recomputation itself before trusting any comparison built on it.
+/// </summary>
+public class BenchmarkOverrides
+{
+    /// <summary>Device reference level to replay with, in dBm.</summary>
+    public double? RefRssi { get; set; }
+    /// <summary>Path-loss exponent to replay with, replacing whatever each node used.</summary>
+    public double? Absorption { get; set; }
 }
