@@ -86,6 +86,8 @@ public class CalibrationBenchmark(
 
             var estimates = new List<Point3D>();
             var errors = new List<double>();
+            var pointFloorHits = 0;
+            var pointFloorChecked = 0;
 
             foreach (var tick in point.Raw.GroupBy(r => r.T))
             {
@@ -102,9 +104,11 @@ public class CalibrationBenchmark(
                 if (GuessFloor(audible, result.Bandwidth, result.Kernel) is { } guess)
                 {
                     floorChecked++;
+                    pointFloorChecked++;
                     if (string.Equals(guess, point.FloorId, StringComparison.OrdinalIgnoreCase))
                     {
                         floorHits++;
+                        pointFloorHits++;
                         Bump(floorHitPerFloor, point.FloorId!);
                     }
                     else
@@ -171,7 +175,11 @@ public class CalibrationBenchmark(
                 RoomName = truthRoom?.Name,
                 Ticks = estimates.Count,
                 MedianErrorM = Round(Median(errors)),
-                P90ErrorM = Round(Percentile(errors, 0.90))
+                P90ErrorM = Round(Percentile(errors, 0.90)),
+                // Per point, not just per floor: "88 % floor" says nothing about WHERE it fails, and
+                // the two candidate explanations - a stairwell being genuinely ambiguous versus a
+                // floor being under-covered - call for completely different responses.
+                FloorHitRate = pointFloorChecked > 0 ? Math.Round((double)pointFloorHits / pointFloorChecked, 3) : null
             });
         }
 
@@ -490,6 +498,8 @@ public class BenchmarkPoint
     public int Ticks { get; set; }
     public double? MedianErrorM { get; set; }
     public double? P90ErrorM { get; set; }
+    /// <summary>How often this spot was assigned to the floor it is actually on.</summary>
+    public double? FloorHitRate { get; set; }
 }
 
 /// <summary>

@@ -155,17 +155,19 @@ optimization:
     }
 
     [Test]
-    public void Regularization_PullsTowardsTheFleetMedianNotTheMidpointOfTheLimits()
+    public void Regularization_DefaultsToTheMidpointOfTheLimits()
     {
-        // Limits 1.5..6.5 put the midpoint at 4.0. If the target still came from the limits, seeding
-        // every node at 5.5 would change nothing about where the penalty pulls.
+        // Deliberately unchanged behaviour. Seeding every node at 5.5 must NOT move the target: an
+        // earlier version pulled towards the fleet's own median instead, on the argument that the
+        // limits describe the box rather than the data. Measured against the walk points twice, that
+        // scored slightly worse both times, so the old default stays and the new behaviour is opt-in
+        // through weights.absorption_target.
         var os = CleanSnapshot();
         var optimizer = new PerNodeAbsorptionRxTx(_state) { ObjectiveOverride = "db", AbsorptionPenaltyOverride = 1 };
         optimizer.Optimize(os, Existing(os, absorption: 5.5));
 
-        Assert.That(optimizer.LastTargetAbsorption, Is.EqualTo(5.5).Within(0.01),
-            "the fleet sits at 5.5, so that is what the regularization should shrink towards - " +
-            "the midpoint of the configured limits describes the box, not the data");
+        Assert.That(optimizer.LastTargetAbsorption, Is.EqualTo(4.0).Within(0.01),
+            "limits 1.5..6.5 put the midpoint at 4.0");
     }
 
     [Test]

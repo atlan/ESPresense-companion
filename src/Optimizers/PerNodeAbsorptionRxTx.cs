@@ -42,27 +42,6 @@ public class PerNodeAbsorptionRxTx : IOptimizer
     /// rather than the caller having to re-derive it.</summary>
     public double LastTargetAbsorption { get; private set; }
 
-    /// <summary>
-    /// Median absorption across the nodes as they currently stand. Used as the regularization target
-    /// when nothing else says otherwise: shrinking nodes towards where the fleet already sits is a
-    /// statement the data supports, while shrinking them towards the middle of a configured interval
-    /// is a statement about the configuration. Needs a few nodes to mean anything.
-    /// </summary>
-    private static double? FleetMedianAbsorption(Dictionary<string, NodeSettings> existing, double min, double max)
-    {
-        var values = existing.Values
-            .Select(s => s.Calibration?.Absorption)
-            .Where(a => a is > 0)
-            .Select(a => Math.Clamp(a!.Value, min, max))
-            .OrderBy(a => a)
-            .ToList();
-
-        if (values.Count < 3) return null;
-        return values.Count % 2 == 1
-            ? values[values.Count / 2]
-            : (values[values.Count / 2 - 1] + values[values.Count / 2]) / 2.0;
-    }
-
     public OptimizationResults Optimize(OptimizationSnapshot os, Dictionary<string, NodeSettings> existingSettings)
     {
         var or = new OptimizationResults();
@@ -116,16 +95,20 @@ public class PerNodeAbsorptionRxTx : IOptimizer
 
         var absorptionMin = AbsorptionMinOverride ?? optimization.AbsorptionMin;
         var absorptionMax = AbsorptionMaxOverride ?? optimization.AbsorptionMax;
-        // ★ The regularization target used to be the midpoint of the limits, unconditionally. That
-        // conflates two different statements: the limits say what absorption is POSSIBLE, the target
-        // says what is LIKELY. Measured 2026-07-26 on a real installation - limits 2.5..4.8 put the
-        // target at 3.65 while all 18 nodes fitted to 4.06-4.59, so the penalty pulled every single
-        // node downwards, against the data, and widening the limits moved the target rather than
-        // freeing the fit. Order of preference now: explicit override, explicit config, the fleet's
-        // own median from the previous fit, and only then the midpoint.
+        // ★ The target the regularization shrinks towards. It is the midpoint of the limits unless
+        // told otherwise, which conflates two statements - the limits say what absorption is
+        // POSSIBLE, the target says what is LIKELY - so weights.absorption_target now separates them.
+        //
+        // What it does NOT do is change the default, and that is a correction to my own reasoning.
+        // The argument was: limits 2.5..4.8 put the target at 3.65 while all 18 nodes fit to
+        // 4.06-4.59, so the penalty drags every node down, against the data. Measured against the
+        // walk points twice (26 points, then 31), pulling down is BETTER: target 3.65 scored 1.38 m
+        // and 1.55 m, the fleet's own median 4.23 scored 1.39 m and 1.59 m. Small, but the same
+        // direction both times. The regularization is not merely a tie-breaker being dragged off
+        // course - it is moving the fit somewhere better, and "the data says 4.2" turns out to be
+        // the node-to-node data, which is not what the locator is scored on.
         var targetAbsorption = AbsorptionTargetOverride
                                ?? optimization.AbsorptionTarget
-                               ?? FleetMedianAbsorption(existingSettings, absorptionMin, absorptionMax)
                                ?? absorptionMin + (absorptionMax - absorptionMin) / 2.0;
         LastTargetAbsorption = targetAbsorption;
         double penaltyWeight = AbsorptionPenaltyOverride ?? optimization.AbsorptionPenaltyWeight;
