@@ -58,8 +58,8 @@ public class WizardController(
     {
         // Overrides only bite on points that carry per-tick levels; without them the recorded
         // distance is all there is and the run measures the state as recorded.
-        var overrides = req?.RefRssi != null || req?.Absorption != null
-            ? new BenchmarkOverrides { RefRssi = req.RefRssi, Absorption = req.Absorption }
+        var overrides = req?.RefRssi != null || req?.Absorption != null || req?.ConsistencyFilter == true
+            ? new BenchmarkOverrides { RefRssi = req.RefRssi, Absorption = req.Absorption, ConsistencyFilter = req.ConsistencyFilter }
             : null;
         return benchmark.Run(req?.Label, overrides);
     }
@@ -558,4 +558,6 @@ public class BenchmarkRunRequest
     public double? RefRssi { get; set; }
     /// <summary>Replay with this path-loss exponent instead of the one each node used.</summary>
     public double? Absorption { get; set; }
+    /// <summary>Discard readings that contradict the rest geometrically before estimating.</summary>
+    public bool? ConsistencyFilter { get; set; }
 }

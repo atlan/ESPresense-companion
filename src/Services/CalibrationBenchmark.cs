@@ -66,6 +66,7 @@ public class CalibrationBenchmark(
         var roomChecked = 0;
         var skippedNoData = 0;
         var recomputed = 0;
+        var dropped = 0;
 
         foreach (var point in points)
         {
@@ -86,6 +87,18 @@ public class CalibrationBenchmark(
                     heard.Add((node.Location, DistanceFor(entry, overrides, ref recomputed)));
                 }
                 if (heard.Count < MinNodesPerTick) continue;
+
+                // Optional, so the effect can be measured before it is adopted live.
+                if (overrides?.ConsistencyFilter == true)
+                {
+                    var kept = ConsistencyFilter.LargestConsistent(heard, h => h.loc, h => h.dist);
+                    if (kept.Count >= MinNodesPerTick)
+                    {
+                        dropped += heard.Count - kept.Count;
+                        heard = kept.ToList();
+                    }
+                }
+
                 heard.Sort((a, b) => a.dist.CompareTo(b.dist));
 
                 var (est, _) = NadarayaWatsonMultilateralizer.Estimate(heard, result.Bandwidth, result.Kernel);
@@ -144,6 +157,7 @@ public class CalibrationBenchmark(
         // because a run whose mix has shifted is not comparable with the previous one.
         result.PointsWithLevels = points.Count(p => p.SupportsCalibrationReplay);
         result.RecomputedTicks = recomputed;
+        result.DroppedInconsistent = dropped;
         result.PointsSkipped = skippedNoData;
         result.Ticks = allErrors.Count;
         result.MedianErrorM = Round(Median(allErrors));
@@ -285,6 +299,8 @@ public class BenchmarkResult
     public BenchmarkOverrides? Overrides { get; set; }
     /// <summary>Readings whose distance was recomputed from the stored level.</summary>
     public int RecomputedTicks { get; set; }
+    /// <summary>Readings discarded as geometrically impossible alongside the others.</summary>
+    public int DroppedInconsistent { get; set; }
 
     public double? DeltaMedianM { get; set; }
     public string? Verdict { get; set; }
@@ -322,4 +338,6 @@ public class BenchmarkOverrides
     public double? RefRssi { get; set; }
     /// <summary>Path-loss exponent to replay with, replacing whatever each node used.</summary>
     public double? Absorption { get; set; }
+    /// <summary>Drop readings that contradict the others through the triangle inequality.</summary>
+    public bool? ConsistencyFilter { get; set; }
 }
