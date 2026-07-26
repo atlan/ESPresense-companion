@@ -144,6 +144,8 @@ public class SignalOutlier
     /// and disappearing between polls.
     /// </summary>
     public bool Reported { get; set; }
+    /// <summary>How long this pair has been under observation - separates "always was" from "just started".</summary>
+    public double? ObservedHours { get; set; }
 }
 
 public class ClampedParameter

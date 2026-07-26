@@ -86,6 +86,7 @@ public class CalibrationBenchmark(
         var skippedNoData = 0;
         var recomputed = 0;
         var dropped = 0;
+        var droppedFar = 0;
         var floorHits = 0;
         var floorChecked = 0;
         var floorHitPerFloor = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -136,10 +137,20 @@ public class CalibrationBenchmark(
                     Bump(floorTotalPerFloor, point.FloorId!);
                 }
 
+                var ownFloorCount = audible.Count(a =>
+                    a.node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false);
                 var heard = audible
                     .Where(a => a.node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)
+                    // A reading past the trust radius leaves the POSITION fit only. It stays in
+                    // `audible`, so it still counts towards the floor decision - "this node hears the
+                    // device" holds up long after "and it is 9 m away" has stopped meaning anything.
+                    // That separation is the whole idea; the firmware's max_distance silences the
+                    // node instead and throws the presence away together with the distance.
+                    .Where(a => overrides?.MaxTrustedDistanceM is not { } max || a.dist <= max)
                     .Select(a => (loc: a.node.Location, dist: a.dist))
                     .ToList();
+                if (overrides?.MaxTrustedDistanceM is not null)
+                    droppedFar += ownFloorCount - heard.Count;
                 bestOwnFloorHeard = Math.Max(bestOwnFloorHeard, heard.Count);
                 bestOtherFloorHeard = Math.Max(bestOtherFloorHeard, audible.Count - heard.Count);
                 if (heard.Count < MinNodesPerTick) continue;
@@ -147,7 +158,9 @@ public class CalibrationBenchmark(
                 // Optional, so the effect can be measured before it is adopted live.
                 if (overrides?.ConsistencyFilter == true)
                 {
-                    var kept = ConsistencyFilter.LargestConsistent(heard, h => h.loc, h => h.dist);
+                    var kept = ConsistencyFilter.LargestConsistent(heard, h => h.loc, h => h.dist,
+                        overrides.ConsistencyToleranceM ?? ConsistencyFilter.DefaultToleranceM,
+                        overrides.ConsistencyToleranceFraction ?? ConsistencyFilter.DefaultToleranceFraction);
                     if (kept.Count >= MinNodesPerTick)
                     {
                         dropped += heard.Count - kept.Count;
@@ -241,6 +254,7 @@ public class CalibrationBenchmark(
         result.PointsWithLevels = points.Count(p => p.SupportsCalibrationReplay);
         result.RecomputedTicks = recomputed;
         result.DroppedInconsistent = dropped;
+        result.DroppedBeyondTrust = droppedFar;
         result.PointsSkipped = skippedNoData;
         result.Ticks = allErrors.Count;
         result.MedianErrorM = Round(Median(allErrors));
@@ -373,7 +387,9 @@ public class CalibrationBenchmark(
         static string Set(Dictionary<string, double>? d) => d == null || d.Count == 0
             ? ""
             : string.Join(",", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}={kv.Value:0.###}"));
-        return $"{o.RefRssi}|{o.Absorption}|{o.ConsistencyFilter}|{o.FloorContrastWeight}|{Set(o.AbsorptionByNode)}|{Set(o.RxAdjByNode)}";
+        return $"{o.RefRssi}|{o.Absorption}|{o.ConsistencyFilter}|{o.ConsistencyToleranceM}|" +
+               $"{o.ConsistencyToleranceFraction}|{o.MaxTrustedDistanceM}|{o.FloorContrastWeight}|" +
+               $"{Set(o.AbsorptionByNode)}|{Set(o.RxAdjByNode)}";
     }
 
     private static void Bump(Dictionary<string, int> counter, string key)
@@ -516,6 +532,8 @@ public class BenchmarkResult
     public int RecomputedTicks { get; set; }
     /// <summary>Readings discarded as geometrically impossible alongside the others.</summary>
     public int DroppedInconsistent { get; set; }
+    /// <summary>Readings kept for the floor decision but excluded from the position fit as too distant.</summary>
+    public int DroppedBeyondTrust { get; set; }
 
     public double? DeltaMedianM { get; set; }
     public string? Verdict { get; set; }
@@ -607,4 +625,12 @@ public class BenchmarkOverrides
     public double? Absorption { get; set; }
     /// <summary>Drop readings that contradict the others through the triangle inequality.</summary>
     public bool? ConsistencyFilter { get; set; }
+    /// <summary>Slack on the triangle inequality, in metres, and as a share of the node separation.</summary>
+    public double? ConsistencyToleranceM { get; set; }
+    public double? ConsistencyToleranceFraction { get; set; }
+    /// <summary>
+    /// Beyond this a reading no longer contributes a DISTANCE to the position fit, while still
+    /// counting as presence for the floor decision. Null keeps every reading.
+    /// </summary>
+    public double? MaxTrustedDistanceM { get; set; }
 }

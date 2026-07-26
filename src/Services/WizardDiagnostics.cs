@@ -20,7 +20,8 @@ public class WizardDiagnostics(
     ConfigLoader configLoader,
     DeviceIdentityTracker identityTracker,
     NodeMoveTracker moveTracker,
-    WalkTestService walkTest)
+    WalkTestService walkTest,
+    PairErrorTracker pairErrors)
 {
     /// <summary>Pairs closer than this count as "near". Chosen because measured error stays within a
     /// couple of dB below it and diverges sharply above - see the field data in the roadmap.</summary>
@@ -332,6 +333,13 @@ public class WizardDiagnostics(
         var snapshot = state.TakeOptimizationSnapshot();
         if (snapshot.Measures.Count == 0) return;
 
+        // How long a pair has been misbehaving decides what to do about it, and nothing said so far.
+        // A pair that has read 20 dB wrong for the three weeks it has been watched is a placement or
+        // hardware matter - no calibration will absorb it. The same 20 dB since yesterday is an
+        // event: something was moved, plugged in, or closed. Same number, opposite response.
+        var history = pairErrors.GetPairErrors().ToDictionary(
+            e => $"{e.NodeA}\u0000{e.NodeB}", e => e, StringComparer.OrdinalIgnoreCase);
+
         var opt = config?.Optimization;
         var fallbackAbsorption = opt == null ? 3.0 : opt.AbsorptionMin + (opt.AbsorptionMax - opt.AbsorptionMin) / 2.0;
 
@@ -396,7 +404,8 @@ public class WizardDiagnostics(
                     DeltaDb = Math.Round(signal.DeltaDb, 1),
                     Absorption = Math.Round(absorption, 2),
                     Observations = signal.Observations,
-                    Reported = signal.Reported
+                    Reported = signal.Reported,
+                    ObservedHours = Lookup(history, m.Rx.Id, m.Tx.Id) is { } h ? Math.Round(h.Observed.TotalHours, 1) : null
                 });
             }
         }
@@ -427,7 +436,7 @@ public class WizardDiagnostics(
                           $"absorption {contradiction.Absorption:0.00}). " +
                           "No path-loss setting explains a gap this " +
                           "large - treat it as a contradiction (check the mapped position, the antenna, or exclude " +
-                          "the pair) rather than something calibration can absorb."
+                          "the pair) rather than something calibration can absorb." + Age(contradiction.ObservedHours)
             });
         }
 
@@ -444,6 +453,24 @@ public class WizardDiagnostics(
                           "far too short a distance and pull the position towards themselves."
             });
     }
+
+    private static PairErrorTracker.PairErrorSnapshot? Lookup(
+        Dictionary<string, PairErrorTracker.PairErrorSnapshot> history, string a, string b) =>
+        history.TryGetValue($"{a}\u0000{b}", out var x) ? x
+        : history.TryGetValue($"{b}\u0000{a}", out var y) ? y : null;
+
+    /// <summary>
+    /// Turns "how long has this been observed" into the sentence that changes what the reader does.
+    /// Kept vague on purpose below two days: a pair seen briefly may simply not have been seen enough.
+    /// </summary>
+    private static string Age(double? observedHours) => observedHours switch
+    {
+        null => "",
+        < 48 => $" Only watched for {observedHours:0} hours so far, so give it a day before acting.",
+        < 24 * 14 => $" It has read this way across {observedHours / 24:0} days of observation.",
+        _ => $" It has read this way for the whole {observedHours / 24:0} days it has been watched - " +
+             "that is a placement or hardware matter, not something a fit can absorb."
+    };
 
     private static FitQuality Summarize(List<Sample> samples)
     {

@@ -93,6 +93,30 @@ namespace ESPresense.Models
         public string Kernel { get; set; } = "gaussian";
 
         /// <summary>
+        /// Reject readings that cannot all be true at once before estimating a position - see
+        /// <see cref="ESPresense.Locators.ConsistencyFilter"/>. Measured over 32 walk points: median
+        /// error 1.96 m to 1.86 m and room hit rate 57 % to 62 %, with every point still scored.
+        ///
+        /// It was measured once BEFORE the cross-floor contrast existed and rejected then, because it
+        /// and a corrected device reference level were fixing the same thing and together came out
+        /// worse. Worth knowing when reading the git history: the same change can be right and wrong
+        /// depending on what else is in place, which is the whole reason the benchmark exists.
+        /// </summary>
+        [YamlMember(Alias = "consistency_filter")]
+        public bool ConsistencyFilter { get; set; } = true;
+
+        /// <summary>
+        /// Slack on the triangle inequality, in metres plus a share of the node separation. Swept
+        /// from 0.25 m to 4 m: 1.5 m is the optimum on both median error and room hit rate. Tighter
+        /// starts discarding honest readings (room falls to 52 % at 0.5 m), looser stops acting at all.
+        /// </summary>
+        [YamlMember(Alias = "consistency_tolerance_m")]
+        public double ConsistencyToleranceM { get; set; } = ESPresense.Locators.ConsistencyFilter.DefaultToleranceM;
+
+        [YamlMember(Alias = "consistency_tolerance_fraction")]
+        public double ConsistencyToleranceFraction { get; set; } = ESPresense.Locators.ConsistencyFilter.DefaultToleranceFraction;
+
+        /// <summary>
         /// How many confidence points the cross-floor contrast may shift the floor decision by.
         /// See <see cref="ESPresense.Locators.FloorContrast"/>. Default 20 rather than 0 because the
         /// measurement is unusually clear - floor detection 87.9 % to 96.5 % over 32 walk points and

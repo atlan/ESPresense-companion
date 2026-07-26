@@ -31,8 +31,8 @@ public static class ConsistencyFilter
     /// Generous on purpose: the aim is to catch readings that are impossible, not merely inaccurate,
     /// and the measured distances in a real installation are routinely 20-50 % short.
     /// </summary>
-    private const double ToleranceM = 1.5;
-    private const double ToleranceFraction = 0.5;
+    public const double DefaultToleranceM = 1.5;
+    public const double DefaultToleranceFraction = 0.5;
 
     /// <summary>Below this many readings there is nothing to cross-check against - keep them all.</summary>
     private const int MinForFiltering = 4;
@@ -44,7 +44,9 @@ public static class ConsistencyFilter
     public static IReadOnlyList<T> LargestConsistent<T>(
         IReadOnlyList<T> readings,
         Func<T, Point3D> location,
-        Func<T, double> distance)
+        Func<T, double> distance,
+        double toleranceM = DefaultToleranceM,
+        double toleranceFraction = DefaultToleranceFraction)
     {
         var n = readings.Count;
         if (n < MinForFiltering) return readings;
@@ -59,7 +61,7 @@ public static class ConsistencyFilter
                 var separation = location(readings[i]).DistanceTo(location(readings[j]));
                 var di = distance(readings[i]);
                 var dj = distance(readings[j]);
-                var slack = ToleranceM + ToleranceFraction * separation;
+                var slack = toleranceM + toleranceFraction * separation;
 
                 // Both spheres must be able to intersect: not too far apart, not one swallowing the other.
                 var ok = di + dj + slack >= separation && Math.Abs(di - dj) - slack <= separation;

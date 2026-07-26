@@ -61,12 +61,15 @@ public class WizardController(
         // Overrides only bite on points that carry per-tick levels; without them the recorded
         // distance is all there is and the run measures the state as recorded.
         var overrides = req?.RefRssi != null || req?.Absorption != null || req?.ConsistencyFilter == true
-                        || req?.FloorContrastWeight != null
+                        || req?.FloorContrastWeight != null || req?.MaxTrustedDistanceM != null
             ? new BenchmarkOverrides
             {
                 RefRssi = req.RefRssi,
                 Absorption = req.Absorption,
                 ConsistencyFilter = req.ConsistencyFilter,
+                ConsistencyToleranceM = req.ConsistencyToleranceM,
+                ConsistencyToleranceFraction = req.ConsistencyToleranceFraction,
+                MaxTrustedDistanceM = req.MaxTrustedDistanceM,
                 FloorContrastWeight = req.FloorContrastWeight
             }
             : null;
@@ -575,4 +578,9 @@ public class BenchmarkRunRequest
     public bool? ConsistencyFilter { get; set; }
     /// <summary>Weight of the cross-floor contrast term in the floor decision. 0 or null disables it.</summary>
     public double? FloorContrastWeight { get; set; }
+    /// <summary>Triangle-inequality slack, in metres and as a share of the node separation.</summary>
+    public double? ConsistencyToleranceM { get; set; }
+    public double? ConsistencyToleranceFraction { get; set; }
+    /// <summary>Beyond this a reading counts as presence only, not as a distance.</summary>
+    public double? MaxTrustedDistanceM { get; set; }
 }

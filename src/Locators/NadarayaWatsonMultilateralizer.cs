@@ -44,10 +44,23 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
 
     public bool Locate(Scenario scenario)
     {
+        var nwCfg = state.Config?.Locators?.NadarayaWatson;
         var heard = device.Nodes.Values
             .Where(n => n.Current && (n.Node?.Floors?.Contains(floor) ?? false))
             .OrderBy(n => n.Distance)
             .ToArray();
+
+        // Readings that cannot all be true at once are thrown out before anything is estimated. This
+        // estimator is a weighted average of NODE POSITIONS, so a node that wrongly believes itself
+        // close drags the answer onto itself - and neither rank nor variance weighting catches that,
+        // because such a reading looks closest and stays steady. Geometry catches it.
+        if ((nwCfg?.ConsistencyFilter ?? false) && heard.Length > 0)
+        {
+            var kept = ConsistencyFilter.LargestConsistent(heard,
+                n => n.Node!.Location, n => n.Distance,
+                nwCfg!.ConsistencyToleranceM, nwCfg.ConsistencyToleranceFraction);
+            if (kept.Count >= 3) heard = kept.ToArray();
+        }
 
         if (heard.Length <= 1)
         {
@@ -82,11 +95,10 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             }
             else
             {
-                var nwConfig = state.Config?.Locators?.NadarayaWatson;
                 (est, weightedError) = Estimate(
                     heard.Select(n => (n.Node!.Location, n.Distance)).ToList(),
-                    nwConfig?.Bandwidth ?? 0.5,
-                    nwConfig?.Kernel);
+                    nwCfg?.Bandwidth ?? 0.5,
+                    nwCfg?.Kernel);
                 scenario.Error = weightedError;
             }
 
@@ -119,7 +131,7 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
                 est, audible,
                 n => n.Node!.Location, n => n.Distance,
                 n => n.Node!.Floors?.Contains(floor) ?? false,
-                state.Config?.Locators?.NadarayaWatson?.FloorContrastWeight ?? 0));
+                nwCfg?.FloorContrastWeight ?? 0));
 
             scenario.Confidence = Math.Clamp(confidence, 0, 100);
         }
