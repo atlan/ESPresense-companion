@@ -17,6 +17,7 @@ public class WizardController(
     DeviceSetupService deviceSetup,
     CalibrationBenchmark benchmark,
     WalkPointPlanner walkPointPlanner,
+    CalibrationSweepService calibrationSweep,
     PairErrorTracker pairErrorTracker,
     OptimizationRunner optimizationRunner,
     ConfigLoader configLoader,
@@ -101,6 +102,10 @@ public class WizardController(
     [HttpPost("api/wizard/device-setup/apply")]
     public async Task<DeviceSetupApplyResult> ApplyDeviceSetup([FromBody] DeviceSetupApplyRequest req) =>
         await deviceSetup.ApplyAsync(req.DeviceId, req.RefRssi, req.Name, req.Alias);
+
+    /// <summary>Fits the calibration several ways and scores each against the recorded walk points.</summary>
+    [HttpPost("api/wizard/calibration-sweep")]
+    public SweepResult RunCalibrationSweep([FromBody] SweepRequest? req) => calibrationSweep.Run(req);
 
     [HttpGet("api/wizard/validation")]
     public WizardValidationResult GetValidation()

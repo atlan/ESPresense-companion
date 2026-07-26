@@ -129,6 +129,34 @@
 		clampedParameters: { nodeName?: string; nodeId: string; parameter: string; value: number; bound: string; limit: number }[];
 	}
 
+	interface SweepRun {
+		label: string;
+		objective?: string;
+		absorptionPenalty?: number;
+		absorptionMin?: number;
+		absorptionMax?: number;
+		error?: string;
+		medianErrorM?: number;
+		respondingMedianErrorM?: number;
+		p90ErrorM?: number;
+		roomHitRate?: number;
+		floorHitRate?: number;
+		targetAbsorption?: number;
+		absorptionMinFitted?: number;
+		absorptionMedianFitted?: number;
+		absorptionMaxFitted?: number;
+	}
+	interface SweepResult {
+		ranAt: string;
+		error?: string;
+		verdict?: string;
+		respondingPoints: number;
+		totalPoints: number;
+		respondingPointIds: string[];
+		baseline?: SweepRun;
+		runs: SweepRun[];
+	}
+
 	interface BenchmarkRun {
 		ranAt: string;
 		label?: string;
@@ -624,6 +652,25 @@
 		}
 	}
 
+	let sweep: SweepResult | null = null;
+	let sweepBusy = false;
+
+	async function runCalibrationSweep() {
+		sweepBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/calibration-sweep'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({})
+			});
+			if (res.ok) sweep = await res.json();
+		} catch (error) {
+			console.error('Error running calibration sweep:', error);
+		} finally {
+			sweepBusy = false;
+		}
+	}
+
 	async function runBenchmark() {
 		benchBusy = true;
 		try {
@@ -888,6 +935,97 @@
 					{/if}
 				{:else}
 					<p class="text-sm text-surface-600-400">Not run yet. Needs at least one walk test point.</p>
+				{/if}
+			</div>
+
+			<!-- 2e. Calibration sweep -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Calibration Sweep</h2>
+					<button class="btn preset-filled-primary-500" onclick={runCalibrationSweep} disabled={sweepBusy}>
+						{sweepBusy ? 'Fitting...' : 'Run'}
+					</button>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Fits the calibration several different ways on the current measurements and scores each one
+					against your recorded walk points. The Locator Tune further down sweeps how positions are
+					computed; this sweeps what the nodes believe about the radio. Nothing is written - it only
+					reports which settings would have done better.
+				</p>
+
+				{#if sweep?.error}
+					<p class="text-sm text-warning-600-400">{sweep.error}</p>
+				{:else if sweep}
+					<div class="mb-3 p-3 rounded {sweep.respondingPoints === 0 || sweep.respondingPoints / Math.max(sweep.totalPoints, 1) < 0.5 ? 'preset-tonal-warning' : 'preset-tonal'}">
+						<p class="text-sm font-semibold">
+							{sweep.respondingPoints} of {sweep.totalPoints} walk points can respond to a calibration change
+						</p>
+						<p class="text-xs text-surface-600-400 mt-1">
+							Only points recorded with per-tick signal levels can react at all - the rest replay a
+							distance their node derived at the time, which no setting here can alter. If that share is
+							small, a flat column below means "mostly ballast", not "makes no difference". Record fresh
+							walk points to raise it.
+						</p>
+					</div>
+
+					{#if sweep.verdict}<p class="text-sm mb-3">{sweep.verdict}</p>{/if}
+
+					<div class="overflow-x-auto">
+						<table class="table table-compact">
+							<thead>
+								<tr>
+									<th>Candidate</th>
+									<th>Responding</th>
+									<th>All points</th>
+									<th>90th pct</th>
+									<th>Room</th>
+									<th>Floor</th>
+									<th>Absorption fitted</th>
+									<th>Pulled to</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#if sweep.baseline}
+									<tr class="opacity-70">
+										<td>{sweep.baseline.label}</td>
+										<td>-</td>
+										<td>{sweep.baseline.medianErrorM?.toFixed(2)} m</td>
+										<td>{sweep.baseline.p90ErrorM?.toFixed(2)} m</td>
+										<td>{Math.round((sweep.baseline.roomHitRate ?? 0) * 100)}%</td>
+										<td>{Math.round((sweep.baseline.floorHitRate ?? 0) * 100)}%</td>
+										<td colspan="2">no fit performed</td>
+									</tr>
+								{/if}
+								{#each sweep.runs as r, i (r.label)}
+									<tr class={i === 0 && !r.error ? 'font-semibold' : ''}>
+										<td>{r.label}</td>
+										<td>{r.error ? '-' : `${r.respondingMedianErrorM?.toFixed(2)} m`}</td>
+										<td>{r.error ? '-' : `${r.medianErrorM?.toFixed(2)} m`}</td>
+										<td>{r.error ? '-' : `${r.p90ErrorM?.toFixed(2)} m`}</td>
+										<td>{r.error ? '-' : `${Math.round((r.roomHitRate ?? 0) * 100)}%`}</td>
+										<td>{r.error ? '-' : `${Math.round((r.floorHitRate ?? 0) * 100)}%`}</td>
+										<td>
+											{#if r.error}
+												<span class="text-warning-600-400">{r.error}</span>
+											{:else}
+												{r.absorptionMinFitted?.toFixed(2)} – {r.absorptionMaxFitted?.toFixed(2)}
+												<span class="text-surface-600-400">(median {r.absorptionMedianFitted?.toFixed(2)})</span>
+											{/if}
+										</td>
+										<td>{r.targetAbsorption?.toFixed(2) ?? '-'}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-2">
+						"Pulled to" is where the regularization shrinks absorption. It used to be the midpoint of the
+						configured limits unconditionally, which quietly turned the limits into a target - widening
+						them moved the goal instead of freeing the fit. It now follows the fleet's own median unless
+						<code>weights.absorption_target</code> says otherwise.
+					</p>
+				{:else}
+					<p class="text-sm text-surface-600-400">Not run yet. Needs recorded walk points and nodes that currently hear each other.</p>
 				{/if}
 			</div>
 

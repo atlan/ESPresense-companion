@@ -147,12 +147,20 @@ namespace ESPresense.Models
         /// </returns>
         public ConfigOptimization Clone()
         {
+            // Optimizer, Weights and ExcludedPairs were missing here: a clone silently fell back to
+            // the "legacy" optimizer with default weights and no exclusions, which is a different
+            // fit than the one the user configured. Harmless while nothing compared two configs -
+            // not harmless now that the calibration sweep does exactly that.
             return new ConfigOptimization
             {
                 Enabled = Enabled,
+                Optimizer = Optimizer,
+                Objective = Objective,
                 IntervalSecs = IntervalSecs,
                 KeepSnapshotMins = KeepSnapshotMins,
-                Limits = new Dictionary<string, double>(Limits)
+                Limits = new Dictionary<string, double>(Limits),
+                Weights = new Dictionary<string, double>(Weights),
+                ExcludedPairs = new List<string>(ExcludedPairs)
             };
         }
     }

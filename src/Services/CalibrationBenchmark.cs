@@ -43,7 +43,12 @@ public class CalibrationBenchmark(
 
     public IReadOnlyList<BenchmarkResult> History => _history;
 
-    public BenchmarkResult Run(string? label = null, BenchmarkOverrides? overrides = null)
+    /// <param name="remember">
+    /// False for exploratory runs. The sweep scores half a dozen candidates in one go; keeping them
+    /// would push the real measurements out of a 50-entry history and make "compared with the
+    /// previous run" mean "compared with a candidate somebody was trying out".
+    /// </param>
+    public BenchmarkResult Run(string? label = null, BenchmarkOverrides? overrides = null, bool remember = true)
     {
         var result = new BenchmarkResult { RanAt = DateTime.UtcNow, Label = label, Overrides = overrides };
 
@@ -52,7 +57,7 @@ public class CalibrationBenchmark(
         {
             result.Error = "No walk test points with raw tick data. Record a walk test first - the benchmark " +
                            "needs known positions to measure against, it cannot score the live stream.";
-            return Remember(result);
+            return remember ? Remember(result) : result;
         }
 
         var nw = configLoader.Config?.Locators?.NadarayaWatson;
@@ -174,7 +179,7 @@ public class CalibrationBenchmark(
         {
             result.Error = $"None of the {points.Count} walk points produced an estimate - each tick needs at least " +
                            $"{MinNodesPerTick} nodes on the point's own floor. Check that the floor assignments are right.";
-            return Remember(result);
+            return remember ? Remember(result) : result;
         }
 
         result.PointsUsed = result.Points.Count;
@@ -257,7 +262,7 @@ public class CalibrationBenchmark(
         Log.Information("Benchmark: median {Median:0.00} m, p90 {P90:0.00} m, room hit {Hit:P0}, {Ticks} ticks",
             result.MedianErrorM, result.P90ErrorM, result.RoomHitRate ?? 0, result.Ticks);
 
-        return Remember(result);
+        return remember ? Remember(result) : result;
     }
 
     private BenchmarkResult Remember(BenchmarkResult result)
@@ -291,15 +296,34 @@ public class CalibrationBenchmark(
         var recordedAbsorption = (recordedRef - rssi) / (10.0 * logD);
         if (recordedAbsorption is <= 0.1 or > 10) return e.D;   // implausible, do not build on it
 
+        // Per-node values win over the global one. Without this the benchmark can only score "what
+        // if every node had the same absorption", which is not a question the optimizer ever
+        // answers - it fits each node separately, so scoring its output needs a whole set.
+        var absorption = o.AbsorptionFor(e.N) ?? recordedAbsorption;
         var refRssi = o.RefRssi ?? recordedRef;
-        var absorption = o.Absorption ?? recordedAbsorption;
+
+        // Receive adjustment shifts the level, not the distance. Applied the same way the live path
+        // does it (see Measure.GetAdjustedRssi): the recording carries the adjustment in force at
+        // the time, so only the difference to the candidate value is applied.
+        if (o.RxAdjFor(e.N) is { } newRxAdj && e.A is { } recordedRxAdj)
+            rssi = rssi + recordedRxAdj - newRxAdj;
+
         recomputed++;
         return Math.Pow(10, (refRssi - rssi) / (10.0 * absorption));
     }
 
     /// <summary>Identifies the question a run was asking, so only like is compared with like.</summary>
-    private static string Signature(BenchmarkOverrides? o) =>
-        o == null ? "as-recorded" : $"{o.RefRssi}|{o.Absorption}|{o.ConsistencyFilter}";
+    private static string Signature(BenchmarkOverrides? o)
+    {
+        if (o == null) return "as-recorded";
+        // Per-node sets have to enter the signature too, otherwise two different calibration sets
+        // look like the same question and get compared against each other as if one were a change
+        // over time. Order-independent so the same set always hashes the same way.
+        static string Set(Dictionary<string, double>? d) => d == null || d.Count == 0
+            ? ""
+            : string.Join(",", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}={kv.Value:0.###}"));
+        return $"{o.RefRssi}|{o.Absorption}|{o.ConsistencyFilter}|{Set(o.AbsorptionByNode)}|{Set(o.RxAdjByNode)}";
+    }
 
     private static void Bump(Dictionary<string, int> counter, string key)
         => counter[key] = counter.TryGetValue(key, out var n) ? n + 1 : 1;
@@ -477,6 +501,21 @@ public class BenchmarkOverrides
 {
     /// <summary>Device reference level to replay with, in dBm.</summary>
     public double? RefRssi { get; set; }
+    /// <summary>
+    /// Per-node absorption, keyed by node id - what an optimizer run actually produces. Takes
+    /// precedence over the global <see cref="Absorption"/> for the nodes it names.
+    /// </summary>
+    public Dictionary<string, double>? AbsorptionByNode { get; set; }
+
+    /// <summary>Per-node receive adjustment, keyed by node id.</summary>
+    public Dictionary<string, double>? RxAdjByNode { get; set; }
+
+    public double? AbsorptionFor(string nodeId) =>
+        AbsorptionByNode != null && AbsorptionByNode.TryGetValue(nodeId, out var a) ? a : Absorption;
+
+    public double? RxAdjFor(string nodeId) =>
+        RxAdjByNode != null && RxAdjByNode.TryGetValue(nodeId, out var a) ? a : null;
+
     /// <summary>Path-loss exponent to replay with, replacing whatever each node used.</summary>
     public double? Absorption { get; set; }
     /// <summary>Drop readings that contradict the others through the triangle inequality.</summary>

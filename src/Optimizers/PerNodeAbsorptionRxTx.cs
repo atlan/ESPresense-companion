@@ -29,6 +29,40 @@ public class PerNodeAbsorptionRxTx : IOptimizer
     public double? AbsorptionMinOverride { get; init; }
     public double? AbsorptionMaxOverride { get; init; }
 
+    /// <summary>Residual to minimize: "distance" (original) or "db". Overrides the config for one run.</summary>
+    public string? ObjectiveOverride { get; init; }
+
+    /// <summary>Where the regularization pulls to. Overrides both config and the fleet-median seed.</summary>
+    public double? AbsorptionTargetOverride { get; init; }
+
+    /// <summary>Huber transition in dB, for the "db" objective.</summary>
+    public double? HuberDeltaOverride { get; init; }
+
+    /// <summary>What the last <see cref="Optimize"/> call actually used - so a sweep can report it
+    /// rather than the caller having to re-derive it.</summary>
+    public double LastTargetAbsorption { get; private set; }
+
+    /// <summary>
+    /// Median absorption across the nodes as they currently stand. Used as the regularization target
+    /// when nothing else says otherwise: shrinking nodes towards where the fleet already sits is a
+    /// statement the data supports, while shrinking them towards the middle of a configured interval
+    /// is a statement about the configuration. Needs a few nodes to mean anything.
+    /// </summary>
+    private static double? FleetMedianAbsorption(Dictionary<string, NodeSettings> existing, double min, double max)
+    {
+        var values = existing.Values
+            .Select(s => s.Calibration?.Absorption)
+            .Where(a => a is > 0)
+            .Select(a => Math.Clamp(a!.Value, min, max))
+            .OrderBy(a => a)
+            .ToList();
+
+        if (values.Count < 3) return null;
+        return values.Count % 2 == 1
+            ? values[values.Count / 2]
+            : (values[values.Count / 2 - 1] + values[values.Count / 2]) / 2.0;
+    }
+
     public OptimizationResults Optimize(OptimizationSnapshot os, Dictionary<string, NodeSettings> existingSettings)
     {
         var or = new OptimizationResults();
@@ -82,8 +116,21 @@ public class PerNodeAbsorptionRxTx : IOptimizer
 
         var absorptionMin = AbsorptionMinOverride ?? optimization.AbsorptionMin;
         var absorptionMax = AbsorptionMaxOverride ?? optimization.AbsorptionMax;
-        var targetAbsorption = absorptionMin + (absorptionMax - absorptionMin) / 2.0;
+        // ★ The regularization target used to be the midpoint of the limits, unconditionally. That
+        // conflates two different statements: the limits say what absorption is POSSIBLE, the target
+        // says what is LIKELY. Measured 2026-07-26 on a real installation - limits 2.5..4.8 put the
+        // target at 3.65 while all 18 nodes fitted to 4.06-4.59, so the penalty pulled every single
+        // node downwards, against the data, and widening the limits moved the target rather than
+        // freeing the fit. Order of preference now: explicit override, explicit config, the fleet's
+        // own median from the previous fit, and only then the midpoint.
+        var targetAbsorption = AbsorptionTargetOverride
+                               ?? optimization.AbsorptionTarget
+                               ?? FleetMedianAbsorption(existingSettings, absorptionMin, absorptionMax)
+                               ?? absorptionMin + (absorptionMax - absorptionMin) / 2.0;
+        LastTargetAbsorption = targetAbsorption;
         double penaltyWeight = AbsorptionPenaltyOverride ?? optimization.AbsorptionPenaltyWeight;
+        var useDb = string.Equals(ObjectiveOverride ?? optimization.Objective, "db", StringComparison.OrdinalIgnoreCase);
+        var huberDelta = HuberDeltaOverride ?? optimization.HuberDeltaDb;
 
         // Pre-calculate weights for each node based on RssiVar
         var nodeWeights = new Dictionary<Measure, double>();
@@ -111,111 +158,88 @@ public class PerNodeAbsorptionRxTx : IOptimizer
             }
         }
 
-        // Define asymmetric error function that penalizes impossible situations
-        // (when estimated distance is less than actual map distance)
-        Func<double, double, double> calculateDistanceError = (calculated, map) =>
+        // The original residual: squared metres, with a one-sided 4th power whenever the model
+        // predicts a shorter distance than the map. Two problems, both measurable.
+        //
+        // The asymmetry rests on "closer than the map distance is physically impossible" - but the
+        // model producing a short distance is not the device being in an impossible place, it is the
+        // level reading high, which constructive multipath does routinely. And a 4th power means a
+        // 3 m discrepancy weighs 81x a 1 m one, so a single reflective pair can steer the entire fit.
+        //
+        // Metres are the second problem: distance is exponential in level, so the same few dB of
+        // noise is centimetres at 1 m and metres at 10 m. A metre-based sum is therefore dominated by
+        // the pairs the model represents worst, and barely hears the ones it represents well.
+        Func<double, double, double> distanceResidual = (calculated, map) =>
+            calculated < map ? Math.Pow(map - calculated, 4) : Math.Pow(map - calculated, 2);
+
+        // Huber: quadratic while the disagreement is within ordinary noise, linear beyond it. A pair
+        // that contradicts the map by 30 dB then contributes proportionally rather than quadratically,
+        // so it pulls without dictating - which is what "robust" has to mean here, given that the
+        // diagnostics report 20 such contradictions on this installation alone.
+        Func<double, double> huber = residual =>
         {
-            if (calculated < map)
-            {
-                // This is physically impossible (can't be closer than map distance)
-                // Apply higher penalty with asymmetric factor
-                return Math.Pow(map - calculated, 4);
-            }
-            else
-            {
-                // Regular error calculation for the normal case (estimated >= actual)
-                // This means there could be an obstacle causing signal attenuation
-                return Math.Pow(map - calculated, 2);
-            }
+            var a = Math.Abs(residual);
+            return a <= huberDelta ? 0.5 * residual * residual : huberDelta * (a - 0.5 * huberDelta);
         };
 
-        var objectiveFunction = ObjectiveFunction.Gradient(
-            x =>
+        // Both halves of ObjectiveFunction.Gradient used to carry their own copy of the error term,
+        // penalty included. Two copies of one formula is one too many when the formula is the thing
+        // being changed - a single Evaluate keeps the numeric gradient honest by construction.
+        double Evaluate(Vector<double> x)
+        {
+            double error = 0;
+            double weightSum = 0;
+
+            foreach (var node in allRxNodes)
             {
-                double error = 0;
-                double weightSum = 0;
+                int rxBaseIndex = rxIndexMap[node.Rx.Id];
+                int txBaseIndex = txIndexMap[node.Tx.Id];
 
-                foreach (var node in allRxNodes)
+                double rxAdjRssi = x[rxBaseIndex];
+                double absorption = x[rxBaseIndex + 1];
+                double txRefRssi = x[txBaseIndex];
+
+                double mapDistance = node.Rx.Location.DistanceTo(node.Tx.Location);
+                double weight = nodeWeights[node];
+                weightSum += weight;
+
+                if (useDb)
                 {
-                    int rxBaseIndex = rxIndexMap[node.Rx.Id];
-                    int txBaseIndex = txIndexMap[node.Tx.Id];
-
-                    double rxAdjRssi = x[rxBaseIndex];
-                    double absorption = x[rxBaseIndex + 1];
-                    double txRefRssi = x[txBaseIndex];
-
+                    // Level the model needs at the mapped distance, against the level actually
+                    // measured. Same physics as the distance form, rearranged so the residual lives
+                    // in the units the measurement was taken in.
+                    double requiredRssi = txRefRssi - 10.0 * absorption * Math.Log10(Math.Max(mapDistance, 0.1));
+                    error += weight * huber(node.GetAdjustedRssi(rxAdjRssi) - requiredRssi);
+                }
+                else
+                {
                     double calculatedDistance = Math.Pow(10, (txRefRssi - node.GetAdjustedRssi(rxAdjRssi)) / (10.0 * absorption));
-                    double mapDistance = node.Rx.Location.DistanceTo(node.Tx.Location);
-
-                    // Get the weight for this node
-                    double weight = nodeWeights[node];
-                    weightSum += weight;
-
-                    // Apply weight to the asymmetric error
-                    error += weight * calculateDistanceError(calculatedDistance, mapDistance);
-
-                    // Regularization: Penalize absorption deviation from the middle value
-                    error += weight * penaltyWeight * Math.Pow(absorption - targetAbsorption, 2);
+                    error += weight * distanceResidual(calculatedDistance, mapDistance);
                 }
 
-                return weightSum > 0 ? error / weightSum : error;
-            },
+                error += weight * penaltyWeight * Math.Pow(absorption - targetAbsorption, 2);
+            }
+
+            return weightSum > 0 ? error / weightSum : error;
+        }
+
+        var objectiveFunction = ObjectiveFunction.Gradient(
+            Evaluate,
             x =>
             {
                 var grad = Vector<double>.Build.Dense(totalParams);
-                double h = 1e-6;
+                const double h = 1e-6;
                 for (int i = 0; i < totalParams; i++)
                 {
                     var xPlus = x.Clone();
                     var xMinus = x.Clone();
                     xPlus[i] = x[i] + h;
                     xMinus[i] = x[i] - h;
-
-                    double fPlus = 0;
-                    double fMinus = 0;
-                    double weightSumPlus = 0;
-                    double weightSumMinus = 0;
-
-                    foreach (var node in allRxNodes)
-                    {
-                        int rxBaseIndex = rxIndexMap[node.Rx.Id];
-                        int txBaseIndex = txIndexMap[node.Tx.Id];
-                        double weight = nodeWeights[node];
-
-                        {
-                            double rxAdjRssi = xPlus[rxBaseIndex];
-                            double absorption = xPlus[rxBaseIndex + 1];
-                            double txRefRssi = xPlus[txBaseIndex];
-                            double calculatedDistance = Math.Pow(10, (txRefRssi - node.GetAdjustedRssi(rxAdjRssi)) / (10.0 * absorption));
-
-                            double mapDistance = node.Rx.Location.DistanceTo(node.Tx.Location);
-
-                            fPlus += weight * (calculateDistanceError(calculatedDistance, mapDistance)
-                                     + penaltyWeight * Math.Pow(absorption - targetAbsorption, 2));
-                            weightSumPlus += weight;
-                        }
-                        {
-                            double rxAdjRssi = xMinus[rxBaseIndex];
-                            double absorption = xMinus[rxBaseIndex + 1];
-                            double txRefRssi = xMinus[txBaseIndex];
-                            double calculatedDistance = Math.Pow(10, (txRefRssi - node.GetAdjustedRssi(rxAdjRssi)) / (10.0 * absorption));
-
-                            double mapDistance = node.Rx.Location.DistanceTo(node.Tx.Location);
-
-                            fMinus += weight * (calculateDistanceError(calculatedDistance, mapDistance)
-                                      + penaltyWeight * Math.Pow(absorption - targetAbsorption, 2));
-                            weightSumMinus += weight;
-                        }
-                    }
-
-                    fPlus = weightSumPlus > 0 ? fPlus / weightSumPlus : fPlus;
-                    fMinus = weightSumMinus > 0 ? fMinus / weightSumMinus : fMinus;
-                    grad[i] = (fPlus - fMinus) / (2 * h);
+                    grad[i] = (Evaluate(xPlus) - Evaluate(xMinus)) / (2 * h);
                 }
                 return grad;
             }
         );
-
 
         // Build lower and upper bound vectors
         var lowerBound = Vector<double>.Build.Dense(totalParams);

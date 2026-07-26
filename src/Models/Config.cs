@@ -190,9 +190,34 @@ namespace ESPresense.Models
         [YamlIgnore] public double RmseWeight => Weights.TryGetValue("rmse", out var val) ? val : 0.5;
 
         // Regularization strength pulling PerNodeAbsorptionRxTx's per-node absorption fit toward
-        // the midpoint of [AbsorptionMin, AbsorptionMax]. Default 10 matches the previous hardcoded
-        // value (unchanged behavior unless a config explicitly sets weights.absorption_penalty).
+        // AbsorptionTarget. Default 10 matches the previous hardcoded value (unchanged behavior
+        // unless a config explicitly sets weights.absorption_penalty).
         [YamlIgnore] public double AbsorptionPenaltyWeight => Weights.TryGetValue("absorption_penalty", out var val) ? val : 10;
+
+        /// <summary>
+        /// Where the regularization pulls absorption to. Null means "the middle of the limits",
+        /// which is what it has always done implicitly - and which is a trap, because the limits are
+        /// meant to say what is POSSIBLE while this says what is LIKELY. Measured on a real
+        /// installation 2026-07-26: limits 2.5..4.8 put the target at 3.65 while all 18 nodes fitted
+        /// to 4.06-4.59, so the regularization pulled every single node downwards, against the data.
+        /// Setting it explicitly, or letting <see cref="PerNodeAbsorptionRxTx"/> seed it from the
+        /// fleet's own median, decouples the two meanings.
+        /// </summary>
+        [YamlIgnore] public double? AbsorptionTarget => Weights.TryGetValue("absorption_target", out var val) ? val : null;
+
+        /// <summary>
+        /// Which residual the per-node fit minimizes. "distance" is the original: squared metres,
+        /// with a one-sided 4th power when the model predicts closer than the map. "db" compares
+        /// signal levels instead. See <see cref="PerNodeAbsorptionRxTx"/> for why that matters.
+        /// </summary>
+        [YamlMember(Alias = "objective")] public string Objective { get; set; } = "distance";
+
+        /// <summary>
+        /// Huber transition in dB for the "db" objective. Below it residuals are squared, above it
+        /// they grow linearly, so one contradictory pair stops outvoting a roomful of good ones.
+        /// 6 dB is roughly the spread of ordinary RSSI noise on this hardware.
+        /// </summary>
+        [YamlIgnore] public double HuberDeltaDb => Weights.TryGetValue("huber_delta_db", out var val) ? val : 6.0;
     }
 
     public partial class ConfigHistory
