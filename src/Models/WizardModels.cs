@@ -101,6 +101,10 @@ public class WizardDiagnosticsResult
 
     /// <summary>Nodes relocated recently - their history against the old geometry is gone.</summary>
     public List<ESPresense.Services.NodeMove> NodeMoves { get; set; } = new();
+
+    /// <summary>Per-room distance to the nearest node - the strongest predictor of accuracy found
+    /// on this installation, and the one thing a user can act on directly.</summary>
+    public List<RoomCoverage> RoomCoverage { get; set; } = new();
 }
 
 public class FitQuality
@@ -150,4 +154,16 @@ public class SplitIdentityIdInfo
 {
     public string Id { get; set; } = "";
     public string[] Nodes { get; set; } = Array.Empty<string>();
+}
+
+public class RoomCoverage
+{
+    public string FloorId { get; set; } = "";
+    public string? RoomId { get; set; }
+    public string? RoomName { get; set; }
+    public int SampledPoints { get; set; }
+    public double MedianNearestNodeM { get; set; }
+    public double WorstNearestNodeM { get; set; }
+    /// <summary>Share of the room within the distance that measured good accuracy here.</summary>
+    public double WellCoveredFraction { get; set; }
 }
