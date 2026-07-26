@@ -4,6 +4,14 @@
 
 	export let settings: DeviceSetting; // Parent handles loading
 	export let anchorEnabled = false;
+	/// Navigating away does not dismiss the modal on its own - the wrapper has to be told, or the
+	/// calibration page opens underneath a dialog that is still sitting on top of it.
+	export let onNavigateAway: (() => void) | undefined = undefined;
+
+	function measure() {
+		onNavigateAway?.();
+		gotoCalibration(settings.originalId ?? settings.id);
+	}
 </script>
 
 {#if settings}
@@ -28,9 +36,7 @@
 			The level this device is heard at from one metre away. It varies by tens of dB between
 			transmitters and cannot be derived from the node calibration, so a typed guess costs accuracy
 			everywhere this device is tracked.
-			<button type="button" class="anchor" onclick={() => gotoCalibration(settings.originalId ?? settings.id)}>
-				Measure it
-			</button>
+			<button type="button" class="anchor" onclick={measure}>Measure it</button>
 			instead - it takes about a minute.
 		</p>
 		<label class="label inline-flex items-center space-x-2">

@@ -105,7 +105,7 @@
 	</header>
 
 	<!-- Use the DeviceSettings component, passing the local state -->
-	<DeviceSettings settings={localSettings} bind:anchorEnabled />
+	<DeviceSettings settings={localSettings} bind:anchorEnabled onNavigateAway={handleCancel} />
 
 	<!-- Modal Actions -->
 	<footer class="modal-footer flex justify-end space-x-2 pt-4">

@@ -49,6 +49,17 @@
 		{ key: 'location', title: 'Location (X, Y, Z)', value: (d: Device) => formatLocation(d), sortable: false },
 		{ key: 'fixes', title: 'Fixes', value: (d: Device) => d.fixes ?? 'n/a', sortable: true },
 		{ key: 'scale', title: 'Scale', value: (d: Device) => d.scale?.toFixed(3) ?? 'n/a', sortable: true },
+		{
+			key: 'refRssi',
+			title: 'RSSI@1m',
+			// A device without one is tracked against a default that can be tens of dB off, and the
+			// value is a property of the transmitter, so nothing in the node calibration can supply
+			// it. Worth a column of its own: it is invisible everywhere else, and the Calibrate
+			// button that fixes it is already in this row.
+			value: (d: Device) => (d['rssi@1m'] != null ? `${Math.round(d['rssi@1m'])} dBm` : 'not set'),
+			sortValue: (d: Device) => (d['rssi@1m'] != null ? 0 : 1),
+			sortable: true
+		},
 		{ key: 'confidence', title: 'Confidence', value: (d: Device) => d.confidence ?? 'n/a', sortValue: (d: Device) => d.confidence ?? -1, sortable: true },
 		{ key: 'lastSeen', title: 'Last Seen', value: (d: Device) => (d.lastSeen ? (ago(new Date(d.lastSeen)) ?? 'n/a') : 'n/a'), sortValue: (d: Device) => (d.lastSeen ? new Date(d.lastSeen) : new Date(0)), sortable: true },
 		{ key: 'actions', title: '', renderComponent: { component: DeviceActions } }

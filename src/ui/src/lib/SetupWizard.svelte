@@ -3,7 +3,6 @@
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { calibration } from '$lib/stores';
 	import { apiPath } from '$lib/api';
-	import { gotoCalibration } from '$lib/urls';
 	import { showConfirm } from '$lib/modal/modalStore';
 
 	const toastStore = getToastStore();
@@ -145,21 +144,11 @@
 		floors: { floorId: string; medianErrorM?: number; ticks: number; floorHitRate?: number }[];
 	}
 
-	interface SetupCandidate {
-		id: string;
-		name?: string;
-		configuredRefRssi?: number;
-		nodeCount: number;
-		rotatingAddress: boolean;
-		alternateIds: string[];
-	}
 
 
 	let diagnostics: Diagnostics | null = null;
 	let benchmark: { last?: BenchmarkRun; history: BenchmarkRun[] } | null = null;
 	let benchBusy = false;
-	let candidates: SetupCandidate[] = [];
-	$: needsReference = candidates.filter((c) => c.configuredRefRssi == null);
 
 	let validation: { issues: ValidationIssue[]; hasErrors: boolean; hasWarnings: boolean } | null = null;
 	let health: HealthResult | null = null;
@@ -312,7 +301,7 @@
 
 	async function fetchAll() {
 		try {
-			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes, cRes] = await Promise.all([
+			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes] = await Promise.all([
 				fetch(apiPath('/api/wizard/validation')),
 				fetch(apiPath('/api/wizard/health')),
 				fetch(apiPath('/api/wizard/excluded-pairs/suggestions')),
@@ -320,7 +309,6 @@
 				fetch(apiPath('/api/wizard/walktest/suggest')),
 				fetch(apiPath('/api/wizard/diagnostics')),
 				fetch(apiPath('/api/wizard/benchmark')),
-				fetch(apiPath('/api/wizard/device-setup/candidates'))
 			]);
 			if (vRes.ok) validation = await vRes.json();
 			if (hRes.ok) health = await hRes.json();
@@ -340,7 +328,6 @@
 			}
 			if (dRes.ok) diagnostics = await dRes.json();
 			if (bRes.ok) benchmark = await bRes.json();
-			if (cRes.ok) candidates = await cRes.json();
 		} catch (error) {
 			console.error('Error fetching wizard data:', error);
 		} finally {
@@ -839,46 +826,6 @@
 							</table>
 						</div>
 					{/if}
-				{/if}
-			</div>
-
-			<!-- 2c. Which devices still need a reference level -->
-			<div class="card p-4">
-				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Tracked Devices</h2>
-					<span class="badge {needsReference.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
-						{needsReference.length === 0 ? 'all set' : `${needsReference.length} without rssi@1m`}
-					</span>
-				</header>
-				<p class="text-sm text-surface-600-400 mb-3">
-					<code>rssi@1m</code> is a property of the transmitter, so it cannot come out of the node
-					calibration - the nodes calibrate each other, and a new tag is a stranger to all of them.
-					Without it a device is tracked against a default that can be tens of dB off. Measuring it
-					takes about a minute per device and happens on that device's calibration page.
-				</p>
-
-				{#if needsReference.length === 0}
-					<p class="text-sm">Every tracked device has a reference level configured.</p>
-				{:else}
-					<ul class="space-y-1 max-h-64 overflow-y-auto pr-2">
-						{#each needsReference as c (c.id)}
-							<li class="flex items-center gap-2 text-sm">
-								<button class="btn btn-sm preset-tonal shrink-0" onclick={() => gotoCalibration(c.id)}>Measure</button>
-								<span class="font-medium">{c.name ?? c.id}</span>
-								<span class="text-surface-600-400">heard by {c.nodeCount} node{c.nodeCount === 1 ? '' : 's'}</span>
-								{#if c.rotatingAddress}
-									<span class="badge preset-filled-surface-500">rotating address</span>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-
-				{#if candidates.length > needsReference.length}
-					<p class="text-xs text-surface-600-400 mt-2">
-						{candidates.length - needsReference.length} further device{candidates.length - needsReference.length === 1 ? '' : 's'}
-						already have one; open them from the Devices page to re-measure.
-					</p>
 				{/if}
 			</div>
 
