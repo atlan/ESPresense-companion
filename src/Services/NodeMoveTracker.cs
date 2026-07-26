@@ -84,6 +84,7 @@ public class NodeMoveTracker : BackgroundService
     internal async Task CheckAsync()
     {
         var moved = new List<NodeMove>();
+        var baselineChanged = false;
 
         foreach (var node in _state.Nodes.Values)
         {
@@ -93,6 +94,7 @@ public class NodeMoveTracker : BackgroundService
             if (!_known.TryGetValue(node.Id, out var previous))
             {
                 _known[node.Id] = loc;
+                baselineChanged = true;
                 continue;
             }
 
@@ -100,6 +102,7 @@ public class NodeMoveTracker : BackgroundService
             if (distance <= MoveThresholdM) continue;
 
             _known[node.Id] = loc;
+            baselineChanged = true;
 
             // On the very first pass after a fresh install there is nothing to compare against
             // meaningfully; only report once we have a persisted baseline.
@@ -125,7 +128,12 @@ public class NodeMoveTracker : BackgroundService
         foreach (var move in moved)
             move.AbsorptionReseededTo = await ReseedAbsorptionAsync(move.NodeId);
 
-        if (moved.Count > 0) Save();
+        // ★ Used to save only when something had moved, which made the persistence useless for the
+        // one job it exists to do. The point of writing positions to disk is noticing a node that was
+        // relocated while the Companion was down - but the baseline it would be compared against was
+        // never written, because on a quiet run nothing moved. So the file stayed empty until a move
+        // was seen live, and a move seen live needs no file. Found by a test, not in the field.
+        if (moved.Count > 0 || baselineChanged) Save();
         _primed = true;
     }
 

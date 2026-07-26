@@ -53,29 +53,6 @@ public class DeviceSetupService(
     /// <summary>Completed runs per device+reference-node, so repeats can be compared.</summary>
     private readonly Dictionary<string, List<double>> _runHistory = new(StringComparer.OrdinalIgnoreCase);
 
-    public List<DeviceSetupCandidate> GetCandidates()
-    {
-        var list = new List<DeviceSetupCandidate>();
-        foreach (var device in state.Devices.Values)
-        {
-            if (device.LastSeen == null) continue;
-            var settings = deviceSettings.Get(device.Id);
-
-            list.Add(new DeviceSetupCandidate
-            {
-                Id = device.Id,
-                Name = device.Name ?? settings?.Name,
-                ConfiguredRefRssi = settings?.RefRssi,
-                HasAlias = !string.IsNullOrWhiteSpace(settings?.Id) && settings.Id != device.Id,
-                NodeCount = device.Nodes.Count,
-                LastSeen = device.LastSeen,
-                RotatingAddress = identityTracker.HasRotatingAddress(device.Id),
-                AlternateIds = AlternateIdsFor(device.Id)
-            });
-        }
-
-        return list.OrderBy(c => c.ConfiguredRefRssi.HasValue).ThenByDescending(c => c.NodeCount).ToList();
-    }
 
     private string[] AlternateIdsFor(string deviceId) =>
         identityTracker.GetSplitIdentities()
@@ -291,18 +268,6 @@ public class DeviceSetupService(
     private sealed record ReferenceRun(string DeviceId, string ReferenceNodeId, double DistanceM, DateTime StartedUtc);
 }
 
-public class DeviceSetupCandidate
-{
-    public string Id { get; set; } = "";
-    public string? Name { get; set; }
-    public int? ConfiguredRefRssi { get; set; }
-    public bool HasAlias { get; set; }
-    public int NodeCount { get; set; }
-    public DateTime? LastSeen { get; set; }
-    /// <summary>Address rotates (phone/watch) - needs an IRK, an alias on the address will not stick.</summary>
-    public bool RotatingAddress { get; set; }
-    public string[] AlternateIds { get; set; } = Array.Empty<string>();
-}
 
 public class ReferenceStatus
 {

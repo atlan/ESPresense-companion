@@ -82,9 +82,6 @@ public class WizardController(
     // plausible Absorptionsspanne um 17 dB. Auf einem Meter entfaellt der Distanzterm, deshalb
     // misst der Nutzer einmal kurz - das ist der Schritt mit dem groessten Nutzen ueberhaupt.
 
-    [HttpGet("api/wizard/device-setup/candidates")]
-    public List<DeviceSetupCandidate> GetDeviceSetupCandidates() => deviceSetup.GetCandidates();
-
     [HttpPost("api/wizard/device-setup/reference/start")]
     public ReferenceStatus StartReference([FromBody] ReferenceStartRequest req) =>
         deviceSetup.StartReference(req.DeviceId, req.ReferenceNodeId, req.DistanceM <= 0 ? 1.0 : req.DistanceM);

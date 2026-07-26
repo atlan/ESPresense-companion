@@ -15,11 +15,20 @@ namespace ESPresense.Locators;
 ///
 /// What does catch it is geometry. Two nodes at known positions constrain each other through the
 /// triangle inequality: a device within d_i of node i and d_j of node j requires
-/// <c>|d_i - d_j| &lt;= dist(i,j) &lt;= d_i + d_j</c>. Kitchen's 0.86 m and toilette's 1.30 m sum to
-/// 2.16 m while those nodes stand 7 m apart - no position in space satisfies both, and saying so
-/// needs no estimate, no iteration and no starting guess. That matters, because iterative
-/// down-weighting started from a solution the outlier already captured would reject the honest
-/// readings instead.
+/// <c>|d_i - d_j| &lt;= dist(i,j) &lt;= d_i + d_j</c>. Saying so needs no estimate, no iteration and no
+/// starting guess - which matters, because iterative down-weighting started from a solution the
+/// outlier already captured would reject the honest readings instead.
+///
+/// ★ Correction to what this comment used to claim. It presented kitchen's 0.86 m plus toilette's
+/// 1.30 m against a 7 m separation as the case being caught. At the shipped tolerance it is not:
+/// slack is 1.5 + 0.5 x 7 = 5.0 m, and 2.16 + 5.0 clears 7.0 comfortably. The example motivated the
+/// filter; it is not an example of what the filter does.
+///
+/// Both settings were then swept against the walk points, and the shipped pair is right anyway:
+/// at fraction 0.5 the median error is 1.86 m and the room hit rate 62 %, while tightening towards
+/// the value that WOULD catch the kitchen case collapses to 3.09 m and 20 % - it discards honest
+/// readings by the thousand to catch one. So the filter earns its place on a different and far more
+/// common class of contradiction than the one it was named after.
 ///
 /// The largest mutually consistent group wins. With one bad reading among several good ones the good
 /// ones agree with each other and it does not, so it is the one left out.
