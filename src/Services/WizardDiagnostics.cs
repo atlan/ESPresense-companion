@@ -42,7 +42,11 @@ public class WizardDiagnostics(
     /// polls, so the raw value both flickers across the threshold AND changes the printed number -
     /// which made every signal finding read as a new entry even when it was the same one.
     /// </summary>
-    private const double SignalEwmaAlpha = 0.3;
+    /// Measured after the fact: at 0.3 the smoothed level still crossed a whole-dB boundary between
+    /// most polls, so the printed number kept moving even though the finding did not. 0.1 is roughly
+    /// a ten-sample window - slow enough that the text settles, fast enough that a node genuinely
+    /// changing behaviour still surfaces within a couple of minutes of polling.
+    private const double SignalEwmaAlpha = 0.1;
 
     /// <summary>Nothing is reported before a pair has been seen this often - one stray packet is not a finding.</summary>
     private const int MinSignalObservations = 3;
