@@ -90,6 +90,11 @@ builder.Services.AddSingleton<WizardService>();
 builder.Services.AddSingleton<DeviceIdentityTracker>();
 builder.Services.AddSingleton<WizardDiagnostics>();
 builder.Services.AddSingleton<DeviceSetupService>();
+builder.Services.AddSingleton(sp => new CalibrationBenchmark(
+    sp.GetRequiredService<State>(),
+    sp.GetRequiredService<WalkTestService>(),
+    sp.GetRequiredService<ConfigLoader>(),
+    Path.Combine(storageDir, "benchmark-history.json")));
 builder.Services.AddSingleton(sp => new NodeMoveTracker(
     sp.GetRequiredService<State>(),
     sp.GetRequiredService<NodeSettingsStore>(),

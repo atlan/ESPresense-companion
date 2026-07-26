@@ -15,6 +15,7 @@ public class WizardController(
     WizardService wizard,
     WizardDiagnostics diagnostics,
     DeviceSetupService deviceSetup,
+    CalibrationBenchmark benchmark,
     PairErrorTracker pairErrorTracker,
     OptimizationRunner optimizationRunner,
     ConfigLoader configLoader,
@@ -44,6 +45,16 @@ public class WizardController(
     {
         return diagnostics.Analyze();
     }
+
+    // ── Grundmessung ───────────────────────────────────────────────────────────────
+    // Ein Lauf mit der AKTUELLEN Konfiguration gegen die aufgezeichneten Walk-Punkte. Ohne eine
+    // Zahl, die jedes Mal gleich zustande kommt, ist "das hat es besser gemacht" eine Meinung.
+
+    [HttpGet("api/wizard/benchmark")]
+    public object GetBenchmark() => new { last = benchmark.Last, history = benchmark.History };
+
+    [HttpPost("api/wizard/benchmark/run")]
+    public BenchmarkResult RunBenchmark([FromBody] BenchmarkRunRequest? req) => benchmark.Run(req?.Label);
 
     // ── Gefuehrte Geraete-Einrichtung ──────────────────────────────────────────────
     // rssi@1m gehoert zum Geraet und faellt bei der Knoten-zu-Knoten-Kalibrierung nicht ab.
@@ -516,4 +527,10 @@ public class DeviceSetupApplyRequest
     public int RefRssi { get; set; }
     public string? Name { get; set; }
     public string? Alias { get; set; }
+}
+
+public class BenchmarkRunRequest
+{
+    /// <summary>Free-text note so a run can be recognised later ("nach Absorptionsgrenze 2.0").</summary>
+    public string? Label { get; set; }
 }

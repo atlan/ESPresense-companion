@@ -1,0 +1,268 @@
+using ESPresense.Locators;
+using ESPresense.Models;
+using ESPresense.Utils;
+using MathNet.Spatial.Euclidean;
+using Newtonsoft.Json;
+using Serilog;
+
+namespace ESPresense.Services;
+
+/// <summary>
+/// The yardstick. Replays the recorded walk points through the locator with the CURRENT
+/// configuration and reports how far off it lands - median, 90th percentile, room hit rate, broken
+/// down per floor - and keeps the history so two runs can be compared.
+///
+/// Why this has to exist before anything else is tuned: an accuracy investigation on 2026-07-26
+/// produced three plausible explanations for the same symptom in a row, two of which turned out to
+/// be wrong, and each was argued from a different hand-picked slice of the data. Without one number
+/// that is computed the same way every time, "this change made it better" is an opinion.
+///
+/// Distinct from <see cref="LocatorTuneService"/>, which sweeps nadaraya_watson candidates to pick a
+/// winner: this measures the configuration as it actually stands, so it is meaningful for changes
+/// anywhere in the chain - objective function, parameter bounds, obstacle terms - not just the
+/// locator kernel. The replay itself follows the same rules as the tuner (same-floor nodes only, at
+/// least three of them, 2D error) so the two stay comparable.
+/// </summary>
+public class CalibrationBenchmark(
+    State state,
+    WalkTestService walkTest,
+    ConfigLoader configLoader,
+    string? persistPath = null)
+{
+    /// <summary>Fewer usable ticks than this and a point says more about luck than accuracy.</summary>
+    private const int MinTicksPerPoint = 5;
+
+    /// <summary>Locators need three ranges for a fix; mirrors the live path.</summary>
+    private const int MinNodesPerTick = 3;
+
+    private const int MaxHistory = 50;
+
+    private List<BenchmarkResult> _history = Load(persistPath);
+
+    public BenchmarkResult? Last => _history.LastOrDefault();
+
+    public IReadOnlyList<BenchmarkResult> History => _history;
+
+    public BenchmarkResult Run(string? label = null)
+    {
+        var result = new BenchmarkResult { RanAt = DateTime.UtcNow, Label = label };
+
+        var points = walkTest.GetPoints().Where(p => p.Raw.Count > 0 && p.FloorId != null).ToList();
+        if (points.Count == 0)
+        {
+            result.Error = "No walk test points with raw tick data. Record a walk test first - the benchmark " +
+                           "needs known positions to measure against, it cannot score the live stream.";
+            return Remember(result);
+        }
+
+        var nw = configLoader.Config?.Locators?.NadarayaWatson;
+        result.Bandwidth = nw?.Bandwidth ?? 0.5;
+        result.Kernel = nw?.Kernel ?? "gaussian";
+
+        var allErrors = new List<double>();
+        var perFloor = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
+        var jitters = new List<double>();
+        var roomHits = 0;
+        var roomChecked = 0;
+        var skippedNoData = 0;
+
+        foreach (var point in points)
+        {
+            var truth = new Point3D(point.X, point.Y, point.Z);
+            var floor = state.Floors.Values.FirstOrDefault(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase));
+            var truthRoom = SpatialUtils.FindRoomContaining(truth, floor);
+
+            var estimates = new List<Point3D>();
+            var errors = new List<double>();
+
+            foreach (var tick in point.Raw.GroupBy(r => r.T))
+            {
+                var heard = new List<(Point3D loc, double dist)>();
+                foreach (var entry in tick)
+                {
+                    if (!state.Nodes.TryGetValue(entry.N, out var node) || !node.HasLocation) continue;
+                    if (!(node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)) continue;
+                    heard.Add((node.Location, entry.D));
+                }
+                if (heard.Count < MinNodesPerTick) continue;
+                heard.Sort((a, b) => a.dist.CompareTo(b.dist));
+
+                var (est, _) = NadarayaWatsonMultilateralizer.Estimate(heard, result.Bandwidth, result.Kernel);
+                estimates.Add(est);
+
+                // 2D only: Z is dominated by where the nodes happen to be mounted, not by how well
+                // the locator works, and mixing it in would make the figure track ceiling heights.
+                errors.Add(Math.Sqrt(Math.Pow(est.X - truth.X, 2) + Math.Pow(est.Y - truth.Y, 2)));
+
+                if (truthRoom != null)
+                {
+                    roomChecked++;
+                    if (SpatialUtils.FindRoomContaining(est, floor)?.Id == truthRoom.Id) roomHits++;
+                }
+            }
+
+            if (estimates.Count < MinTicksPerPoint)
+            {
+                skippedNoData++;
+                continue;
+            }
+
+            allErrors.AddRange(errors);
+            if (point.FloorId != null)
+            {
+                if (!perFloor.TryGetValue(point.FloorId, out var list)) perFloor[point.FloorId] = list = new List<double>();
+                list.AddRange(errors);
+            }
+
+            var cx = estimates.Average(e => e.X);
+            var cy = estimates.Average(e => e.Y);
+            jitters.Add(Math.Sqrt(estimates.Average(e => Math.Pow(e.X - cx, 2) + Math.Pow(e.Y - cy, 2))));
+
+            result.Points.Add(new BenchmarkPoint
+            {
+                Id = point.Id,
+                FloorId = point.FloorId,
+                RoomName = truthRoom?.Name,
+                Ticks = estimates.Count,
+                MedianErrorM = Round(Median(errors)),
+                P90ErrorM = Round(Percentile(errors, 0.90))
+            });
+        }
+
+        if (allErrors.Count == 0)
+        {
+            result.Error = $"None of the {points.Count} walk points produced an estimate - each tick needs at least " +
+                           $"{MinNodesPerTick} nodes on the point's own floor. Check that the floor assignments are right.";
+            return Remember(result);
+        }
+
+        result.PointsUsed = result.Points.Count;
+        result.PointsSkipped = skippedNoData;
+        result.Ticks = allErrors.Count;
+        result.MedianErrorM = Round(Median(allErrors));
+        result.P90ErrorM = Round(Percentile(allErrors, 0.90));
+        result.MeanErrorM = Round(allErrors.Average());
+        result.MeanJitterM = jitters.Count > 0 ? Round(jitters.Average()) : null;
+        result.RoomHitRate = roomChecked > 0 ? Math.Round((double)roomHits / roomChecked, 3) : null;
+
+        foreach (var (floorId, errs) in perFloor)
+            result.Floors.Add(new BenchmarkFloor
+            {
+                FloorId = floorId,
+                Ticks = errs.Count,
+                MedianErrorM = Round(Median(errs)),
+                P90ErrorM = Round(Percentile(errs, 0.90))
+            });
+        result.Floors = result.Floors.OrderByDescending(f => f.MedianErrorM).ToList();
+
+        var previous = _history.LastOrDefault(r => r.Error == null);
+        if (previous?.MedianErrorM is { } before && result.MedianErrorM is { } now)
+        {
+            result.DeltaMedianM = Round(now - before);
+            // Plain language on purpose: "0.51" means nothing to someone setting this up for the
+            // first time, "20 cm worse than last run" does.
+            var cm = Math.Abs((now - before) * 100);
+            result.Verdict = Math.Abs(now - before) < 0.05
+                ? $"Unchanged within noise (median {now:0.00} m)."
+                : now < before
+                    ? $"Better: median {now:0.00} m, {cm:0} cm closer than the previous run."
+                    : $"Worse: median {now:0.00} m, {cm:0} cm further off than the previous run.";
+        }
+        else
+        {
+            result.Verdict = $"Baseline: median {result.MedianErrorM:0.00} m, 90th percentile " +
+                             $"{result.P90ErrorM:0.00} m over {result.Ticks} ticks from {result.PointsUsed} points.";
+        }
+
+        Log.Information("Benchmark: median {Median:0.00} m, p90 {P90:0.00} m, room hit {Hit:P0}, {Ticks} ticks",
+            result.MedianErrorM, result.P90ErrorM, result.RoomHitRate ?? 0, result.Ticks);
+
+        return Remember(result);
+    }
+
+    private BenchmarkResult Remember(BenchmarkResult result)
+    {
+        _history.Add(result);
+        while (_history.Count > MaxHistory) _history.RemoveAt(0);
+        Save();
+        return result;
+    }
+
+    private static double? Round(double v) => Math.Round(v, 2);
+
+    private static double Median(List<double> values)
+    {
+        var s = values.OrderBy(v => v).ToList();
+        var mid = s.Count / 2;
+        return s.Count % 2 == 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2.0;
+    }
+
+    private static double Percentile(List<double> values, double p)
+    {
+        var s = values.OrderBy(v => v).ToList();
+        if (s.Count == 1) return s[0];
+        var rank = p * (s.Count - 1);
+        var lo = (int)Math.Floor(rank);
+        var hi = (int)Math.Ceiling(rank);
+        return lo == hi ? s[lo] : s[lo] + (rank - lo) * (s[hi] - s[lo]);
+    }
+
+    private void Save()
+    {
+        if (string.IsNullOrEmpty(persistPath)) return;
+        try { File.WriteAllText(persistPath, JsonConvert.SerializeObject(_history)); }
+        catch (Exception ex) { Log.Warning(ex, "Could not persist benchmark history to {Path}", persistPath); }
+    }
+
+    private static List<BenchmarkResult> Load(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return new List<BenchmarkResult>();
+        try { return JsonConvert.DeserializeObject<List<BenchmarkResult>>(File.ReadAllText(path)) ?? new List<BenchmarkResult>(); }
+        catch (Exception ex) { Log.Warning(ex, "Could not read benchmark history from {Path}", path); return new List<BenchmarkResult>(); }
+    }
+}
+
+public class BenchmarkResult
+{
+    public DateTime RanAt { get; set; }
+    public string? Label { get; set; }
+    public string? Error { get; set; }
+
+    public double Bandwidth { get; set; }
+    public string Kernel { get; set; } = "";
+
+    public int PointsUsed { get; set; }
+    public int PointsSkipped { get; set; }
+    public int Ticks { get; set; }
+
+    public double? MedianErrorM { get; set; }
+    public double? P90ErrorM { get; set; }
+    public double? MeanErrorM { get; set; }
+    public double? MeanJitterM { get; set; }
+    /// <summary>Fraction of ticks placed in the same room as the ground truth - what presence automations actually depend on.</summary>
+    public double? RoomHitRate { get; set; }
+
+    public double? DeltaMedianM { get; set; }
+    public string? Verdict { get; set; }
+
+    public List<BenchmarkFloor> Floors { get; set; } = new();
+    public List<BenchmarkPoint> Points { get; set; } = new();
+}
+
+public class BenchmarkFloor
+{
+    public string FloorId { get; set; } = "";
+    public int Ticks { get; set; }
+    public double? MedianErrorM { get; set; }
+    public double? P90ErrorM { get; set; }
+}
+
+public class BenchmarkPoint
+{
+    public string Id { get; set; } = "";
+    public string? FloorId { get; set; }
+    public string? RoomName { get; set; }
+    public int Ticks { get; set; }
+    public double? MedianErrorM { get; set; }
+    public double? P90ErrorM { get; set; }
+}
