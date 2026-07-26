@@ -9,10 +9,11 @@ namespace ESPresense.Services;
 /// Replaces the original rule - the midpoint of the node pair with the worst calibration error -
 /// which was measured against on 2026-07-26 and failed on four counts:
 ///
-/// 1. It averaged the node COORDINATES including height, and nodes hang just under the ceiling, so
-///    live output asked for points at z = 4.1 m, 3.5 m and 3.6 m. Not "a bit high" - not reachable.
-///    The floor label was wrong too, because no floor contains z = 4.1 and the lookup fell back to
-///    the first floor the node belongs to.
+/// 1. It averaged the node COORDINATES including height, so the suggested height was an artefact of
+///    where two boxes happen to be screwed to a wall. On this installation the ground floor's nodes
+///    sit between +0.30 m and +2.20 m above the floor, so pair midpoints land anywhere in that band -
+///    sometimes near the skirting board, sometimes above head height, never deliberately where a
+///    device is actually carried. The walk points that were recorded by hand sit at 0.9-1.1 m.
 /// 2. It optimised for the node-to-node calibration, while the measured driver of position error is
 ///    the distance to the NEAREST node (within 1.5 m: 1.11 m median error, beyond: 2.47 m; the
 ///    correlation with the third-nearest node was r = -0.01).

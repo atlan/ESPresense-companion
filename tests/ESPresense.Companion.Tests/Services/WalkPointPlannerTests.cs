@@ -6,9 +6,10 @@ using Moq;
 namespace ESPresense.Companion.Tests.Services;
 
 /// <summary>
-/// The rule these replace produced points at z = 4.1 m on a floor whose ceiling is lower than that,
-/// because it averaged node coordinates and nodes hang under the ceiling. That is the first thing
-/// pinned down here: a suggestion a person cannot physically stand at is not a suggestion.
+/// The rule these replace took its height from the average of two node mountings, which on the real
+/// installation range from +0.30 m to +2.20 m above the floor - so the suggested height was wherever
+/// two boxes happened to be screwed, not where a device is carried. That is the first thing pinned
+/// down here: the height comes from measured walk points, never from node positions.
 /// </summary>
 public class WalkPointPlannerTests
 {
@@ -100,7 +101,7 @@ public class WalkPointPlannerTests
     }
 
     [Test]
-    public void Suggest_NeverPlacesThePointAtCeilingHeight()
+    public void Suggest_TakesHeightFromWalkPointsNotFromNodeMountings()
     {
         var floor = AddFloor("ground", 0, 3);
         AddNode("n1", 1, 1, floor);
@@ -112,8 +113,8 @@ public class WalkPointPlannerTests
 
         Assert.That(suggestions, Is.Not.Empty);
         Assert.That(suggestions.Select(s => s.Z), Is.All.EqualTo(1.0),
-            "with no walk points on the floor the device height falls back to 1 m, never to where " +
-            "the nodes hang - the previous rule averaged node coordinates and asked for z = 4.1 m");
+            "with no walk points on the floor the device height falls back to 1 m, never to the " +
+            $"node mounting height ({CeilingZ} m here) - the previous rule averaged node coordinates");
     }
 
     [Test]
