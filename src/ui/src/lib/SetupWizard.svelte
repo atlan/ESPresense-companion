@@ -101,10 +101,14 @@
 		z: number;
 		floorId?: string;
 		floorName?: string;
+		roomId?: string;
+		roomName?: string;
+		nearestNodeM: number;
+		medianNearestNodeM: number;
+		existingPoints: number;
+		floorHitRate?: number;
+		score: number;
 		reason: string;
-		nodeA: string;
-		nodeB: string;
-		pairErrorPercent: number;
 	}
 
 	interface RoomCoverage {
@@ -901,6 +905,10 @@
 			<div class="card p-4">
 				<header class="mb-3"><h2 class="text-lg font-semibold">Tracked Device Setup</h2></header>
 				<p class="text-sm text-surface-600-400 mb-3">
+					The same measurement is available per device from the Devices page (Calibrate), which is where
+					you land when a device turns out to need it. This is the setup-time entry point.
+				</p>
+				<p class="text-sm text-surface-600-400 mb-3">
 					A device's <code>rssi@1m</code> cannot come from the node-to-node calibration - the nodes calibrate
 					each other, a new tag is a stranger to all of them. It cannot be derived from live data either: the
 					estimate moves 17 dB across the plausible range of absorption. At one metre the distance term
@@ -1158,12 +1166,21 @@
 				{:else}
 					{#if walkSuggestions.length > 0}
 						<div class="mb-3">
-							<p class="text-sm font-semibold mb-1">Suggested placements (worst-calibrated pairs first):</p>
+							<p class="text-sm font-semibold mb-1">Where to measure next</p>
+							<p class="text-xs text-surface-600-400 mb-2">
+								Rooms nobody has measured come first - accuracy where no one has stood is not
+								probably-fine, it is unknown. Then floors whose storey detection is weakest, then rooms
+								whose nearest node is furthest away. The height is what the device was carried at on that
+								floor, not where the nodes hang.
+							</p>
 							<ul class="space-y-1">
 								{#each walkSuggestions as s}
-									<li class="flex items-center gap-2 text-sm">
-										<button class="btn btn-sm preset-tonal" onclick={() => useSuggestion(s)}>({s.x}, {s.y}, {s.z})</button>
-										<span class="text-surface-600-400">{s.reason}</span>
+									<li class="flex items-start gap-2 text-sm">
+										<button class="btn btn-sm preset-tonal shrink-0" onclick={() => useSuggestion(s)}>({s.x}, {s.y}, {s.z})</button>
+										<span>
+											<span class="font-medium">{s.roomName ?? s.roomId}</span>
+											<span class="text-surface-600-400"> — {s.reason}</span>
+										</span>
 									</li>
 								{/each}
 							</ul>

@@ -527,45 +527,6 @@ public class WalkTestService
         return measures;
     }
 
-    /// <summary>
-    /// Suggests placement points for the next walk test: midpoints of the same-floor node pairs
-    /// with the highest smoothed calibration error (from PairErrorTracker) - measuring there gives
-    /// the optimizer reference data exactly where the current fit is most uncertain.
-    /// </summary>
-    public List<object> SuggestPoints(int count = 3)
-    {
-        var suggestions = new List<object>();
-        var pairs = pairErrorTracker.GetPairErrors()
-            .Where(p => p.Samples >= 10)
-            .OrderByDescending(p => p.Ewma)
-            .ToList();
-
-        foreach (var pair in pairs)
-        {
-            if (suggestions.Count >= count) break;
-            if (!state.Nodes.TryGetValue(pair.NodeA, out var a) || !a.HasLocation) continue;
-            if (!state.Nodes.TryGetValue(pair.NodeB, out var b) || !b.HasLocation) continue;
-
-            var mid = new Point3D((a.Location.X + b.Location.X) / 2, (a.Location.Y + b.Location.Y) / 2, (a.Location.Z + b.Location.Z) / 2);
-            var floor = SpatialUtils.FindFloorContaining(mid, state.Floors.Values)
-                        ?? a.Floors?.FirstOrDefault();
-            suggestions.Add(new
-            {
-                x = Math.Round(mid.X, 2),
-                y = Math.Round(mid.Y, 2),
-                z = Math.Round(mid.Z, 2),
-                floorId = floor?.Id,
-                floorName = floor?.Name,
-                reason = $"Between '{a.Name ?? pair.NodeA}' and '{b.Name ?? pair.NodeB}' - this pair currently has {pair.Ewma:P0} average distance error",
-                nodeA = a.Name ?? pair.NodeA,
-                nodeB = b.Name ?? pair.NodeB,
-                pairErrorPercent = pair.Ewma
-            });
-        }
-
-        return suggestions;
-    }
-
     private static double Median(IEnumerable<double> values)
     {
         var sorted = values.OrderBy(v => v).ToList();

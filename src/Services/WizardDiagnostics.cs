@@ -29,6 +29,24 @@ public class WizardDiagnostics(
     /// <summary>Above this the measurement contradicts the map rather than merely disagreeing with it.</summary>
     private const double SignalContradictionDb = 15.0;
 
+    /// <summary>
+    /// Once reported, a pair keeps being reported until it falls below this. Without the gap, a pair
+    /// sitting at 14-16 dB enters and leaves the list on alternate polls: measured 2026-07-26, 8 of
+    /// 39 findings flipped across three requests 12 s apart. A list that reshuffles while it is being
+    /// read cannot be worked through, which is the whole point of it.
+    /// </summary>
+    private const double SignalReleaseDb = 12.0;
+
+    /// <summary>
+    /// Smoothing on the per-pair gap. The snapshot is instantaneous and RSSI moves several dB between
+    /// polls, so the raw value both flickers across the threshold AND changes the printed number -
+    /// which made every signal finding read as a new entry even when it was the same one.
+    /// </summary>
+    private const double SignalEwmaAlpha = 0.3;
+
+    /// <summary>Nothing is reported before a pair has been seen this often - one stray packet is not a finding.</summary>
+    private const int MinSignalObservations = 3;
+
     /// <summary>Worth mentioning, not yet a contradiction.</summary>
     private const double SignalSuspiciousDb = 8.0;
 
@@ -37,6 +55,20 @@ public class WizardDiagnostics(
 
     /// <summary>Below this a pair is too noisy to judge - avoids flagging a single stray packet.</summary>
     private const double MinMapDistanceM = 0.5;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PairSignal> _pairSignals = new();
+
+    /// <summary>Running view of one directed pair, so findings survive a single noisy sample.</summary>
+    private sealed class PairSignal
+    {
+        public double DeltaDb;
+        public double Rssi;
+        public double MeasuredDistanceM;
+        public double MapDistanceM;
+        public double Absorption;
+        public int Observations;
+        public bool Reported;
+    }
 
     public WizardDiagnosticsResult Analyze()
     {
@@ -315,28 +347,68 @@ public class WizardDiagnostics(
             var requiredRssi = m.RefRssi - 10.0 * absorption * Math.Log10(mapDistance);
             var deltaDb = m.Rssi - requiredRssi;
 
-            var sample = new Sample(deltaDb, m.Distance - mapDistance);
-            (mapDistance <= NearFarSplitM ? near : far).Add(sample);
+            var key = $"{m.Rx.Id}\u0000{m.Tx.Id}";
+            var signal = _pairSignals.GetOrAdd(key, _ => new PairSignal());
+            lock (signal)
+            {
+                if (signal.Observations == 0)
+                {
+                    signal.DeltaDb = deltaDb;
+                    signal.Rssi = m.Rssi;
+                    signal.MeasuredDistanceM = m.Distance;
+                }
+                else
+                {
+                    signal.DeltaDb = SignalEwmaAlpha * deltaDb + (1 - SignalEwmaAlpha) * signal.DeltaDb;
+                    signal.Rssi = SignalEwmaAlpha * m.Rssi + (1 - SignalEwmaAlpha) * signal.Rssi;
+                    signal.MeasuredDistanceM = SignalEwmaAlpha * m.Distance + (1 - SignalEwmaAlpha) * signal.MeasuredDistanceM;
+                }
+                // Geometry and calibration are not measurements - no reason to smooth them.
+                signal.MapDistanceM = mapDistance;
+                signal.Absorption = absorption;
+                signal.Observations++;
 
-            if (Math.Abs(deltaDb) >= SignalSuspiciousDb)
+                // Summaries built from the smoothed pair values rather than the raw sample: it makes
+                // the near/far figures stop wandering, and it weights every pair once instead of
+                // letting a chatty pair count more than a quiet one.
+                var sample = new Sample(signal.DeltaDb, signal.MeasuredDistanceM - mapDistance);
+                (mapDistance <= NearFarSplitM ? near : far).Add(sample);
+
+                if (signal.Observations < MinSignalObservations) continue;
+
+                var magnitude = Math.Abs(signal.DeltaDb);
+                signal.Reported = signal.Reported ? magnitude >= SignalReleaseDb : magnitude >= SignalContradictionDb;
+
+                if (magnitude < SignalSuspiciousDb) continue;
+
                 result.SignalOutliers.Add(new SignalOutlier
                 {
                     RxId = m.Rx.Id, RxName = m.Rx.Name,
                     TxId = m.Tx.Id, TxName = m.Tx.Name,
                     MapDistanceM = Math.Round(mapDistance, 2),
-                    MeasuredDistanceM = Math.Round(m.Distance, 2),
-                    MeasuredRssi = Math.Round(m.Rssi, 1),
+                    MeasuredDistanceM = Math.Round(signal.MeasuredDistanceM, 2),
+                    MeasuredRssi = Math.Round(signal.Rssi, 1),
                     RequiredRssi = Math.Round(requiredRssi, 1),
-                    DeltaDb = Math.Round(deltaDb, 1),
-                    Absorption = Math.Round(absorption, 2)
+                    DeltaDb = Math.Round(signal.DeltaDb, 1),
+                    Absorption = Math.Round(absorption, 2),
+                    Observations = signal.Observations,
+                    Reported = signal.Reported
                 });
+            }
         }
 
         result.Near = Summarize(near);
         result.Far = Summarize(far);
-        result.SignalOutliers = result.SignalOutliers.OrderByDescending(o => Math.Abs(o.DeltaDb)).Take(20).ToList();
+        // Tie-broken on the pair id so the cut at 20 does not reorder when two pairs sit at the same
+        // rounded magnitude - otherwise the trimming itself becomes a source of churn.
+        result.SignalOutliers = result.SignalOutliers
+            .OrderByDescending(o => Math.Abs(o.DeltaDb))
+            .ThenBy(o => o.RxId, StringComparer.Ordinal)
+            .ThenBy(o => o.TxId, StringComparer.Ordinal)
+            .Take(20)
+            .ToList();
 
-        foreach (var contradiction in result.SignalOutliers.Where(s => Math.Abs(s.DeltaDb) >= SignalContradictionDb))
+        foreach (var contradiction in result.SignalOutliers.Where(s => s.Reported))
         {
             var sign = contradiction.DeltaDb >= 0 ? "+" : "";
             result.Issues.Add(new ValidationIssue
@@ -345,10 +417,11 @@ public class WizardDiagnostics(
                 Category = "signal",
                 NodeId = contradiction.RxId,
                 Message = $"'{contradiction.RxName ?? contradiction.RxId}' hears " +
-                          $"'{contradiction.TxName ?? contradiction.TxId}' at {contradiction.MeasuredRssi:0.0} dBm " +
+                          $"'{contradiction.TxName ?? contradiction.TxId}' at {contradiction.MeasuredRssi:0} dBm " +
                           $"from {contradiction.MapDistanceM:0.0} m away, but the model needs " +
-                          $"{contradiction.RequiredRssi:0.0} dBm there ({sign}{contradiction.DeltaDb:0.0} dB off, " +
-                          $"absorption {contradiction.Absorption:0.00}). No path-loss setting explains a gap this " +
+                          $"{contradiction.RequiredRssi:0} dBm there ({sign}{contradiction.DeltaDb:0} dB off over " +
+                          $"{contradiction.Observations} readings, absorption {contradiction.Absorption:0.00}). " +
+                          "No path-loss setting explains a gap this " +
                           "large - treat it as a contradiction (check the mapped position, the antenna, or exclude " +
                           "the pair) rather than something calibration can absorb."
             });

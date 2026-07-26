@@ -104,10 +104,13 @@
 		}
 		refreshCapture();
 		captureInterval = setInterval(refreshCapture, 1000);
+		refFetchStatus();
+		refTimer = setInterval(refFetchStatus, 2000);
 	});
 
 	onDestroy(() => {
 		if (captureInterval) clearInterval(captureInterval);
+		if (refTimer) clearInterval(refTimer);
 		if (positionDebounce) clearTimeout(positionDebounce);
 		if (deviceSettings?.id) {
 			wsManager.unsubscribeFromEvent('deviceMessage', handleDeviceMessage);
@@ -395,8 +398,11 @@
 	}
 
 	// Update this function to use only parameters from device messages
+	let skippedUncalibrated: string[] = [];
+
 	function calculateFinalRssi() {
 		const refRssiEstimates: Array<{ refRssi: number; weight: number }> = [];
+		skippedUncalibrated = [];
 
 		// Calculate using all device messages
 		Object.entries(deviceMessages).forEach(([nodeId, messages]) => {
@@ -415,11 +421,21 @@
 			// Calculate average RSSI
 			const avgRssi = validRssiValues.reduce((sum, val) => sum + val, 0) / validRssiValues.length;
 
-			// Get the node's absorption value or use default of 2 if not available
-			const absorption = nodeSettings[nodeId]?.calibration?.absorption ?? 2;
+			// A node without a calibrated absorption is skipped, not substituted. The old code fell
+			// back to 2 silently; measured on a real installation the nodes sit around 4.28, and the
+			// correction term below is 10*absorption*log10(distance) - so that substitution was worth
+			// 10.9 dB at 3 m and 15.9 dB at 5 m, applied without a word. A freshly added node lands in
+			// exactly this case.
+			const absorption = nodeSettings[nodeId]?.calibration?.absorption;
+			if (absorption == null || absorption <= 0) {
+				skippedUncalibrated.push(nodeId);
+				return;
+			}
 
-			// Use the node's absorption value (multiplied by 10 to match the scale)
-			// The formula is RSSI@1m = RSSI + 10*n*log10(distance) where n is the path loss exponent
+			// The formula is RSSI@1m = RSSI + 10*n*log10(distance) where n is the path loss exponent.
+			// Note how much of the answer this term carries: ~20 dB at 3 m, ~30 dB at 5 m. Any
+			// systematic error in absorption transfers into rssi@1m one for one, which is why the
+			// guided 1 m measurement exists - at 1 m log10(d) is 0 and absorption drops out entirely.
 			const refRssi = avgRssi + 10 * absorption * Math.log10(node.distance);
 
 			// Weight by inverse distance (closer nodes get higher weight)
@@ -431,9 +447,11 @@
 		// If no valid estimates, return null
 		if (refRssiEstimates.length === 0) return null;
 
-		// Calculate weighted average
-		const totalWeight = refRssiEstimates.reduce((sum, est) => sum + est.weight, 0);
-		const rawValue = refRssiEstimates.reduce((sum, est) => sum + est.refRssi * est.weight, 0) / totalWeight;
+		// Median rather than a weighted mean: one node whose absorption is off drags a mean by its
+		// full error, and the estimates being combined here are exactly the ones that disagree.
+		const sorted = refRssiEstimates.map((e) => e.refRssi).sort((a, b) => a - b);
+		const mid = Math.floor(sorted.length / 2);
+		const rawValue = sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 
 		return Math.round(rawValue);
 	}
@@ -473,6 +491,107 @@
 		});
 
 		return stats;
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Guided 1 m reference measurement.
+	//
+	// The map-based flow below derives rssi@1m from a distance, which means the answer rests on the
+	// nodes' absorption rather than on the measurement: the correction term is ~20 dB at 3 m and
+	// ~30 dB at 5 m. At one metre log10(d) is exactly 0, the term vanishes, and what is left is the
+	// level itself. That is the whole reason this mode exists, and why it is the recommended one.
+	// ---------------------------------------------------------------------------------------------
+	interface RefNodeReading {
+		nodeId: string;
+		nodeName?: string;
+		samples: number;
+		medianLevelDbm: number;
+		isReference: boolean;
+	}
+	interface RefStatus {
+		running: boolean;
+		deviceId?: string;
+		referenceNodeId?: string;
+		distanceM?: number;
+		runs: number;
+		estimatedRefRssi?: number;
+		runSpreadDb?: number;
+		trusted: boolean;
+		warning?: string;
+		contextNote?: string;
+		nodes: RefNodeReading[];
+	}
+
+	let refStatus: RefStatus | null = null;
+	let refNode: string = '';
+	let refDistance = 1.0;
+	let refBusy = false;
+	let refTimer: ReturnType<typeof setInterval> | null = null;
+
+	async function refFetchStatus() {
+		try {
+			const res = await fetch(apiPath('/api/wizard/device-setup/reference/status'));
+			if (res.ok) refStatus = await res.json();
+		} catch {
+			// transient; the poll will try again
+		}
+	}
+
+	async function refStart() {
+		refBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/device-setup/reference/start'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					deviceId: deviceSettings.originalId ?? deviceSettings.id,
+					referenceNodeId: refNode,
+					distanceM: refDistance
+				})
+			});
+			if (res.ok) refStatus = await res.json();
+		} finally {
+			refBusy = false;
+		}
+	}
+
+	async function refFinish() {
+		refBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/device-setup/reference/finish'), { method: 'POST' });
+			if (res.ok) refStatus = await res.json();
+		} finally {
+			refBusy = false;
+		}
+	}
+
+	async function refApply() {
+		if (refStatus?.estimatedRefRssi == null) return;
+		refBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/device-setup/apply'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					deviceId: deviceSettings.originalId ?? deviceSettings.id,
+					refRssi: refStatus.estimatedRefRssi
+				})
+			});
+			if (!res.ok) throw new Error(await res.text());
+			currentRefRssi = refStatus.estimatedRefRssi;
+			await fetchDeviceSettings();
+			toastStore.trigger({
+				message: `rssi@1m set to ${refStatus.estimatedRefRssi} dBm`,
+				background: 'preset-filled-success-500'
+			});
+		} catch (e) {
+			toastStore.trigger({
+				message: `Could not save: ${(e as Error).message}`,
+				background: 'preset-filled-error-500'
+			});
+		} finally {
+			refBusy = false;
+		}
 	}
 
 	async function saveCalibration() {
@@ -531,6 +650,96 @@
 				</div>
 			{/if}
 		</div>
+
+		<div class="card p-4">
+			<header class="flex items-center justify-between mb-2">
+				<h2 class="text-xl font-semibold">Reference measurement at 1 m</h2>
+				<span class="badge preset-filled-primary-500">Recommended</span>
+			</header>
+			<p class="text-sm text-surface-600-400 mb-3">
+				<code>rssi@1m</code> is a property of the transmitter, so it cannot come out of the node
+				calibration - the nodes calibrate each other, and a new tag is a stranger to all of them. The
+				map method further down derives it from a distance, which means the answer leans on the nodes'
+				absorption: that correction term is around 20 dB at 3 m and 30 dB at 5 m, so a systematic
+				absorption error passes straight through. At one metre the term is exactly zero and the
+				measurement stands on its own.
+			</p>
+
+			<div class="flex flex-wrap items-end gap-3 mb-2">
+				<label class="label text-sm">
+					<span>Place the device next to</span>
+					<select class="select" bind:value={refNode}>
+						<option value="">Pick a node</option>
+						{#each $nodes ?? [] as n (n.id)}
+							<option value={n.id}>{n.name ?? n.id}</option>
+						{/each}
+					</select>
+				</label>
+				<label class="label text-sm w-28">
+					<span>Distance (m)</span>
+					<input class="input" type="number" step="0.05" bind:value={refDistance} />
+				</label>
+				{#if refStatus?.running}
+					<button class="btn preset-filled-primary-500" onclick={refFinish} disabled={refBusy}>Finish run</button>
+				{:else}
+					<button class="btn preset-filled-primary-500" onclick={refStart} disabled={refBusy || !refNode}>Start run</button>
+				{/if}
+			</div>
+			<p class="text-xs text-surface-600-400 mb-3">
+				Put the device down and step away rather than holding it: repeat runs scattered 4.4 dB when
+				held and 1.6 dB when left lying. Two runs that agree are needed before the value is treated
+				as trustworthy.
+			</p>
+
+			{#if refStatus}
+				<div class="text-sm mb-2">
+					{#if refStatus.estimatedRefRssi != null}
+						<strong>{refStatus.estimatedRefRssi} dBm</strong>
+						<span class="text-surface-600-400">
+							after {refStatus.runs} run{refStatus.runs === 1 ? '' : 's'}{refStatus.runs > 1 && refStatus.runSpreadDb != null ? `, spread ${refStatus.runSpreadDb} dB` : ''}
+						</span>
+						<span class="badge {refStatus.trusted ? 'preset-filled-success-500' : 'preset-filled-warning-500'} ml-2">
+							{refStatus.trusted ? 'trustworthy' : 'provisional'}
+						</span>
+						{#if currentRefRssi != null}
+							<span class="text-surface-600-400 ml-2">(currently {currentRefRssi} dBm)</span>
+						{/if}
+						{#if refStatus.trusted}
+							<button class="btn btn-sm preset-filled-primary-500 ml-3" onclick={refApply} disabled={refBusy}>Apply</button>
+						{/if}
+					{:else if refStatus.running}
+						<span class="text-surface-600-400">Collecting readings...</span>
+					{/if}
+				</div>
+				{#if refStatus.warning}<p class="text-sm text-warning-600-400 mb-2">{refStatus.warning}</p>{/if}
+				{#if refStatus.contextNote}<p class="text-sm text-warning-600-400 mb-2">{refStatus.contextNote}</p>{/if}
+				{#if refStatus.nodes.length > 0}
+					<div class="overflow-x-auto overflow-y-auto max-h-48">
+						<table class="table table-compact">
+							<thead><tr><th>Node</th><th>Readings</th><th>Level</th></tr></thead>
+							<tbody>
+								{#each refStatus.nodes as n (n.nodeId)}
+									<tr class={n.isReference ? 'font-semibold' : ''}>
+										<td>{n.nodeName ?? n.nodeId}{n.isReference ? ' (reference)' : ''}</td>
+										<td>{n.samples}</td>
+										<td>{n.medianLevelDbm.toFixed(1)} dBm</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			{/if}
+		</div>
+
+		<header class="pt-2">
+			<h2 class="text-xl font-semibold">Measure from a known spot on the map</h2>
+			<p class="text-sm text-surface-600-400">
+				Fallback for devices that cannot be picked up and put next to a node - a beacon screwed to a
+				wall, for instance. Only nodes with a calibrated absorption are used; the rest are listed and
+				skipped rather than filled in with a guess.
+			</p>
+		</header>
 
 		{#if $config?.floors}
 			<div class="grid grid-cols-1 gap-4">
@@ -707,6 +916,15 @@
 					</div>
 					<div class="card p-4 preset-tonal">
 						<header class="font-semibold mb-4">Calibration Results</header>
+						{#if skippedUncalibrated.length > 0}
+							<p class="text-sm text-warning-600-400 mb-3">
+								Skipped {skippedUncalibrated.length} node{skippedUncalibrated.length === 1 ? '' : 's'} with no
+								calibrated absorption ({skippedUncalibrated.join(', ')}). Their contribution would have been a
+								guess: substituting a default of 2 where the fleet sits near 4.3 is worth about 11 dB at 3 m.
+								Run the node calibration first, or use the 1 m measurement above, which does not need absorption
+								at all.
+							</p>
+						{/if}
 						<div class="grid grid-cols-1 gap-4 mb-4">
 							<div class="card p-4 preset-tonal">
 								<header class="font-semibold mb-2">Current Values</header>

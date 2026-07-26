@@ -16,6 +16,7 @@ public class WizardController(
     WizardDiagnostics diagnostics,
     DeviceSetupService deviceSetup,
     CalibrationBenchmark benchmark,
+    WalkPointPlanner walkPointPlanner,
     PairErrorTracker pairErrorTracker,
     OptimizationRunner optimizationRunner,
     ConfigLoader configLoader,
@@ -237,7 +238,7 @@ public class WizardController(
     [HttpGet("api/wizard/walktest/suggest")]
     public IActionResult WalkTestSuggest()
     {
-        return Ok(new { suggestions = walkTest.SuggestPoints() });
+        return Ok(new { suggestions = walkPointPlanner.Suggest() });
     }
 
     // ─── Auto-tune (optimizer/hyperparameter selection) ─────────────────────

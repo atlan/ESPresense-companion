@@ -89,6 +89,7 @@ builder.Services.AddSingleton<WizardService>();
 // Subscribes to device messages on construction, so it must be created eagerly - see below.
 builder.Services.AddSingleton<DeviceIdentityTracker>();
 builder.Services.AddSingleton<WizardDiagnostics>();
+builder.Services.AddSingleton<WalkPointPlanner>();
 builder.Services.AddSingleton<DeviceSetupService>();
 builder.Services.AddSingleton(sp => new CalibrationBenchmark(
     sp.GetRequiredService<State>(),

@@ -132,6 +132,14 @@ public class SignalOutlier
     /// <summary>Measured minus required. Positive means "heard far louder than physically possible".</summary>
     public double DeltaDb { get; set; }
     public double Absorption { get; set; }
+    /// <summary>How many snapshots the smoothed values above are built from.</summary>
+    public int Observations { get; set; }
+    /// <summary>
+    /// True while this pair counts as a contradiction. Latches on at the contradiction threshold and
+    /// off only at the lower release threshold, so a pair hovering at the boundary stops appearing
+    /// and disappearing between polls.
+    /// </summary>
+    public bool Reported { get; set; }
 }
 
 public class ClampedParameter
