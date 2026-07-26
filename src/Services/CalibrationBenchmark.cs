@@ -78,6 +78,17 @@ public class CalibrationBenchmark(
         result.Bandwidth = nw?.Bandwidth ?? 0.5;
         result.Kernel = nw?.Kernel ?? "gaussian";
 
+        // The yardstick has to measure the system that is running, so every knob starts from the
+        // configuration and an override only replaces it. Reading 0 where the config says 20 made a
+        // plain run report 87.9 % floor accuracy for a system delivering 96.5 % - a measuring
+        // instrument disagreeing with its own subject, which is the one thing it may never do.
+        var contrastWeight = overrides?.FloorContrastWeight ?? nw?.FloorContrastWeight ?? 0;
+        var useConsistency = overrides?.ConsistencyFilter ?? nw?.ConsistencyFilter ?? false;
+        var toleranceM = overrides?.ConsistencyToleranceM ?? nw?.ConsistencyToleranceM ?? ConsistencyFilter.DefaultToleranceM;
+        var toleranceFraction = overrides?.ConsistencyToleranceFraction ?? nw?.ConsistencyToleranceFraction ?? ConsistencyFilter.DefaultToleranceFraction;
+        result.ConsistencyFilterUsed = useConsistency;
+        result.FloorContrastWeightUsed = contrastWeight;
+
         var allErrors = new List<double>();
         var perFloor = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
         var jitters = new List<double>();
@@ -120,7 +131,7 @@ public class CalibrationBenchmark(
                 // Scored on every audible node, deliberately BEFORE the same-floor cut below: that
                 // cut is given the answer, so an error figure computed after it cannot say anything
                 // about whether the floor would have been found in the first place.
-                if (GuessFloor(audible, result.Bandwidth, result.Kernel, overrides?.FloorContrastWeight ?? 0) is { } guess)
+                if (GuessFloor(audible, result.Bandwidth, result.Kernel, contrastWeight) is { } guess)
                 {
                     floorChecked++;
                     pointFloorChecked++;
@@ -156,11 +167,10 @@ public class CalibrationBenchmark(
                 if (heard.Count < MinNodesPerTick) continue;
 
                 // Optional, so the effect can be measured before it is adopted live.
-                if (overrides?.ConsistencyFilter == true)
+                if (useConsistency)
                 {
                     var kept = ConsistencyFilter.LargestConsistent(heard, h => h.loc, h => h.dist,
-                        overrides.ConsistencyToleranceM ?? ConsistencyFilter.DefaultToleranceM,
-                        overrides.ConsistencyToleranceFraction ?? ConsistencyFilter.DefaultToleranceFraction);
+                        toleranceM, toleranceFraction);
                     if (kept.Count >= MinNodesPerTick)
                     {
                         dropped += heard.Count - kept.Count;
@@ -380,6 +390,8 @@ public class CalibrationBenchmark(
     /// <summary>Identifies the question a run was asking, so only like is compared with like.</summary>
     private static string Signature(BenchmarkOverrides? o)
     {
+        // Note the asymmetry: two runs with no overrides can still differ if the configuration
+        // changed between them, which is why the effective settings are recorded on the result.
         if (o == null) return "as-recorded";
         // Per-node sets have to enter the signature too, otherwise two different calibration sets
         // look like the same question and get compared against each other as if one were a change
@@ -503,6 +515,9 @@ public class BenchmarkResult
 
     public double Bandwidth { get; set; }
     public string Kernel { get; set; } = "";
+    /// <summary>Settings this run actually used, so a stored result stays interpretable later.</summary>
+    public bool ConsistencyFilterUsed { get; set; }
+    public double FloorContrastWeightUsed { get; set; }
 
     public int PointsUsed { get; set; }
     public int PointsSkipped { get; set; }
