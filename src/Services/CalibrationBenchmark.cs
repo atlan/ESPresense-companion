@@ -82,7 +82,8 @@ public class CalibrationBenchmark(
         // configuration and an override only replaces it. Reading 0 where the config says 20 made a
         // plain run report 87.9 % floor accuracy for a system delivering 96.5 % - a measuring
         // instrument disagreeing with its own subject, which is the one thing it may never do.
-        var contrastWeight = overrides?.FloorContrastWeight ?? nw?.FloorContrastWeight ?? 0;
+        var contrastWeight = overrides?.FloorContrastWeight
+                             ?? configLoader.Config?.Locators?.FloorContrastWeight ?? 0;
         var useConsistency = overrides?.ConsistencyFilter ?? nw?.ConsistencyFilter ?? false;
         var toleranceM = overrides?.ConsistencyToleranceM ?? nw?.ConsistencyToleranceM ?? ConsistencyFilter.DefaultToleranceM;
         var toleranceFraction = overrides?.ConsistencyToleranceFraction ?? nw?.ConsistencyToleranceFraction ?? ConsistencyFilter.DefaultToleranceFraction;

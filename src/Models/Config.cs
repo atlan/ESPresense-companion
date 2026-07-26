@@ -59,6 +59,21 @@ namespace ESPresense.Models
 
     public partial class ConfigLocators
     {
+        /// <summary>
+        /// How many confidence points the cross-floor contrast may shift the floor decision by.
+        /// See <see cref="ESPresense.Locators.FloorContrast"/>. Default 20 rather than 0 because the
+        /// measurement is unusually clear - floor detection 87.9 % to 96.5 % over 32 walk points,
+        /// monotone from 5 to 30, with position and room accuracy untouched. Set to 0 to decide the
+        /// storey from same-floor nodes alone.
+        ///
+        /// Sits on the locator section rather than inside nadaraya_watson because it applies to every
+        /// scenario regardless of which multilateralizer produced it - anything else leaves the other
+        /// locators voting on the floor without the evidence.
+        /// </summary>
+        [YamlMember(Alias = "floor_contrast_weight")]
+        public double FloorContrastWeight { get; set; } = 20;
+
+
         [YamlMember(Alias = "nadaraya_watson")]
         public NadarayaWatsonConfig NadarayaWatson { get; set; } = new();
 
@@ -116,15 +131,6 @@ namespace ESPresense.Models
         [YamlMember(Alias = "consistency_tolerance_fraction")]
         public double ConsistencyToleranceFraction { get; set; } = ESPresense.Locators.ConsistencyFilter.DefaultToleranceFraction;
 
-        /// <summary>
-        /// How many confidence points the cross-floor contrast may shift the floor decision by.
-        /// See <see cref="ESPresense.Locators.FloorContrast"/>. Default 20 rather than 0 because the
-        /// measurement is unusually clear - floor detection 87.9 % to 96.5 % over 32 walk points and
-        /// 1460 ticks, monotone from 5 to 30, with position and room accuracy untouched. Set to 0 to
-        /// go back to deciding the storey from same-floor nodes alone.
-        /// </summary>
-        [YamlMember(Alias = "floor_contrast_weight")]
-        public double FloorContrastWeight { get; set; } = 20;
     }
 
     public partial class NelderMeadConfig

@@ -122,18 +122,13 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
                 nodesPossibleOnline
             );
 
-            // Every node that heard the device, not just this floor's - the cross-floor readings are
-            // what tells the storeys apart, and until now each scenario discarded them. See
-            // FloorContrast: they are used as a contrast, never as distances, precisely so the
-            // scenarios stay distinguishable.
-            var audible = device.Nodes.Values.Where(n => n.Current && n.Node is { HasLocation: true }).ToArray();
-            confidence += (int)Math.Round(FloorContrast.Adjustment(
-                est, audible,
-                n => n.Node!.Location, n => n.Distance,
-                n => n.Node!.Floors?.Contains(floor) ?? false,
-                nwCfg?.FloorContrastWeight ?? 0));
-
-            scenario.Confidence = Math.Clamp(confidence, 0, 100);
+            // The cross-floor contrast used to be applied here. It has moved to MultiScenarioLocator:
+            // live measurement on 2026-07-27 showed four locators enabled at once, so State.GetScenarios
+            // produces one scenario per locator AND per floor - six competing at that spot. Adjusting
+            // one of the six left the other five deciding the storey without the information, and a
+            // ground-floor scenario from another locator won with confidence 91 while the device was
+            // upstairs. A floor-selection term belongs where the floors are actually compared.
+            scenario.Confidence = confidence;
         }
         catch (Exception ex)
         {

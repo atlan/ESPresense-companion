@@ -1,4 +1,5 @@
 ﻿using ESPresense.Controllers;
+using ESPresense.Locators;
 using ESPresense.Models;
 using ESPresense.Utils;
 using MathNet.Spatial.Euclidean;
@@ -82,6 +83,38 @@ public class MultiScenarioLocator(DeviceTracker dl,
         // -----------------------------------------------------------------
         device.LastCalculated = DateTime.UtcNow;
         var moved = device.Scenarios.AsParallel().Count(s => s.Locate());
+
+        // -----------------------------------------------------------------
+        // 1b. Cross-floor contrast, applied to EVERY scenario
+        // -----------------------------------------------------------------
+        // Each scenario is fitted from the nodes of one floor, so the readings from every other
+        // floor - 44 % of them on this installation - are discarded by all of them alike. Used as a
+        // contrast rather than as distances they say which storey the device is on: a ceiling
+        // attenuates, so nodes one floor away report longer than the geometry allows, and if a
+        // candidate floor is wrong that surplus shows up on the wrong side and the sign flips.
+        //
+        // ★ Applied here and not inside a locator. It was in NadarayaWatsonMultilateralizer first,
+        // which looked right until the live measurement on 2026-07-27: with four locators enabled,
+        // GetScenarios yields one scenario per locator AND per floor, so six were competing at that
+        // spot and only one carried the contrast. The device sat upstairs while a ground-floor
+        // scenario from another locator won with confidence 91, and tracking flipped between the two
+        // for minutes. Floor selection happens here, so the floor term belongs here.
+        var contrastWeight = state?.Config?.Locators?.FloorContrastWeight ?? 0;
+        if (contrastWeight > 0)
+        {
+            var audible = device.Nodes.Values.Where(n => n.Current && n.Node is { HasLocation: true }).ToArray();
+            if (audible.Length > 0)
+                foreach (var scenario in device.Scenarios)
+                {
+                    if (scenario.Floor is not { } floor || scenario.Confidence is not { } confidence) continue;
+                    var adjusted = confidence + FloorContrast.Adjustment(
+                        scenario.Location, audible,
+                        n => n.Node!.Location, n => n.Distance,
+                        n => n.Node!.Floors?.Contains(floor) ?? false,
+                        contrastWeight);
+                    scenario.Confidence = (int)Math.Round(Math.Clamp(adjusted, 0, 100));
+                }
+        }
 
         // -----------------------------------------------------------------
         // 2. Feed Kalman with the scenario that has the highest raw Confidence
