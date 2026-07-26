@@ -107,6 +107,67 @@
 		pairErrorPercent: number;
 	}
 
+	interface RoomCoverage {
+		floorId: string;
+		roomName?: string;
+		medianNearestNodeM: number;
+		worstNearestNodeM: number;
+		wellCoveredFraction: number;
+	}
+
+	interface Diagnostics {
+		issues: ValidationIssue[];
+		near: { pairs: number; medianAbsRssiErrorDb?: number };
+		far: { pairs: number; medianAbsRssiErrorDb?: number };
+		nearFarSplitM: number;
+		roomCoverage: RoomCoverage[];
+		signalOutliers: { rxName?: string; rxId: string; txName?: string; txId: string; mapDistanceM: number; deltaDb: number }[];
+		clampedParameters: { nodeName?: string; nodeId: string; parameter: string; value: number; bound: string; limit: number }[];
+	}
+
+	interface BenchmarkRun {
+		ranAt: string;
+		label?: string;
+		error?: string;
+		medianErrorM?: number;
+		p90ErrorM?: number;
+		roomHitRate?: number;
+		pointsUsed: number;
+		pointsWithLevels: number;
+		verdict?: string;
+		floors: { floorId: string; medianErrorM?: number; ticks: number }[];
+	}
+
+	interface SetupCandidate {
+		id: string;
+		name?: string;
+		configuredRefRssi?: number;
+		nodeCount: number;
+		rotatingAddress: boolean;
+		alternateIds: string[];
+	}
+
+	interface RefStatus {
+		running: boolean;
+		estimatedRefRssi?: number;
+		runs: number;
+		runSpreadDb: number;
+		trusted: boolean;
+		warning?: string;
+		contextNote?: string;
+		nodes: { nodeId: string; nodeName?: string; isReference: boolean; samples: number; medianLevelDbm: number }[];
+	}
+
+	let diagnostics: Diagnostics | null = null;
+	let benchmark: { last?: BenchmarkRun; history: BenchmarkRun[] } | null = null;
+	let benchBusy = false;
+	let candidates: SetupCandidate[] = [];
+	let refStatus: RefStatus | null = null;
+	let refDevice = '';
+	let refNode = '';
+	let refDistance = 1.0;
+	let refBusy = false;
+
 	let validation: { issues: ValidationIssue[]; hasErrors: boolean; hasWarnings: boolean } | null = null;
 	let health: HealthResult | null = null;
 	let suggestions: PairSuggestion[] = [];
@@ -258,12 +319,15 @@
 
 	async function fetchAll() {
 		try {
-			const [vRes, hRes, sRes, wRes, wsRes] = await Promise.all([
+			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes, cRes] = await Promise.all([
 				fetch(apiPath('/api/wizard/validation')),
 				fetch(apiPath('/api/wizard/health')),
 				fetch(apiPath('/api/wizard/excluded-pairs/suggestions')),
 				fetch(apiPath('/api/wizard/walktest/status')),
-				fetch(apiPath('/api/wizard/walktest/suggest'))
+				fetch(apiPath('/api/wizard/walktest/suggest')),
+				fetch(apiPath('/api/wizard/diagnostics')),
+				fetch(apiPath('/api/wizard/benchmark')),
+				fetch(apiPath('/api/wizard/device-setup/candidates'))
 			]);
 			if (vRes.ok) validation = await vRes.json();
 			if (hRes.ok) health = await hRes.json();
@@ -281,6 +345,13 @@
 				const data = await wsRes.json();
 				walkSuggestions = data.suggestions ?? [];
 			}
+			if (dRes.ok) diagnostics = await dRes.json();
+			if (bRes.ok) benchmark = await bRes.json();
+			if (cRes.ok) {
+				candidates = await cRes.json();
+				if (!refDevice && candidates.length) refDevice = candidates[0].id;
+			}
+			if (!refNode && health?.nodes?.length) refNode = health.nodes[0].id;
 		} catch (error) {
 			console.error('Error fetching wizard data:', error);
 		} finally {
@@ -577,6 +648,77 @@
 		}
 	}
 
+	async function runBenchmark() {
+		benchBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/benchmark/run'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ label: null })
+			});
+			if (res.ok) {
+				const run: BenchmarkRun = await res.json();
+				benchmark = { last: run, history: [...(benchmark?.history ?? []), run] };
+				toastStore.trigger({ message: run.error ?? run.verdict ?? 'Benchmark finished' });
+			}
+		} catch (e) {
+			console.error(e);
+		} finally {
+			benchBusy = false;
+		}
+	}
+
+	async function startReference() {
+		refBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/device-setup/reference/start'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ deviceId: refDevice, referenceNodeId: refNode, distanceM: refDistance })
+			});
+			if (res.ok) refStatus = await res.json();
+		} finally {
+			refBusy = false;
+		}
+	}
+
+	async function finishReference() {
+		refBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/device-setup/reference/finish'), { method: 'POST' });
+			if (res.ok) {
+				refStatus = await res.json();
+				if (refStatus?.warning) toastStore.trigger({ message: refStatus.warning });
+			}
+		} finally {
+			refBusy = false;
+		}
+	}
+
+	async function applyReference() {
+		if (refStatus?.estimatedRefRssi == null) return;
+		refBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/device-setup/apply'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ deviceId: refDevice, refRssi: refStatus.estimatedRefRssi })
+			});
+			toastStore.trigger({
+				message: res.ok ? `rssi@1m set to ${refStatus.estimatedRefRssi} dBm` : 'Could not write the device config'
+			});
+			if (res.ok) await fetchAll();
+		} finally {
+			refBusy = false;
+		}
+	}
+
+	/// Colour by how far the room is from the 1.5 m that measured good accuracy here.
+	function coverageClass(median: number): string {
+		if (median <= 1.5) return 'preset-filled-success-500';
+		return median > 3 ? 'preset-filled-error-500' : 'preset-filled-warning-500';
+	}
+
 	function severityClass(sev: string): string {
 		switch (sev) {
 			case 'Error':
@@ -689,6 +831,189 @@
 							{/each}
 						</ul>
 					{/if}
+				{/if}
+			</div>
+
+			<!-- 2b. Measurement diagnostics: does the radio data agree with the map? -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Measurement Diagnostics</h2>
+					{#if diagnostics}
+						<span class="badge {diagnostics.issues.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
+							{diagnostics.issues.length === 0 ? 'Nothing flagged' : `${diagnostics.issues.length} finding${diagnostics.issues.length === 1 ? '' : 's'}`}
+						</span>
+					{/if}
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Configuration Checks above validates the map. This checks the radio data against it - readings no
+					path-loss setting can explain, parameters pinned to their limit, and how much of each room actually
+					has a node close enough to work with.
+				</p>
+
+				{#if diagnostics}
+					{#if diagnostics.near.pairs > 0 || diagnostics.far.pairs > 0}
+						<div class="flex gap-6 text-sm mb-3">
+							<span>Under {diagnostics.nearFarSplitM} m: <strong>{diagnostics.near.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.near.pairs} pairs)</span>
+							<span>Beyond: <strong>{diagnostics.far.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.far.pairs} pairs)</span>
+						</div>
+					{/if}
+
+					{#if diagnostics.issues.length > 0}
+						<ul class="space-y-2 mb-3">
+							{#each diagnostics.issues as issue}
+								<li class="flex items-start gap-2">
+									<span class="badge {severityClass(issue.severity)} shrink-0 mt-0.5">{issue.category}</span>
+									<span class="text-sm">{issue.message}</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+
+					{#if diagnostics.roomCoverage.length > 0}
+						<h3 class="font-semibold text-sm mb-2">Node coverage per room</h3>
+						<p class="text-xs text-surface-600-400 mb-2">
+							Measured here: spots with a node within 1.5 m averaged 1.1 m position error, spots beyond it
+							2.5 m. Distance to the third-nearest node made no difference - one node close enough is what counts.
+						</p>
+						<div class="overflow-x-auto max-h-64">
+							<table class="table table-compact">
+								<thead><tr><th>Room</th><th>Floor</th><th>Nearest node</th><th>Worst corner</th><th>In range</th></tr></thead>
+								<tbody>
+									{#each diagnostics.roomCoverage as r}
+										<tr>
+											<td>{r.roomName ?? '-'}</td>
+											<td class="text-surface-600-400">{r.floorId}</td>
+											<td><span class="badge {coverageClass(r.medianNearestNodeM)}">{r.medianNearestNodeM.toFixed(1)} m</span></td>
+											<td>{r.worstNearestNodeM.toFixed(1)} m</td>
+											<td>{Math.round(r.wellCoveredFraction * 100)}%</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					{/if}
+				{/if}
+			</div>
+
+			<!-- 2c. Device setup: the 1 m reference measurement -->
+			<div class="card p-4">
+				<header class="mb-3"><h2 class="text-lg font-semibold">Tracked Device Setup</h2></header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					A device's <code>rssi@1m</code> cannot come from the node-to-node calibration - the nodes calibrate
+					each other, a new tag is a stranger to all of them. It cannot be derived from live data either: the
+					estimate moves 17 dB across the plausible range of absorption. At one metre the distance term
+					vanishes, so measuring it takes a minute and settles it.
+				</p>
+
+				<div class="flex flex-wrap items-end gap-3 mb-3">
+					<label class="label text-sm">
+						<span>Device</span>
+						<select class="select" bind:value={refDevice}>
+							{#each candidates as c (c.id)}
+								<option value={c.id}>{c.name ?? c.id}{c.configuredRefRssi != null ? ` (${c.configuredRefRssi} dBm)` : ' (not set)'}</option>
+							{/each}
+						</select>
+					</label>
+					<label class="label text-sm">
+						<span>Next to node</span>
+						<select class="select" bind:value={refNode}>
+							{#each health?.nodes ?? [] as n (n.id)}
+								<option value={n.id}>{n.name ?? n.id}</option>
+							{/each}
+						</select>
+					</label>
+					<label class="label text-sm w-28">
+						<span>Distance (m)</span>
+						<input class="input" type="number" step="0.05" bind:value={refDistance} />
+					</label>
+					{#if refStatus?.running}
+						<button class="btn preset-filled-primary-500" onclick={finishReference} disabled={refBusy}>Finish run</button>
+					{:else}
+						<button class="btn preset-filled-primary-500" onclick={startReference} disabled={refBusy || !refDevice || !refNode}>Start run</button>
+					{/if}
+				</div>
+				<p class="text-xs text-surface-600-400 mb-3">
+					Put the device down and step away - do not hold it. Measured here: repeats scatter 4.4 dB when held
+					and 1.6 dB when left lying. Two agreeing runs are needed before the value counts as trustworthy.
+				</p>
+
+				{#if refStatus}
+					<div class="text-sm mb-2">
+						{#if refStatus.estimatedRefRssi != null}
+							<strong>{refStatus.estimatedRefRssi} dBm</strong>
+							<span class="text-surface-600-400">
+								after {refStatus.runs} run{refStatus.runs === 1 ? '' : 's'}{refStatus.runs > 1 ? `, spread ${refStatus.runSpreadDb} dB` : ''}
+							</span>
+							<span class="badge {refStatus.trusted ? 'preset-filled-success-500' : 'preset-filled-warning-500'} ml-2">
+								{refStatus.trusted ? 'trustworthy' : 'provisional'}
+							</span>
+							{#if refStatus.trusted}
+								<button class="btn btn-sm preset-filled-primary-500 ml-3" onclick={applyReference} disabled={refBusy}>Apply</button>
+							{/if}
+						{:else}
+							<span class="text-surface-600-400">Collecting...</span>
+						{/if}
+					</div>
+					{#if refStatus.warning}<p class="text-sm text-warning-600-400 mb-2">{refStatus.warning}</p>{/if}
+					{#if refStatus.contextNote}<p class="text-sm text-warning-600-400 mb-2">{refStatus.contextNote}</p>{/if}
+					{#if refStatus.nodes.length > 0}
+						<div class="overflow-x-auto max-h-48">
+							<table class="table table-compact">
+								<thead><tr><th>Node</th><th>Readings</th><th>Level</th></tr></thead>
+								<tbody>
+									{#each refStatus.nodes as n (n.nodeId)}
+										<tr class={n.isReference ? 'font-semibold' : ''}>
+											<td>{n.nodeName ?? n.nodeId}{n.isReference ? ' (reference)' : ''}</td>
+											<td>{n.samples}</td>
+											<td>{n.medianLevelDbm.toFixed(1)} dBm</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					{/if}
+				{/if}
+			</div>
+
+			<!-- 2d. Accuracy benchmark -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Accuracy Benchmark</h2>
+					<button class="btn preset-filled-primary-500" onclick={runBenchmark} disabled={benchBusy}>
+						{benchBusy ? 'Running...' : 'Run'}
+					</button>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Replays the recorded walk points through the locator with the current settings, so two runs can be
+					compared. Without one figure computed the same way every time, "that made it better" is an opinion.
+				</p>
+				{#if benchmark?.last}
+					{@const b = benchmark.last}
+					{#if b.error}
+						<p class="text-sm text-warning-600-400">{b.error}</p>
+					{:else}
+						<p class="text-sm mb-2">{b.verdict}</p>
+						<div class="flex flex-wrap gap-6 text-sm mb-3">
+							<span>Median <strong>{b.medianErrorM?.toFixed(2)} m</strong></span>
+							<span>90th pct <strong>{b.p90ErrorM?.toFixed(2)} m</strong></span>
+							<span>Right room <strong>{Math.round((b.roomHitRate ?? 0) * 100)}%</strong></span>
+							<span class="text-surface-600-400">{b.pointsUsed} points, {b.pointsWithLevels} with signal levels</span>
+						</div>
+						{#if b.floors.length > 0}
+							<div class="overflow-x-auto">
+								<table class="table table-compact">
+									<thead><tr><th>Floor</th><th>Median</th><th>Ticks</th></tr></thead>
+									<tbody>
+										{#each b.floors as f}
+											<tr><td>{f.floorId}</td><td>{f.medianErrorM?.toFixed(2)} m</td><td>{f.ticks}</td></tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+					{/if}
+				{:else}
+					<p class="text-sm text-surface-600-400">Not run yet. Needs at least one walk test point.</p>
 				{/if}
 			</div>
 
