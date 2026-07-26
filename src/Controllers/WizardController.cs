@@ -119,6 +119,35 @@ public class WizardController(
     [HttpPost("api/wizard/locator-sweep")]
     public LocatorSweepResult RunLocatorSweep([FromBody] LocatorSweepRequest? req) => locatorSweep.Run(req);
 
+    /// <summary>
+    /// Writes a locator combination into the configuration. Separate from the sweep on purpose: the
+    /// sweep only measures, and a wizard that silently rewrote the running configuration while
+    /// answering a question would be a bad neighbour, however good its reasons.
+    /// </summary>
+    [HttpPost("api/wizard/locator-sweep/apply")]
+    public async Task<IActionResult> ApplyLocatorChoice([FromBody] LocatorApplyRequest req)
+    {
+        var known = new[] { "nadaraya_watson", "nelder_mead", "mle", "bfgs", "nearest_node" };
+        var chosen = (req?.Locators ?? new List<string>())
+            .Where(l => known.Contains(l, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (chosen.Count == 0)
+            return BadRequest(new { error = "Name at least one known locator - leaving none enabled would stop all tracking." });
+
+        var c = configLoader.Config;
+        if (c == null) return BadRequest(new { error = "No configuration loaded." });
+
+        bool On(string id) => chosen.Contains(id, StringComparer.OrdinalIgnoreCase);
+        c.Locators.NadarayaWatson.Enabled = On("nadaraya_watson");
+        c.Locators.NelderMead.Enabled = On("nelder_mead");
+        c.Locators.Mle.Enabled = On("mle");
+        c.Locators.Bfgs.Enabled = On("bfgs");
+        c.Locators.NearestNode.Enabled = On("nearest_node");
+
+        await configLoader.SaveSectionAsync("locators", c.Locators);
+        return Ok(new { applied = chosen });
+    }
+
     [HttpGet("api/wizard/validation")]
     public WizardValidationResult GetValidation()
     {
@@ -566,6 +595,11 @@ public class DeviceSetupApplyRequest
     public int RefRssi { get; set; }
     public string? Name { get; set; }
     public string? Alias { get; set; }
+}
+
+public class LocatorApplyRequest
+{
+    public List<string>? Locators { get; set; }
 }
 
 public class BenchmarkRunRequest

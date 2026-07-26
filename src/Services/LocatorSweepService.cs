@@ -63,60 +63,117 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             }
         }
 
-        result.Runs = result.Runs.OrderBy(r => r.MedianErrorM ?? double.MaxValue).ToList();
-        result.Verdict = Judge(result);
+        result.Runs = result.Runs.OrderByDescending(r => r.RoomHitRate ?? -1).ToList();
+        result.Recommendation = Recommend(result);
         return result;
     }
 
-    /// <summary>
-    /// Deliberately refuses to crown one winner. The first version ranked on median error alone and
-    /// would have recommended nelder_mead, which on this installation is best at position and third
-    /// at floor - and a device on the wrong storey is the error a resident actually notices, while
-    /// 20 cm of position is not. Naming the trade-off is the honest output; picking for the user
-    /// would be hiding it behind a single number.
-    ///
-    /// What it does say outright is when a smaller set matches a larger one, because that is not a
-    /// trade-off, it is dead weight.
-    /// </summary>
-    private static string Judge(LocatorSweepResult result)
+    /// <summary>Standard error across walk points, or null when there are too few to say.</summary>
+    private static double? StandardError(List<double> perPoint)
     {
-        var usable = result.Runs.Where(r => r.Error == null && r.MedianErrorM.HasValue).ToList();
-        if (usable.Count == 0) return "No candidate produced a position.";
+        if (perPoint.Count < 2) return null;
+        var mean = perPoint.Average();
+        var variance = perPoint.Sum(v => (v - mean) * (v - mean)) / (perPoint.Count - 1);
+        return Math.Round(Math.Sqrt(variance / perPoint.Count), 3);
+    }
 
-        var byPosition = usable.MinBy(r => r.MedianErrorM);
-        var byRoom = usable.MaxBy(r => r.RoomHitRate ?? 0);
-        var byFloor = usable.MaxBy(r => r.FloorHitRate ?? 0);
-        var current = usable.FirstOrDefault(r => r.IsCurrentConfiguration);
+    /// <summary>
+    /// Picks a combination and says why, instead of handing the user a table and a shrug.
+    ///
+    /// The order of questions matters more than any single number, so it is spelled out:
+    ///
+    /// 1. ROOM first, because that is what presence automations consume - and it already contains
+    ///    the rest. A scenario on the wrong floor cannot name the right room, and neither can one
+    ///    that is half a room off. Scoring position, room and floor separately, as an earlier version
+    ///    did, mostly measured the same thing three times and then called the disagreement a
+    ///    trade-off for the user to resolve.
+    ///
+    /// 2. FLOOR when room cannot separate the candidates. Measured on this installation the room
+    ///    rates span 48-54 % with an uncertainty of +/-8 % across points - every candidate ties, so
+    ///    ranking on it would be picking noise. The floor rates over the same points span 84-98 %
+    ///    with far less scatter, and they do separate. A wrong storey is also the error a resident
+    ///    actually notices, so falling back to it is not a consolation prize.
+    ///
+    /// 3. FEWEST locators when neither separates anything. Less computation, one less thing to
+    ///    explain, and no evidence to justify paying for extras.
+    ///
+    /// Uncertainty is computed across walk POINTS, never across ticks. Thousands of ticks sound like
+    /// a large sample, but the ticks inside one point are the same device standing in one place - the
+    /// real sample size is how many spots it was put in, here 32.
+    /// </summary>
+    private static LocatorRecommendation? Recommend(LocatorSweepResult result)
+    {
+        var usable = result.Runs.Where(r => r.Error == null && r.RoomHitRate.HasValue).ToList();
+        if (usable.Count == 0) return null;
 
-        var parts = new List<string>
+        static List<LocatorSweepRun> WithinNoise(List<LocatorSweepRun> runs, Func<LocatorSweepRun, double> value,
+            Func<LocatorSweepRun, double?> error)
         {
-            $"Best position: {byPosition!.Label} ({byPosition.MedianErrorM:0.00} m).",
-            $"Best room: {byRoom!.Label} ({byRoom.RoomHitRate:P0}).",
-            $"Best floor: {byFloor!.Label} ({byFloor.FloorHitRate:P0})."
-        };
-
-        if (byPosition.Label != byFloor.Label)
-            parts.Add("These disagree, so the choice depends on what matters more here - a wrong storey " +
-                      "is more noticeable than a slightly wrong position, but only you know your automations.");
-
-        if (current != null)
-        {
-            var redundant = usable.FirstOrDefault(r =>
-                !r.IsCurrentConfiguration &&
-                r.Locators.Count < current.Locators.Count &&
-                r.Locators.All(current.Locators.Contains) &&
-                Math.Abs((r.MedianErrorM ?? 0) - (current.MedianErrorM ?? 0)) < 0.01 &&
-                Math.Abs((r.FloorHitRate ?? 0) - (current.FloorHitRate ?? 0)) < 0.005);
-
-            if (redundant != null)
-            {
-                var extra = current.Locators.Except(redundant.Locators);
-                parts.Add($"The configured set scores identically to '{redundant.Label}', so " +
-                          $"{string.Join(" and ", extra)} contribute nothing measurable and only cost computation.");
-            }
+            var leader = runs.MaxBy(value)!;
+            var margin = error(leader) ?? 0;
+            return runs.Where(r => value(leader) - value(r) <= margin).ToList();
         }
 
-        return string.Join(" ", parts);
+        var roomTied = WithinNoise(usable, r => r.RoomHitRate ?? 0, r => r.RoomHitStandardErrorPoints);
+        var decidedBy = "room";
+        var field = roomTied;
+
+        if (roomTied.Count > 1)
+        {
+            var floorTied = WithinNoise(roomTied, r => r.FloorHitRate ?? 0, r => r.FloorHitStandardErrorPoints);
+            if (floorTied.Count < roomTied.Count) { field = floorTied; decidedBy = "floor"; }
+            else { field = floorTied; decidedBy = "simplicity"; }
+        }
+
+        var pick = field
+            .OrderBy(r => r.Locators.Count)
+            .ThenByDescending(r => r.FloorHitRate ?? 0)
+            .ThenByDescending(r => r.RoomHitRate ?? 0)
+            .First();
+
+        var roomMargin = usable.MaxBy(r => r.RoomHitRate)!.RoomHitStandardErrorPoints ?? 0;
+        var reason = decidedBy switch
+        {
+            "room" =>
+                $"'{pick.Label}' puts the device in the right room {pick.RoomHitRate:P0} of the time, more than any " +
+                $"other combination by more than the measurement's own scatter. Right-room rate is what presence " +
+                $"automations consume, and a wrong floor or a badly wrong position both already show up in it.",
+            "floor" =>
+                $"Every combination lands in the right room about equally often ({pick.RoomHitRate:P0} here, and the " +
+                $"spread across all of them is inside the ±{roomMargin:P0} uncertainty across {pick.PointsUsed} walk " +
+                $"points), so that figure cannot choose. The floor does separate them: '{pick.Label}' gets the storey " +
+                $"right {pick.FloorHitRate:P0} of the time, and being on the wrong floor is the error you actually notice.",
+            _ =>
+                $"Nothing measurable separates the candidates - right-room rates all sit within ±{roomMargin:P0} of " +
+                $"each other across {pick.PointsUsed} walk points, and the floor rates agree too. '{pick.Label}' is " +
+                $"recommended because it achieves that with the fewest estimators, which costs the least computation " +
+                $"and leaves less to go wrong."
+        };
+
+        var current = usable.FirstOrDefault(r => r.IsCurrentConfiguration);
+        if (current != null && !ReferenceEquals(current, pick))
+        {
+            var dropped = current.Locators.Except(pick.Locators).ToList();
+            var added = pick.Locators.Except(current.Locators).ToList();
+            if (dropped.Count > 0)
+                reason += $" Against the current configuration this drops {string.Join(" and ", dropped)}";
+            if (added.Count > 0)
+                reason += (dropped.Count > 0 ? " and adds " : " Against the current configuration this adds ")
+                          + string.Join(" and ", added);
+            if (dropped.Count > 0 || added.Count > 0) reason += ".";
+        }
+
+        return new LocatorRecommendation
+        {
+            Locators = pick.Locators.ToList(),
+            Label = pick.Label,
+            RoomHitRate = pick.RoomHitRate,
+            MedianErrorM = pick.MedianErrorM,
+            FloorHitRate = pick.FloorHitRate,
+            DecidedBy = decidedBy,
+            AlreadyConfigured = current != null && ReferenceEquals(current, pick),
+            Reason = reason
+        };
     }
 
     private LocatorSweepRun Score(LocatorCandidate candidate, List<WalkTestService.WalkTestPoint> points,
@@ -142,6 +199,10 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             var truthFloor = floors.FirstOrDefault(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase));
             var truthRoom = SpatialUtils.FindRoomContaining(truth, truthFloor);
             var scored = 0;
+            var pointRoomHits = 0;
+            var pointRoomChecked = 0;
+            var pointFloorHits = 0;
+            var pointFloorChecked = 0;
 
             foreach (var tick in point.Raw.GroupBy(r => r.T))
             {
@@ -158,16 +219,25 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
                 errors.Add(Math.Sqrt(Math.Pow(best.Location.X - truth.X, 2) + Math.Pow(best.Location.Y - truth.Y, 2)));
 
                 floorChecked++;
-                if (string.Equals(best.Floor?.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) floorHits++;
+                pointFloorChecked++;
+                if (string.Equals(best.Floor?.Id, point.FloorId, StringComparison.OrdinalIgnoreCase))
+                { floorHits++; pointFloorHits++; }
 
                 if (truthRoom != null)
                 {
                     roomChecked++;
-                    if (best.Room?.Id == truthRoom.Id) roomHits++;
+                    pointRoomChecked++;
+                    if (best.Room?.Id == truthRoom.Id) { roomHits++; pointRoomHits++; }
                 }
             }
 
             if (scored >= MinTicksPerPoint) pointsUsed++;
+            // Per POINT, not per tick. Ticks inside one point are the same device standing in the
+            // same spot, so counting them as independent makes any difference look far more certain
+            // than it is - thousands of ticks, but only as many real observations as there are places
+            // the device was actually put.
+            if (pointRoomChecked > 0) run.PerPointRoomHitRate.Add((double)pointRoomHits / pointRoomChecked);
+            if (pointFloorChecked > 0) run.PerPointFloorHitRate.Add((double)pointFloorHits / pointFloorChecked);
         }
 
         if (errors.Count == 0)
@@ -183,6 +253,8 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
         run.P90ErrorM = Math.Round(errors[(int)(0.9 * (errors.Count - 1))], 2);
         run.FloorHitRate = floorChecked > 0 ? Math.Round((double)floorHits / floorChecked, 3) : null;
         run.RoomHitRate = roomChecked > 0 ? Math.Round((double)roomHits / roomChecked, 3) : null;
+        run.RoomHitStandardErrorPoints = StandardError(run.PerPointRoomHitRate);
+        run.FloorHitStandardErrorPoints = StandardError(run.PerPointFloorHitRate);
         return run;
     }
 
@@ -297,9 +369,23 @@ public class LocatorSweepResult
 {
     public DateTime RanAt { get; set; }
     public string? Error { get; set; }
-    public string? Verdict { get; set; }
+    /// <summary>What the wizard advises, and why. Null only when nothing could be scored.</summary>
+    public LocatorRecommendation? Recommendation { get; set; }
     public double FloorContrastWeightUsed { get; set; }
     public List<LocatorSweepRun> Runs { get; set; } = new();
+}
+
+public class LocatorRecommendation
+{
+    public List<string> Locators { get; set; } = new();
+    public string Label { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public double? RoomHitRate { get; set; }
+    public double? MedianErrorM { get; set; }
+    public double? FloorHitRate { get; set; }
+    public bool AlreadyConfigured { get; set; }
+    /// <summary>Which question actually decided it: room, floor, or simplicity.</summary>
+    public string DecidedBy { get; set; } = "";
 }
 
 public class LocatorSweepRun
@@ -314,4 +400,15 @@ public class LocatorSweepRun
     public double? P90ErrorM { get; set; }
     public double? RoomHitRate { get; set; }
     public double? FloorHitRate { get; set; }
+
+    /// <summary>Standard error of the room hit rate across walk POINTS - the honest uncertainty.</summary>
+    public double? RoomHitStandardErrorPoints { get; set; }
+
+    public double? FloorHitStandardErrorPoints { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<double> PerPointRoomHitRate { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<double> PerPointFloorHitRate { get; set; } = new();
 }

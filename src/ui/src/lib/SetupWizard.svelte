@@ -129,6 +129,35 @@
 		clampedParameters: { nodeName?: string; nodeId: string; parameter: string; value: number; bound: string; limit: number }[];
 	}
 
+	interface LocatorRun {
+		label: string;
+		locators: string[];
+		isCurrentConfiguration: boolean;
+		error?: string;
+		ticks: number;
+		pointsUsed: number;
+		medianErrorM?: number;
+		p90ErrorM?: number;
+		roomHitRate?: number;
+		floorHitRate?: number;
+		roomHitStandardErrorPoints?: number;
+	}
+	interface LocatorSweep {
+		ranAt: string;
+		error?: string;
+		floorContrastWeightUsed: number;
+		recommendation?: {
+			locators: string[];
+			label: string;
+			reason: string;
+			roomHitRate?: number;
+			medianErrorM?: number;
+			floorHitRate?: number;
+			alreadyConfigured: boolean;
+		};
+		runs: LocatorRun[];
+	}
+
 	interface SweepRun {
 		label: string;
 		objective?: string;
@@ -665,6 +694,42 @@
 	let sweep: SweepResult | null = null;
 	let sweepBusy = false;
 
+	let locatorSweep: LocatorSweep | null = null;
+	let locatorBusy = false;
+	let locatorApplied = false;
+
+	async function runLocatorSweep() {
+		locatorBusy = true;
+		locatorApplied = false;
+		try {
+			const res = await fetch(apiPath('/api/wizard/locator-sweep'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({})
+			});
+			if (res.ok) locatorSweep = await res.json();
+		} catch (error) {
+			console.error('Error running locator sweep:', error);
+		} finally {
+			locatorBusy = false;
+		}
+	}
+
+	async function applyLocatorChoice(locators: string[]) {
+		locatorBusy = true;
+		try {
+			const res = await fetch(apiPath('/api/wizard/locator-sweep/apply'), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ locators })
+			});
+			locatorApplied = res.ok;
+			if (res.ok) await runLocatorSweep();
+		} finally {
+			locatorBusy = false;
+		}
+	}
+
 	async function runCalibrationSweep() {
 		sweepBusy = true;
 		try {
@@ -966,6 +1031,83 @@
 					{/if}
 				{:else}
 					<p class="text-sm text-surface-600-400">Not run yet. Needs at least one walk test point.</p>
+				{/if}
+			</div>
+
+			<!-- 2d2. Which locators should be enabled -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Locator Selection</h2>
+					<button class="btn preset-filled-primary-500" onclick={runLocatorSweep} disabled={locatorBusy}>
+						{locatorBusy ? 'Measuring...' : 'Measure'}
+					</button>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Several position estimators can run at once, each producing a candidate per floor, and the most
+					confident one wins. Which of them earn their place is a question about your building, not a
+					matter of taste - so it is measured here by replaying your walk points through the real
+					estimators, not a stand-in.
+				</p>
+
+				{#if locatorSweep?.error}
+					<p class="text-sm text-warning-600-400">{locatorSweep.error}</p>
+				{:else if locatorSweep}
+					{#if locatorSweep.recommendation}
+						{@const rec = locatorSweep.recommendation}
+						<div class="p-3 rounded preset-tonal-primary mb-3">
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<p class="text-sm font-semibold">Recommended: {rec.label}</p>
+									<p class="text-xs text-surface-600-400 mt-1">{rec.reason}</p>
+								</div>
+								{#if rec.alreadyConfigured}
+									<span class="badge preset-filled-success-500 shrink-0">already set</span>
+								{:else}
+									<button class="btn btn-sm preset-filled-primary-500 shrink-0"
+										onclick={() => applyLocatorChoice(rec.locators)} disabled={locatorBusy}>
+										Apply
+									</button>
+								{/if}
+							</div>
+							{#if locatorApplied}
+								<p class="text-xs text-success-600-400 mt-2">
+									Written to the configuration. Tracking picks it up on the next locator cycle.
+								</p>
+							{/if}
+						</div>
+					{/if}
+
+					<div class="overflow-x-auto">
+						<table class="table table-compact">
+							<thead>
+								<tr><th>Combination</th><th>Right room</th><th>Right floor</th><th>Median</th><th>Points</th></tr>
+							</thead>
+							<tbody>
+								{#each locatorSweep.runs as r (r.label)}
+									<tr class={r.isCurrentConfiguration ? 'font-semibold' : ''}>
+										<td>{r.label}{r.isCurrentConfiguration ? ' (current)' : ''}</td>
+										<td>
+											{r.error ? '-' : `${Math.round((r.roomHitRate ?? 0) * 100)}%`}
+											{#if r.roomHitStandardErrorPoints}
+												<span class="text-surface-600-400">±{Math.round(r.roomHitStandardErrorPoints * 100)}</span>
+											{/if}
+										</td>
+										<td>{r.error ? '-' : `${Math.round((r.floorHitRate ?? 0) * 100)}%`}</td>
+										<td>{r.error ? '-' : `${r.medianErrorM?.toFixed(2)} m`}</td>
+										<td>{r.pointsUsed}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-2">
+						Ranked by right-room rate, because that is what presence automations consume - and it already
+						contains the rest: a scenario on the wrong floor cannot name the right room, and neither can
+						one that is half a room off. The ± is measured across walk points rather than across ticks,
+						since the ticks within one point are the same device standing in the same place.
+					</p>
+				{:else}
+					<p class="text-sm text-surface-600-400">Not measured yet. Needs recorded walk points.</p>
 				{/if}
 			</div>
 
