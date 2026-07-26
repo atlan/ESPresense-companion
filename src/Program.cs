@@ -89,6 +89,7 @@ builder.Services.AddSingleton<WizardService>();
 // Subscribes to device messages on construction, so it must be created eagerly - see below.
 builder.Services.AddSingleton<DeviceIdentityTracker>();
 builder.Services.AddSingleton<WizardDiagnostics>();
+builder.Services.AddSingleton<DeviceSetupService>();
 // Registered as singleton + forwarded so WizardController can call TriggerNow() on the same instance.
 builder.Services.AddSingleton<OptimizationRunner>();
 

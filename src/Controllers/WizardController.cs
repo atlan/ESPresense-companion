@@ -14,6 +14,7 @@ namespace ESPresense.Controllers;
 public class WizardController(
     WizardService wizard,
     WizardDiagnostics diagnostics,
+    DeviceSetupService deviceSetup,
     PairErrorTracker pairErrorTracker,
     OptimizationRunner optimizationRunner,
     ConfigLoader configLoader,
@@ -43,6 +44,36 @@ public class WizardController(
     {
         return diagnostics.Analyze();
     }
+
+    // ── Gefuehrte Geraete-Einrichtung ──────────────────────────────────────────────
+    // rssi@1m gehoert zum Geraet und faellt bei der Knoten-zu-Knoten-Kalibrierung nicht ab.
+    // Herleiten laesst es sich auch nicht: die Schaetzung aus Live-Daten wandert ueber die
+    // plausible Absorptionsspanne um 17 dB. Auf einem Meter entfaellt der Distanzterm, deshalb
+    // misst der Nutzer einmal kurz - das ist der Schritt mit dem groessten Nutzen ueberhaupt.
+
+    [HttpGet("api/wizard/device-setup/candidates")]
+    public List<DeviceSetupCandidate> GetDeviceSetupCandidates() => deviceSetup.GetCandidates();
+
+    [HttpPost("api/wizard/device-setup/reference/start")]
+    public ReferenceStatus StartReference([FromBody] ReferenceStartRequest req) =>
+        deviceSetup.StartReference(req.DeviceId, req.NodeIds ?? Array.Empty<string>(), req.DistanceM <= 0 ? 1.0 : req.DistanceM);
+
+    [HttpGet("api/wizard/device-setup/reference/status")]
+    public ReferenceStatus ReferenceStatus() => deviceSetup.Status();
+
+    [HttpPost("api/wizard/device-setup/reference/finish")]
+    public ReferenceStatus FinishReference() => deviceSetup.FinishReference();
+
+    [HttpPost("api/wizard/device-setup/reference/cancel")]
+    public IActionResult CancelReference()
+    {
+        deviceSetup.CancelReference();
+        return Ok();
+    }
+
+    [HttpPost("api/wizard/device-setup/apply")]
+    public async Task<DeviceSetupApplyResult> ApplyDeviceSetup([FromBody] DeviceSetupApplyRequest req) =>
+        await deviceSetup.ApplyAsync(req.DeviceId, req.RefRssi, req.Name, req.Alias);
 
     [HttpGet("api/wizard/validation")]
     public WizardValidationResult GetValidation()
@@ -468,4 +499,21 @@ public class WizardController(
             return StatusCode(500, new { error = "Failed to save device lists" });
         }
     }
+}
+
+public class ReferenceStartRequest
+{
+    public string DeviceId { get; set; } = "";
+    /// <summary>Nodes the device is being held next to. Empty means "use every node that hears it".</summary>
+    public string[]? NodeIds { get; set; }
+    /// <summary>Defaults to 1 m, where the path-loss term vanishes and the reading needs no assumption.</summary>
+    public double DistanceM { get; set; } = 1.0;
+}
+
+public class DeviceSetupApplyRequest
+{
+    public string DeviceId { get; set; } = "";
+    public int RefRssi { get; set; }
+    public string? Name { get; set; }
+    public string? Alias { get; set; }
 }
