@@ -30,7 +30,9 @@
     <ProjectReference Include="..\..\src\ESPresense.Companion.csproj" />
   </ItemGroup>
 
-  <Target Name="RunFrontendTests" BeforeTargets="VSTest">
+  <!-- Playwright-Browsertests. Mit -p:SkipFrontendTests=true abschaltbar, damit sich die
+       C#-Tests einzeln laufen lassen (und CI beides getrennt melden kann). -->
+  <Target Name="RunFrontendTests" BeforeTargets="VSTest" Condition="'$(SkipFrontendTests)' != 'true'">
     <Exec Command="node --version" ContinueOnError="true">
       <Output TaskParameter="ExitCode" PropertyName="NodeErrorCode" />
     </Exec>

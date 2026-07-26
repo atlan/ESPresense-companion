@@ -1,4 +1,6 @@
+# pnpm 10+ blockiert Build-Skripte von Abhaengigkeiten, bis sie hier ausdruecklich freigegeben
+# sind. pnpm legt dabei den Platzhalter "set this to true or false" an - solange der drinsteht,
+# bleibt das Paket blockiert und der dotnet-Build scheitert am "pnpm install"-Target der csproj
+# (Fehler MSB3073). esbuild ist der Bundler hinter Vite und braucht seinen postinstall-Schritt.
 allowBuilds:
-  esbuild: set this to true or false
-onlyBuiltDependencies:
-  - esbuild
+  esbuild: true

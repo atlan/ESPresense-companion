@@ -86,6 +86,9 @@ builder.Services.AddSingleton(sp => new WalkTestService(
 builder.Services.AddSingleton<AutoTuneService>();
 builder.Services.AddSingleton<LocatorTuneService>();
 builder.Services.AddSingleton<WizardService>();
+// Subscribes to device messages on construction, so it must be created eagerly - see below.
+builder.Services.AddSingleton<DeviceIdentityTracker>();
+builder.Services.AddSingleton<WizardDiagnostics>();
 // Registered as singleton + forwarded so WizardController can call TriggerNow() on the same instance.
 builder.Services.AddSingleton<OptimizationRunner>();
 
@@ -116,6 +119,10 @@ builder.Services.AddMcpServer(options =>
     .WithHttpTransport();
 
 var app = builder.Build();
+
+// Eagerly resolve trackers that subscribe to MQTT in their constructor: as lazy singletons they
+// would only come alive on the first HTTP request and miss every message until then.
+app.Services.GetRequiredService<DeviceIdentityTracker>();
 
 app.UseWebSockets(new WebSocketOptions
 {

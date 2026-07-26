@@ -70,3 +70,81 @@ public class ExcludedPairSuggestion
     /// <summary>Config-format pair id, "node_a:node_b".</summary>
     public string PairId => $"{NodeA}:{NodeB}";
 }
+
+/// <summary>
+/// Measurement-level diagnostics, as opposed to <see cref="WizardValidationResult"/> which only
+/// checks geometry. Everything here answers "do the numbers coming off the radio agree with the
+/// map", which is where accuracy problems actually live.
+/// </summary>
+public class WizardDiagnosticsResult
+{
+    public List<ValidationIssue> Issues { get; set; } = new();
+
+    /// <summary>Fit quality split by range - a single figure over all pairs hides the structure that explains most errors.</summary>
+    public FitQuality Near { get; set; } = new();
+    public FitQuality Far { get; set; } = new();
+
+    /// <summary>Range that separates Near from Far, in metres.</summary>
+    public double NearFarSplitM { get; set; }
+
+    /// <summary>Per-pair signal plausibility, worst first.</summary>
+    public List<SignalOutlier> SignalOutliers { get; set; } = new();
+
+    /// <summary>Calibration parameters sitting on a configured limit - the optimizer wanted to go further.</summary>
+    public List<ClampedParameter> ClampedParameters { get; set; } = new();
+
+    /// <summary>Device ids that belong to the same hardware address.</summary>
+    public List<SplitIdentityInfo> SplitIdentities { get; set; } = new();
+
+    /// <summary>Device ids whose address rotates, so the address-based split check cannot cover them.</summary>
+    public List<string> RotatingAddressIds { get; set; } = new();
+}
+
+public class FitQuality
+{
+    public int Pairs { get; set; }
+    /// <summary>Root mean square of (measured - map) distance, in metres.</summary>
+    public double? RmseM { get; set; }
+    /// <summary>Median signed distance error - reveals a systematic bias that RMSE hides.</summary>
+    public double? MedianBiasM { get; set; }
+    /// <summary>Median |measured - required| RSSI, in dB. Range-independent, unlike the metre figures.</summary>
+    public double? MedianAbsRssiErrorDb { get; set; }
+}
+
+public class SignalOutlier
+{
+    public string RxId { get; set; } = "";
+    public string? RxName { get; set; }
+    public string TxId { get; set; } = "";
+    public string? TxName { get; set; }
+    public double MapDistanceM { get; set; }
+    public double MeasuredDistanceM { get; set; }
+    public double MeasuredRssi { get; set; }
+    /// <summary>RSSI the path-loss model needs to produce the map distance with this node's absorption.</summary>
+    public double RequiredRssi { get; set; }
+    /// <summary>Measured minus required. Positive means "heard far louder than physically possible".</summary>
+    public double DeltaDb { get; set; }
+    public double Absorption { get; set; }
+}
+
+public class ClampedParameter
+{
+    public string NodeId { get; set; } = "";
+    public string? NodeName { get; set; }
+    public string Parameter { get; set; } = "";
+    public double Value { get; set; }
+    public double Limit { get; set; }
+    public string Bound { get; set; } = "";
+}
+
+public class SplitIdentityInfo
+{
+    public string Mac { get; set; } = "";
+    public List<SplitIdentityIdInfo> Ids { get; set; } = new();
+}
+
+public class SplitIdentityIdInfo
+{
+    public string Id { get; set; } = "";
+    public string[] Nodes { get; set; } = Array.Empty<string>();
+}

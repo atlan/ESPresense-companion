@@ -13,6 +13,7 @@ namespace ESPresense.Controllers;
 [ApiController]
 public class WizardController(
     WizardService wizard,
+    WizardDiagnostics diagnostics,
     PairErrorTracker pairErrorTracker,
     OptimizationRunner optimizationRunner,
     ConfigLoader configLoader,
@@ -31,6 +32,16 @@ public class WizardController(
         state.Nodes.TryGetValue(a, out var nodeA);
         state.Nodes.TryGetValue(b, out var nodeB);
         return $"{nodeA?.Name ?? a} ↔ {nodeB?.Name ?? b}";
+    }
+
+    /// <summary>
+    /// Measurement-level diagnostics: does the radio data agree with the map? Complements
+    /// /api/wizard/validation, which only checks the geometry.
+    /// </summary>
+    [HttpGet("api/wizard/diagnostics")]
+    public WizardDiagnosticsResult GetDiagnostics()
+    {
+        return diagnostics.Analyze();
     }
 
     [HttpGet("api/wizard/validation")]
