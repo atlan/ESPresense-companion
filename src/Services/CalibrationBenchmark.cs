@@ -52,7 +52,21 @@ public class CalibrationBenchmark(
     {
         var result = new BenchmarkResult { RanAt = DateTime.UtcNow, Label = label, Overrides = overrides };
 
-        var points = walkTest.GetPoints().Where(p => p.Raw.Count > 0 && p.FloorId != null).ToList();
+        var allPoints = walkTest.GetPoints();
+        var points = allPoints.Where(p => p.Raw.Count > 0 && p.FloorId != null).ToList();
+
+        // Points that never even enter the loop. Counting them and moving on is how wt9 - a walk
+        // point that gets its floor wrong on every single tick - stayed invisible for a day: the
+        // result said "1 skipped" and no more, and that number was not even shown in the UI.
+        foreach (var p in allPoints.Except(points))
+            result.Skipped.Add(new BenchmarkSkipped
+            {
+                Id = p.Id,
+                FloorId = p.FloorId,
+                Reason = p.FloorId == null
+                    ? "No floor assigned, so there is nothing to score the estimate against."
+                    : "No raw per-tick readings were stored with this point."
+            });
         if (points.Count == 0)
         {
             result.Error = "No walk test points with raw tick data. Record a walk test first - the benchmark " +
@@ -88,6 +102,10 @@ public class CalibrationBenchmark(
             var errors = new List<double>();
             var pointFloorHits = 0;
             var pointFloorChecked = 0;
+            var bestOwnFloorHeard = 0;
+            var bestOtherFloorHeard = 0;
+            var ownFloorNodeCount = state.Nodes.Values.Count(n =>
+                n.HasLocation && (n.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false));
 
             foreach (var tick in point.Raw.GroupBy(r => r.T))
             {
@@ -122,6 +140,8 @@ public class CalibrationBenchmark(
                     .Where(a => a.node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)
                     .Select(a => (loc: a.node.Location, dist: a.dist))
                     .ToList();
+                bestOwnFloorHeard = Math.Max(bestOwnFloorHeard, heard.Count);
+                bestOtherFloorHeard = Math.Max(bestOtherFloorHeard, audible.Count - heard.Count);
                 if (heard.Count < MinNodesPerTick) continue;
 
                 // Optional, so the effect can be measured before it is adopted live.
@@ -154,6 +174,29 @@ public class CalibrationBenchmark(
             if (estimates.Count < MinTicksPerPoint)
             {
                 skippedNoData++;
+                // Spelled out, because "skipped" alone reads as "nothing to see here" while the
+                // actual situation is often the most informative measurement on the installation:
+                // a spot where the device is loudly heard, just not by the floor it is standing on.
+                var reason = bestOwnFloorHeard < MinNodesPerTick
+                    ? $"Only {bestOwnFloorHeard} of the {ownFloorNodeCount} nodes on its own floor ever heard it, " +
+                      $"and a position needs {MinNodesPerTick}." +
+                      (bestOtherFloorHeard >= MinNodesPerTick
+                          ? $" {bestOtherFloorHeard} nodes on other floors did hear it - so the signal is there, " +
+                            "it just belongs to the wrong storey. Another node on this floor would fix it."
+                          : " Nothing else heard it either, so this spot has no coverage at all.")
+                    : $"Only {estimates.Count} usable ticks, and {MinTicksPerPoint} are needed - a shorter " +
+                      "reading than this says more about luck than accuracy. Record it again for longer.";
+
+                result.Skipped.Add(new BenchmarkSkipped
+                {
+                    Id = point.Id,
+                    FloorId = point.FloorId,
+                    RoomName = truthRoom?.Name,
+                    OwnFloorNodesHeard = bestOwnFloorHeard,
+                    OwnFloorNodeCount = ownFloorNodeCount,
+                    OtherFloorNodesHeard = bestOtherFloorHeard,
+                    Reason = reason
+                });
                 continue;
             }
 
@@ -470,6 +513,9 @@ public class BenchmarkResult
     public double? DeltaMedianM { get; set; }
     public string? Verdict { get; set; }
 
+    /// <summary>Points left out of the score, each with the reason. See <see cref="BenchmarkSkipped"/>.</summary>
+    public List<BenchmarkSkipped> Skipped { get; set; } = new();
+
     public List<BenchmarkFloor> Floors { get; set; } = new();
     public List<BenchmarkPoint> Points { get; set; } = new();
 }
@@ -482,6 +528,24 @@ public class BenchmarkFloor
     public double? P90ErrorM { get; set; }
     /// <summary>How often ticks truly on this floor were assigned to it.</summary>
     public double? FloorHitRate { get; set; }
+}
+
+/// <summary>
+/// A walk point the benchmark could not score, and why. Exists because the count on its own was
+/// actively misleading: the one point it hid turned out to be the clearest evidence on the whole
+/// installation that some spots are heard by the wrong floor's nodes.
+/// </summary>
+public class BenchmarkSkipped
+{
+    public string Id { get; set; } = "";
+    public string? FloorId { get; set; }
+    public string? RoomName { get; set; }
+    /// <summary>Most nodes on the point's own floor that were heard in any single tick.</summary>
+    public int OwnFloorNodesHeard { get; set; }
+    public int OwnFloorNodeCount { get; set; }
+    /// <summary>Most nodes on OTHER floors heard in any single tick - the information being discarded.</summary>
+    public int OtherFloorNodesHeard { get; set; }
+    public string Reason { get; set; } = "";
 }
 
 public class BenchmarkConfusion

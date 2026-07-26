@@ -168,6 +168,16 @@
 		floorConfusion: { pair: string; ticks: number }[];
 		pointsUsed: number;
 		pointsWithLevels: number;
+		pointsSkipped: number;
+		skipped: {
+			id: string;
+			floorId?: string;
+			roomName?: string;
+			ownFloorNodesHeard: number;
+			ownFloorNodeCount: number;
+			otherFloorNodesHeard: number;
+			reason: string;
+		}[];
 		verdict?: string;
 		floors: { floorId: string; medianErrorM?: number; ticks: number; floorHitRate?: number }[];
 	}
@@ -902,6 +912,9 @@
 								<span>Right floor <strong class={b.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>{Math.round(b.floorHitRate * 100)}%</strong></span>
 							{/if}
 							<span class="text-surface-600-400">{b.pointsUsed} points, {b.pointsWithLevels} with signal levels</span>
+							{#if b.pointsSkipped > 0}
+								<span class="text-warning-600-400">{b.pointsSkipped} not scored</span>
+							{/if}
 						</div>
 						{#if b.floors.length > 0}
 							<div class="overflow-x-auto">
@@ -920,6 +933,24 @@
 										{/each}
 									</tbody>
 								</table>
+							</div>
+						{/if}
+						{#if (b.skipped ?? []).length > 0}
+							<div class="mt-3 p-3 rounded preset-tonal-warning">
+								<p class="text-sm font-semibold mb-1">Walk points not scored</p>
+								<p class="text-xs text-surface-600-400 mb-2">
+									These were recorded but could not be measured against. Worth reading rather than
+									skipping: a point that no node on its own floor can hear is not missing data, it is
+									data about a gap.
+								</p>
+								<ul class="space-y-1">
+									{#each b.skipped as sk (sk.id)}
+										<li class="text-sm">
+											<span class="font-medium">{sk.roomName ?? sk.id}</span>
+											<span class="text-surface-600-400">({sk.floorId}) — {sk.reason}</span>
+										</li>
+									{/each}
+								</ul>
 							</div>
 						{/if}
 						{#if (b.floorConfusion ?? []).length > 0}
