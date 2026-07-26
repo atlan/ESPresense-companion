@@ -247,15 +247,31 @@ public class DeviceSetupService(
         var ids = new List<string> { deviceId };
         ids.AddRange(AlternateIdsFor(deviceId));
 
+        var written = new List<string>();
         foreach (var id in ids.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var existing = deviceSettings.Get(id) ?? new DeviceSettings { OriginalId = id };
-            existing.Id = targetId;
-            existing.Name = name ?? existing.Name ?? targetId;
-            existing.RefRssi = refRssi;
-            await deviceSettings.Set(id, existing);
-            Log.Information("Device setup: wrote rssi@1m={Ref} and alias '{Alias}' for id {Id}", refRssi, targetId, id);
+            var existing = deviceSettings.Get(id);
+
+            // The store refuses writes addressed to an alias ("Cannot write to alias ... write to the
+            // original ID instead") to keep one device from ending up with two config entries. The
+            // id we were handed is usually exactly that alias, since it is what the rest of the UI
+            // shows - so resolve back to the original before writing.
+            var writeId = existing?.OriginalId ?? id;
+            if (!string.Equals(writeId, id, StringComparison.OrdinalIgnoreCase))
+                existing = deviceSettings.Get(writeId);
+
+            if (written.Contains(writeId, StringComparer.OrdinalIgnoreCase)) continue;
+
+            var settings = existing ?? new DeviceSettings();
+            settings.OriginalId = writeId;
+            settings.Id = targetId;
+            settings.Name = name ?? settings.Name ?? targetId;
+            settings.RefRssi = refRssi;
+            await deviceSettings.Set(writeId, settings);
+            written.Add(writeId);
+            Log.Information("Device setup: wrote rssi@1m={Ref} and alias '{Alias}' to original id {Id}", refRssi, targetId, writeId);
         }
+        ids = written;
 
         return new DeviceSetupApplyResult
         {
