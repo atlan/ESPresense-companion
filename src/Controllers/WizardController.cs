@@ -61,7 +61,14 @@ public class WizardController(
         // Overrides only bite on points that carry per-tick levels; without them the recorded
         // distance is all there is and the run measures the state as recorded.
         var overrides = req?.RefRssi != null || req?.Absorption != null || req?.ConsistencyFilter == true
-            ? new BenchmarkOverrides { RefRssi = req.RefRssi, Absorption = req.Absorption, ConsistencyFilter = req.ConsistencyFilter }
+                        || req?.FloorContrastWeight != null
+            ? new BenchmarkOverrides
+            {
+                RefRssi = req.RefRssi,
+                Absorption = req.Absorption,
+                ConsistencyFilter = req.ConsistencyFilter,
+                FloorContrastWeight = req.FloorContrastWeight
+            }
             : null;
         return benchmark.Run(req?.Label, overrides);
     }
@@ -566,4 +573,6 @@ public class BenchmarkRunRequest
     public double? Absorption { get; set; }
     /// <summary>Discard readings that contradict the rest geometrically before estimating.</summary>
     public bool? ConsistencyFilter { get; set; }
+    /// <summary>Weight of the cross-floor contrast term in the floor decision. 0 or null disables it.</summary>
+    public double? FloorContrastWeight { get; set; }
 }

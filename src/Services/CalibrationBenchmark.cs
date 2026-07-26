@@ -119,7 +119,7 @@ public class CalibrationBenchmark(
                 // Scored on every audible node, deliberately BEFORE the same-floor cut below: that
                 // cut is given the answer, so an error figure computed after it cannot say anything
                 // about whether the floor would have been found in the first place.
-                if (GuessFloor(audible, result.Bandwidth, result.Kernel) is { } guess)
+                if (GuessFloor(audible, result.Bandwidth, result.Kernel, overrides?.FloorContrastWeight ?? 0) is { } guess)
                 {
                     floorChecked++;
                     pointFloorChecked++;
@@ -373,7 +373,7 @@ public class CalibrationBenchmark(
         static string Set(Dictionary<string, double>? d) => d == null || d.Count == 0
             ? ""
             : string.Join(",", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}={kv.Value:0.###}"));
-        return $"{o.RefRssi}|{o.Absorption}|{o.ConsistencyFilter}|{Set(o.AbsorptionByNode)}|{Set(o.RxAdjByNode)}";
+        return $"{o.RefRssi}|{o.Absorption}|{o.ConsistencyFilter}|{o.FloorContrastWeight}|{Set(o.AbsorptionByNode)}|{Set(o.RxAdjByNode)}";
     }
 
     private static void Bump(Dictionary<string, int> counter, string key)
@@ -395,7 +395,7 @@ public class CalibrationBenchmark(
     /// are counted instead, which understates confidence on a floor that had a node down. It shifts
     /// both floors in the same direction, so comparisons between runs stay sound.
     /// </summary>
-    private string? GuessFloor(IReadOnlyList<(Node node, double dist)> audible, double bandwidth, string? kernel)
+    private string? GuessFloor(IReadOnlyList<(Node node, double dist)> audible, double bandwidth, string? kernel, double contrastWeight)
     {
         string? best = null;
         var bestConfidence = 0;
@@ -428,6 +428,13 @@ public class CalibrationBenchmark(
 
             var possible = state.Nodes.Values.Count(n => (n.Floors?.Contains(floor) ?? false) && n.HasLocation);
             var confidence = MathUtils.CalculateConfidence(error, pearson, heard.Count, possible);
+
+            // The readings every floor scenario throws away, used to tell the storeys apart rather
+            // than to place the device. See FloorContrast for the physics and the measurements.
+            confidence += (int)Math.Round(FloorContrast.Adjustment(
+                est, audible, r => r.node.Location, r => r.dist,
+                r => r.node.Floors?.Contains(floor) ?? false, contrastWeight));
+
             if (confidence > bestConfidence)
             {
                 bestConfidence = confidence;
@@ -580,6 +587,12 @@ public class BenchmarkOverrides
     /// precedence over the global <see cref="Absorption"/> for the nodes it names.
     /// </summary>
     public Dictionary<string, double>? AbsorptionByNode { get; set; }
+
+    /// <summary>
+    /// How many confidence points the cross-floor contrast may add or subtract. 0 disables it, which
+    /// is the default until a measurement says otherwise.
+    /// </summary>
+    public double? FloorContrastWeight { get; set; }
 
     /// <summary>Per-node receive adjustment, keyed by node id.</summary>
     public Dictionary<string, double>? RxAdjByNode { get; set; }

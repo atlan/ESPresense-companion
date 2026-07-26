@@ -103,12 +103,25 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
                     (nts.Online(n.Id)));
 
             // Use the centralized confidence calculation
-            scenario.Confidence = MathUtils.CalculateConfidence(
+            var confidence = MathUtils.CalculateConfidence(
                 scenario.Error,
                 scenario.PearsonCorrelation,
                 heard.Length,
                 nodesPossibleOnline
             );
+
+            // Every node that heard the device, not just this floor's - the cross-floor readings are
+            // what tells the storeys apart, and until now each scenario discarded them. See
+            // FloorContrast: they are used as a contrast, never as distances, precisely so the
+            // scenarios stay distinguishable.
+            var audible = device.Nodes.Values.Where(n => n.Current && n.Node is { HasLocation: true }).ToArray();
+            confidence += (int)Math.Round(FloorContrast.Adjustment(
+                est, audible,
+                n => n.Node!.Location, n => n.Distance,
+                n => n.Node!.Floors?.Contains(floor) ?? false,
+                state.Config?.Locators?.NadarayaWatson?.FloorContrastWeight ?? 0));
+
+            scenario.Confidence = Math.Clamp(confidence, 0, 100);
         }
         catch (Exception ex)
         {

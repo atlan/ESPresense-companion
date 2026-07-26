@@ -91,6 +91,16 @@ namespace ESPresense.Models
 
         [YamlMember(Alias = "kernel")]
         public string Kernel { get; set; } = "gaussian";
+
+        /// <summary>
+        /// How many confidence points the cross-floor contrast may shift the floor decision by.
+        /// See <see cref="ESPresense.Locators.FloorContrast"/>. Default 20 rather than 0 because the
+        /// measurement is unusually clear - floor detection 87.9 % to 96.5 % over 32 walk points and
+        /// 1460 ticks, monotone from 5 to 30, with position and room accuracy untouched. Set to 0 to
+        /// go back to deciding the storey from same-floor nodes alone.
+        /// </summary>
+        [YamlMember(Alias = "floor_contrast_weight")]
+        public double FloorContrastWeight { get; set; } = 20;
     }
 
     public partial class NelderMeadConfig
