@@ -77,7 +77,9 @@ builder.Services.AddSingleton<DeviceService>();
 builder.Services.AddSingleton<DeviceCaptureService>();
 builder.Services.AddSingleton<LeaseService>();
 builder.Services.AddSingleton<ILeaseService>(provider => provider.GetRequiredService<LeaseService>());
-builder.Services.AddSingleton<PairErrorTracker>();
+builder.Services.AddSingleton(sp => new PairErrorTracker(
+    sp.GetRequiredService<State>(),
+    Path.Combine(storageDir, "pair-errors.json")));
 builder.Services.AddSingleton(sp => new WalkTestService(
     sp.GetRequiredService<State>(),
     sp.GetRequiredService<PairErrorTracker>(),

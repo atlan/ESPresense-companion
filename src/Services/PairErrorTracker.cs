@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using ESPresense.Models;
 using MathNet.Spatial.Euclidean;
+using Serilog;
 
 namespace ESPresense.Services;
 
@@ -13,8 +14,63 @@ namespace ESPresense.Services;
 /// must not produce a suggestion. Moving a node resets all of its pairs' statistics outright,
 /// since history against the old geometry is meaningless.
 /// </summary>
-public class PairErrorTracker(State state)
+public class PairErrorTracker
 {
+    private readonly State state;
+    private readonly string? _persistPath;
+
+    public PairErrorTracker(State state, string? persistPath = null)
+    {
+        this.state = state;
+        _persistPath = persistPath;
+        Load();
+    }
+
+    /// <summary>
+    /// Written every time the statistics are sampled. Without it every restart - and a deploy is a
+    /// restart - reset every pair to "observed for 0 hours", which makes the one thing these
+    /// statistics are for impossible: telling a node that has always been odd from one that changed
+    /// last Tuesday. The diagnostics report that distinction, so it has to survive a reboot.
+    /// </summary>
+    private void Save()
+    {
+        if (string.IsNullOrEmpty(_persistPath)) return;
+        try
+        {
+            var payload = _stats.Values.Select(v =>
+            {
+                lock (v) return new Persisted(v.NodeA, v.NodeB, v.Ewma, v.AboveFractionEwma, v.Samples, v.FirstSampleAt);
+            }).ToList();
+            File.WriteAllText(_persistPath, System.Text.Json.JsonSerializer.Serialize(payload));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not persist pair error statistics to {Path}", _persistPath);
+        }
+    }
+
+    private void Load()
+    {
+        if (string.IsNullOrEmpty(_persistPath) || !File.Exists(_persistPath)) return;
+        try
+        {
+            var payload = System.Text.Json.JsonSerializer.Deserialize<List<Persisted>>(File.ReadAllText(_persistPath));
+            foreach (var v in payload ?? new List<Persisted>())
+                _stats[$"{v.NodeA}:{v.NodeB}"] = new PairStat
+                {
+                    NodeA = v.NodeA, NodeB = v.NodeB, Ewma = v.Ewma,
+                    AboveFractionEwma = v.AboveFractionEwma, Samples = v.Samples, FirstSampleAt = v.FirstSampleAt
+                };
+            Log.Information("Loaded {Count} pair error statistics from {Path}", _stats.Count, _persistPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not read pair error statistics from {Path}", _persistPath);
+        }
+    }
+
+    private record Persisted(string NodeA, string NodeB, double Ewma, double AboveFractionEwma, int Samples, DateTime FirstSampleAt);
+
     private class PairStat
     {
         public double Ewma;
@@ -115,6 +171,8 @@ public class PairErrorTracker(State state)
                 _nodeLocations[id] = loc;
             }
         }
+
+        Save();
     }
 
     public record PairErrorSnapshot(string NodeA, string NodeB, double Ewma, int Samples, TimeSpan Observed);
