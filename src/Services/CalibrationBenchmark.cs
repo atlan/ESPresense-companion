@@ -137,6 +137,11 @@ public class CalibrationBenchmark(
         }
 
         result.PointsUsed = result.Points.Count;
+        // Points recorded before per-tick levels existed can only score the locator: their ticks
+        // carry the distance the node already derived, so absorption, reference level and receive
+        // adjustment are baked in and invisible to a replay. Reported rather than silently mixed,
+        // because a run whose mix has shifted is not comparable with the previous one.
+        result.PointsWithLevels = points.Count(p => p.SupportsCalibrationReplay);
         result.PointsSkipped = skippedNoData;
         result.Ticks = allErrors.Count;
         result.MedianErrorM = Round(Median(allErrors));
@@ -233,6 +238,9 @@ public class BenchmarkResult
 
     public int PointsUsed { get; set; }
     public int PointsSkipped { get; set; }
+    /// <summary>Of the used points, how many carry per-tick signal levels - only those can score
+    /// calibration changes rather than just the locator.</summary>
+    public int PointsWithLevels { get; set; }
     public int Ticks { get; set; }
 
     public double? MedianErrorM { get; set; }

@@ -48,6 +48,7 @@ public class WalkTestService
         public double Distance;
         public double Rssi;
         public double RefRssi;
+        public double? RssiRxAdj;
         public double? DistVar;
         public double? RssiVar;
     }
@@ -61,6 +62,24 @@ public class WalkTestService
         public int T { get; set; }
         public string N { get; set; } = "";
         public double D { get; set; }
+
+        /// <summary>
+        /// Raw level at this tick. Recorded because the distance next to it is already a DERIVED
+        /// value - the node computed it from this rssi with the absorption and rssi@1m in force at
+        /// the time. A replay over D alone can therefore only score the locator; anything upstream
+        /// of the distance (absorption, reference level, receive adjustment) is frozen into the
+        /// recording and invisible to it. With the level kept, the same points can also score
+        /// calibration changes. Nullable: points recorded before this existed have no level, and
+        /// the benchmark has to be able to tell the two apart rather than silently mixing them.
+        /// </summary>
+        public double? R { get; set; }
+
+        /// <summary>Receive adjustment of the rx node at record time - without it the level
+        /// describes the node's sensitivity as much as the distance (spans -5..+25 dB in a fleet).</summary>
+        public double? A { get; set; }
+
+        /// <summary>Reference level attributed to the transmitter at record time.</summary>
+        public double? Ref { get; set; }
     }
 
     public class NodeAggregate
@@ -104,8 +123,16 @@ public class WalkTestService
         /// </summary>
         public double? TxRefRssiEstimate { get; set; }
 
-        /// <summary>Raw per-tick node distances for locator replay (real live noise, not medians).</summary>
+        /// <summary>Raw per-tick node readings for replay (real live noise, not medians).</summary>
         public List<RawTickEntry> Raw { get; set; } = new();
+
+        /// <summary>
+        /// True when the ticks carry signal levels, not just distances - only then can a replay
+        /// score changes to absorption, reference level or receive adjustment. Points recorded
+        /// before that was added remain fully usable for locator comparisons.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool SupportsCalibrationReplay => Raw.Any(r => r.R.HasValue);
     }
 
     public class ActiveSession
@@ -293,6 +320,7 @@ public class WalkTestService
                 Distance = dn.Distance,
                 Rssi = dn.Rssi,
                 RefRssi = dn.RefRssi,
+                RssiRxAdj = dn.RssiRxAdj,
                 DistVar = dn.DistVar,
                 RssiVar = dn.RssiVar
             });
@@ -385,7 +413,7 @@ public class WalkTestService
             Raw = s.Samples
                 .Where(x => aggregates.Any(a => a.NodeId.Equals(x.NodeId, StringComparison.OrdinalIgnoreCase)))
                 .OrderBy(x => x.Tick)
-                .Select(x => new RawTickEntry { T = x.Tick, N = x.NodeId, D = x.Distance })
+                .Select(x => new RawTickEntry { T = x.Tick, N = x.NodeId, D = x.Distance, R = x.Rssi, A = x.RssiRxAdj, Ref = x.RefRssi })
                 .ToList()
         };
         _points[point.Id] = point;

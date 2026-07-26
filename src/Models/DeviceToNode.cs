@@ -10,6 +10,14 @@ public class DeviceToNode(Device device, Node node)
 
     public double Rssi { get; set; }
     public double? RssiVar { get; set; }
+
+    /// <summary>
+    /// Receive adjustment the rx node applied when it reported this reading. The node publishes it
+    /// alongside the raw level and it was being dropped here - without it a level cannot be
+    /// normalised for node sensitivity, which spans -5..+25 dB across a fleet, so a comparison of
+    /// levels from different nodes would mostly compare the nodes.
+    /// </summary>
+    public double? RssiRxAdj { get; set; }
     public double RefRssi { get; set; }
 
     public DateTime? LastHit { get; set; }
@@ -24,6 +32,7 @@ public class DeviceToNode(Device device, Node node)
         Rssi = payload.Rssi;
         RssiVar = payload.RssiVar;
         RefRssi = payload.RefRssi;
+        RssiRxAdj = payload.RssiRxAdj;
         NewName(payload.Name);
         var moved = Math.Abs(LastDistance - payload.Distance) > 0.25;
         if (moved) LastDistance = payload.Distance;
