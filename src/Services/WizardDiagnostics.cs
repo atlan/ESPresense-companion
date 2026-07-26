@@ -419,8 +419,8 @@ public class WizardDiagnostics(
                 Message = $"'{contradiction.RxName ?? contradiction.RxId}' hears " +
                           $"'{contradiction.TxName ?? contradiction.TxId}' at {contradiction.MeasuredRssi:0} dBm " +
                           $"from {contradiction.MapDistanceM:0.0} m away, but the model needs " +
-                          $"{contradiction.RequiredRssi:0} dBm there ({sign}{contradiction.DeltaDb:0} dB off over " +
-                          $"{contradiction.Observations} readings, absorption {contradiction.Absorption:0.00}). " +
+                          $"{contradiction.RequiredRssi:0} dBm there ({sign}{contradiction.DeltaDb:0} dB off, " +
+                          $"absorption {contradiction.Absorption:0.00}). " +
                           "No path-loss setting explains a gap this " +
                           "large - treat it as a contradiction (check the mapped position, the antenna, or exclude " +
                           "the pair) rather than something calibration can absorb."

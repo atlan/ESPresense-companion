@@ -3,6 +3,7 @@
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { calibration } from '$lib/stores';
 	import { apiPath } from '$lib/api';
+	import { gotoCalibration } from '$lib/urls';
 	import { showConfirm } from '$lib/modal/modalStore';
 
 	const toastStore = getToastStore();
@@ -153,26 +154,12 @@
 		alternateIds: string[];
 	}
 
-	interface RefStatus {
-		running: boolean;
-		estimatedRefRssi?: number;
-		runs: number;
-		runSpreadDb: number;
-		trusted: boolean;
-		warning?: string;
-		contextNote?: string;
-		nodes: { nodeId: string; nodeName?: string; isReference: boolean; samples: number; medianLevelDbm: number }[];
-	}
 
 	let diagnostics: Diagnostics | null = null;
 	let benchmark: { last?: BenchmarkRun; history: BenchmarkRun[] } | null = null;
 	let benchBusy = false;
 	let candidates: SetupCandidate[] = [];
-	let refStatus: RefStatus | null = null;
-	let refDevice = '';
-	let refNode = '';
-	let refDistance = 1.0;
-	let refBusy = false;
+	$: needsReference = candidates.filter((c) => c.configuredRefRssi == null);
 
 	let validation: { issues: ValidationIssue[]; hasErrors: boolean; hasWarnings: boolean } | null = null;
 	let health: HealthResult | null = null;
@@ -353,11 +340,7 @@
 			}
 			if (dRes.ok) diagnostics = await dRes.json();
 			if (bRes.ok) benchmark = await bRes.json();
-			if (cRes.ok) {
-				candidates = await cRes.json();
-				if (!refDevice && candidates.length) refDevice = candidates[0].id;
-			}
-			if (!refNode && health?.nodes?.length) refNode = health.nodes[0].id;
+			if (cRes.ok) candidates = await cRes.json();
 		} catch (error) {
 			console.error('Error fetching wizard data:', error);
 		} finally {
@@ -674,50 +657,8 @@
 		}
 	}
 
-	async function startReference() {
-		refBusy = true;
-		try {
-			const res = await fetch(apiPath('/api/wizard/device-setup/reference/start'), {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ deviceId: refDevice, referenceNodeId: refNode, distanceM: refDistance })
-			});
-			if (res.ok) refStatus = await res.json();
-		} finally {
-			refBusy = false;
-		}
-	}
 
-	async function finishReference() {
-		refBusy = true;
-		try {
-			const res = await fetch(apiPath('/api/wizard/device-setup/reference/finish'), { method: 'POST' });
-			if (res.ok) {
-				refStatus = await res.json();
-				if (refStatus?.warning) toastStore.trigger({ message: refStatus.warning });
-			}
-		} finally {
-			refBusy = false;
-		}
-	}
 
-	async function applyReference() {
-		if (refStatus?.estimatedRefRssi == null) return;
-		refBusy = true;
-		try {
-			const res = await fetch(apiPath('/api/wizard/device-setup/apply'), {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ deviceId: refDevice, refRssi: refStatus.estimatedRefRssi })
-			});
-			toastStore.trigger({
-				message: res.ok ? `rssi@1m set to ${refStatus.estimatedRefRssi} dBm` : 'Could not write the device config'
-			});
-			if (res.ok) await fetchAll();
-		} finally {
-			refBusy = false;
-		}
-	}
 
 	/// Colour by how far the room is from the 1.5 m that measured good accuracy here.
 	function coverageClass(median: number): string {
@@ -901,87 +842,43 @@
 				{/if}
 			</div>
 
-			<!-- 2c. Device setup: the 1 m reference measurement -->
+			<!-- 2c. Which devices still need a reference level -->
 			<div class="card p-4">
-				<header class="mb-3"><h2 class="text-lg font-semibold">Tracked Device Setup</h2></header>
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Tracked Devices</h2>
+					<span class="badge {needsReference.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
+						{needsReference.length === 0 ? 'all set' : `${needsReference.length} without rssi@1m`}
+					</span>
+				</header>
 				<p class="text-sm text-surface-600-400 mb-3">
-					The same measurement is available per device from the Devices page (Calibrate), which is where
-					you land when a device turns out to need it. This is the setup-time entry point.
-				</p>
-				<p class="text-sm text-surface-600-400 mb-3">
-					A device's <code>rssi@1m</code> cannot come from the node-to-node calibration - the nodes calibrate
-					each other, a new tag is a stranger to all of them. It cannot be derived from live data either: the
-					estimate moves 17 dB across the plausible range of absorption. At one metre the distance term
-					vanishes, so measuring it takes a minute and settles it.
+					<code>rssi@1m</code> is a property of the transmitter, so it cannot come out of the node
+					calibration - the nodes calibrate each other, and a new tag is a stranger to all of them.
+					Without it a device is tracked against a default that can be tens of dB off. Measuring it
+					takes about a minute per device and happens on that device's calibration page.
 				</p>
 
-				<div class="flex flex-wrap items-end gap-3 mb-3">
-					<label class="label text-sm">
-						<span>Device</span>
-						<select class="select" bind:value={refDevice}>
-							{#each candidates as c (c.id)}
-								<option value={c.id}>{c.name ?? c.id}{c.configuredRefRssi != null ? ` (${c.configuredRefRssi} dBm)` : ' (not set)'}</option>
-							{/each}
-						</select>
-					</label>
-					<label class="label text-sm">
-						<span>Next to node</span>
-						<select class="select" bind:value={refNode}>
-							{#each health?.nodes ?? [] as n (n.id)}
-								<option value={n.id}>{n.name ?? n.id}</option>
-							{/each}
-						</select>
-					</label>
-					<label class="label text-sm w-28">
-						<span>Distance (m)</span>
-						<input class="input" type="number" step="0.05" bind:value={refDistance} />
-					</label>
-					{#if refStatus?.running}
-						<button class="btn preset-filled-primary-500" onclick={finishReference} disabled={refBusy}>Finish run</button>
-					{:else}
-						<button class="btn preset-filled-primary-500" onclick={startReference} disabled={refBusy || !refDevice || !refNode}>Start run</button>
-					{/if}
-				</div>
-				<p class="text-xs text-surface-600-400 mb-3">
-					Put the device down and step away - do not hold it. Measured here: repeats scatter 4.4 dB when held
-					and 1.6 dB when left lying. Two agreeing runs are needed before the value counts as trustworthy.
-				</p>
+				{#if needsReference.length === 0}
+					<p class="text-sm">Every tracked device has a reference level configured.</p>
+				{:else}
+					<ul class="space-y-1 max-h-64 overflow-y-auto pr-2">
+						{#each needsReference as c (c.id)}
+							<li class="flex items-center gap-2 text-sm">
+								<button class="btn btn-sm preset-tonal shrink-0" onclick={() => gotoCalibration(c.id)}>Measure</button>
+								<span class="font-medium">{c.name ?? c.id}</span>
+								<span class="text-surface-600-400">heard by {c.nodeCount} node{c.nodeCount === 1 ? '' : 's'}</span>
+								{#if c.rotatingAddress}
+									<span class="badge preset-filled-surface-500">rotating address</span>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
 
-				{#if refStatus}
-					<div class="text-sm mb-2">
-						{#if refStatus.estimatedRefRssi != null}
-							<strong>{refStatus.estimatedRefRssi} dBm</strong>
-							<span class="text-surface-600-400">
-								after {refStatus.runs} run{refStatus.runs === 1 ? '' : 's'}{refStatus.runs > 1 ? `, spread ${refStatus.runSpreadDb} dB` : ''}
-							</span>
-							<span class="badge {refStatus.trusted ? 'preset-filled-success-500' : 'preset-filled-warning-500'} ml-2">
-								{refStatus.trusted ? 'trustworthy' : 'provisional'}
-							</span>
-							{#if refStatus.trusted}
-								<button class="btn btn-sm preset-filled-primary-500 ml-3" onclick={applyReference} disabled={refBusy}>Apply</button>
-							{/if}
-						{:else}
-							<span class="text-surface-600-400">Collecting...</span>
-						{/if}
-					</div>
-					{#if refStatus.warning}<p class="text-sm text-warning-600-400 mb-2">{refStatus.warning}</p>{/if}
-					{#if refStatus.contextNote}<p class="text-sm text-warning-600-400 mb-2">{refStatus.contextNote}</p>{/if}
-					{#if refStatus.nodes.length > 0}
-						<div class="overflow-x-auto overflow-y-auto max-h-48">
-							<table class="table table-compact">
-								<thead><tr><th>Node</th><th>Readings</th><th>Level</th></tr></thead>
-								<tbody>
-									{#each refStatus.nodes as n (n.nodeId)}
-										<tr class={n.isReference ? 'font-semibold' : ''}>
-											<td>{n.nodeName ?? n.nodeId}{n.isReference ? ' (reference)' : ''}</td>
-											<td>{n.samples}</td>
-											<td>{n.medianLevelDbm.toFixed(1)} dBm</td>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
-						</div>
-					{/if}
+				{#if candidates.length > needsReference.length}
+					<p class="text-xs text-surface-600-400 mt-2">
+						{candidates.length - needsReference.length} further device{candidates.length - needsReference.length === 1 ? '' : 's'}
+						already have one; open them from the Devices page to re-measure.
+					</p>
 				{/if}
 			</div>
 

@@ -132,7 +132,11 @@ public class SignalOutlier
     /// <summary>Measured minus required. Positive means "heard far louder than physically possible".</summary>
     public double DeltaDb { get; set; }
     public double Absorption { get; set; }
-    /// <summary>How many snapshots the smoothed values above are built from.</summary>
+    /// <summary>
+    /// How many snapshots the smoothed values above are built from. Deliberately NOT part of the
+    /// message text: it increments on every request, so putting it there made each finding read as a
+    /// new one - the exact churn the smoothing was added to remove.
+    /// </summary>
     public int Observations { get; set; }
     /// <summary>
     /// True while this pair counts as a contradiction. Latches on at the contradiction threshold and
