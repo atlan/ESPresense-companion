@@ -97,6 +97,13 @@ public class WizardDiagnostics(
     {
         foreach (var split in identityTracker.GetSplitIdentities())
         {
+            // Only splits that involve a device the user actually tracks. Two untracked ids sharing
+            // an address is true, unactionable and constant - the fleet is full of phones and
+            // wearables the Companion never places, and reporting those buries the one finding that
+            // matters. A diagnostic list is only useful while everything on it is worth reading.
+            var tracked = split.Ids.Where(i => IsTracked(i.Id)).ToList();
+            if (tracked.Count == 0) continue;
+
             result.SplitIdentities.Add(new SplitIdentityInfo
             {
                 Mac = split.Mac,
@@ -104,27 +111,46 @@ public class WizardDiagnostics(
             });
 
             var idList = string.Join("', '", split.Ids.Select(i => $"{i.Id} ({i.Nodes.Length} nodes)"));
-            var main = split.Ids.First();
-            var others = split.Ids.Skip(1).ToList();
-            var lostNodes = others.Sum(o => o.Nodes.Length);
-            var totalNodes = split.Ids.Sum(i => i.Nodes.Length);
+            // The alias target has to be a tracked device: aliasing a tracked id onto an untracked
+            // one would move the measurements somewhere nothing is looking. Among tracked ids the
+            // one most nodes reached wins, which is also the one that loses least by being kept.
+            var main = tracked.OrderByDescending(i => i.Nodes.Length).First();
+            var others = split.Ids.Where(i => !ReferenceEquals(i, main)).ToList();
+            // Distinct nodes, not the sum: a node that heard BOTH ids was counted twice before, and
+            // the same node appearing on both sides is the normal case rather than the exception.
+            var mainNodes = main.Nodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var onlyElsewhere = others.SelectMany(o => o.Nodes).Distinct(StringComparer.OrdinalIgnoreCase)
+                                      .Count(n => !mainNodes.Contains(n));
+            var totalNodes = split.Ids.SelectMany(i => i.Nodes).Distinct(StringComparer.OrdinalIgnoreCase).Count();
 
             result.Issues.Add(new ValidationIssue
             {
                 Severity = ValidationSeverity.Error,
                 Category = "identity",
-                Message = $"Address {split.Mac} is reporting under {split.Ids.Count} device ids: '{idList}'. " +
-                          $"They are the same hardware, so {lostNodes} of {totalNodes} node measurements never reach " +
-                          $"'{main.Id}'. Publish a retained alias for the other ids, e.g. " +
+                Message = $"Address {split.Mac} is reporting under {split.Ids.Count} device ids: '{idList}' " +
+                          $"(counted over the last {SightingWindow.TotalMinutes:0} minutes, not right now). " +
+                          $"They are the same hardware. {(onlyElsewhere > 0
+                              ? $"{onlyElsewhere} of {totalNodes} nodes reached only the other id and never '{main.Id}'"
+                              : $"Every node also reached '{main.Id}', so nothing is being lost outright, but the " +
+                                "readings are still split across two solutions")}. Publish a retained alias for the other ids, e.g. " +
                           $"espresense/settings/{others[0].Id}/config with {{\"id\":\"{main.Id}\"}} - " +
                           "aliases are keyed on the id a node derived, and nodes that resolved a different " +
                           "identifier look it up under a key that does not exist."
             });
         }
 
-        foreach (var id in identityTracker.GetRotatingIds())
+        // Same rule: a rotating address only matters for something being tracked. Every phone in the
+        // house rotates, and saying so is a list of facts, not a list of problems.
+        foreach (var id in identityTracker.GetRotatingIds().Where(IsTracked))
             result.RotatingAddressIds.Add(id);
     }
+
+    /// <summary>
+    /// Whether this id is one of the devices the user tracks - the same test the Devices page applies
+    /// when "Show All" is off.
+    /// </summary>
+    private bool IsTracked(string id) =>
+        state.Devices.TryGetValue(id, out var d) && d.Track;
 
     /// <summary>
     /// Surfaces relocations and what they cost. Both consequences are already handled correctly
@@ -268,6 +294,9 @@ public class WizardDiagnostics(
 
     /// <summary>Beyond this the room is reported as a warning rather than a note.</summary>
     private const double PoorCoverageM = 3.0;
+
+    /// <summary>Window the identity tracker looks back over - stated in the message so the counts are not read as live.</summary>
+    private static readonly TimeSpan SightingWindow = TimeSpan.FromMinutes(30);
 
     /// <summary>How far back a relocation is still worth reporting.</summary>
     private static readonly TimeSpan MoveReportWindow = TimeSpan.FromDays(30);

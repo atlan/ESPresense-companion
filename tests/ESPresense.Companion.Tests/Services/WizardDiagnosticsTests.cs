@@ -217,18 +217,57 @@ floors:
 
     // ---------------------------------------------------------------- split identities
 
+    private void GivenTrackedDevice(string id)
+    {
+        _state.Devices[id] = new Device(id, null, TimeSpan.FromSeconds(30)) { Track = true };
+    }
+
+    private void SeenUnder(string deviceId, string mac, string nodeId = "floor") =>
+        _mqtt.Raise(m => m.DeviceMessageReceivedAsync += null,
+            new DeviceMessageEventArgs { DeviceId = deviceId, NodeId = nodeId, Payload = new DeviceMessage { Mac = mac } });
+
     [Test]
     public void ReportsOneAddressReportingUnderTwoDeviceIds()
     {
         AddNode("floor", 6, 6);
-        foreach (var id in new[] { "beacon-a", "beacon-b" })
-            _mqtt.Raise(m => m.DeviceMessageReceivedAsync += null,
-                new DeviceMessageEventArgs { DeviceId = id, NodeId = "floor", Payload = new DeviceMessage { Mac = "aabbcc" } });
+        GivenTrackedDevice("beacon-a");
+        SeenUnder("beacon-a", "aabbcc");
+        SeenUnder("beacon-b", "aabbcc");
 
         var issue = _sut.Analyze().Issues.Single(i => i.Category == "identity");
 
         Assert.That(issue.Severity, Is.EqualTo(ValidationSeverity.Error));
         Assert.That(issue.Message, Does.Contain("espresense/settings/"), "the message has to carry the fix, not just the fault");
+    }
+
+    [Test]
+    public void SaysNothingAboutTwoDevicesNobodyTracks()
+    {
+        // Every phone and wearable in the house shares and rotates addresses. Reporting those is a
+        // list of facts rather than a list of problems, and it buries the one finding that matters.
+        AddNode("floor", 6, 6);
+        SeenUnder("md:05fe:20", "68649e");
+        SeenUnder("name:ccc3", "68649e");
+
+        Assert.That(_sut.Analyze().Issues.Any(i => i.Category == "identity"), Is.False);
+    }
+
+    [Test]
+    public void AliasesOntoTheTrackedIdEvenWhenAnotherWasHeardByMoreNodes()
+    {
+        // Ordering by node count alone would suggest aliasing the tracked device onto an untracked
+        // one - moving the measurements somewhere nothing is looking.
+        AddNode("floor", 6, 6);
+        AddNode("kitchen", 2, 2);
+        AddNode("pantry", 9, 2);
+        GivenTrackedDevice("beacon-a");
+        SeenUnder("beacon-a", "aabbcc", "floor");
+        foreach (var n in new[] { "floor", "kitchen", "pantry" }) SeenUnder("raw-mac-id", "aabbcc", n);
+
+        var issue = _sut.Analyze().Issues.Single(i => i.Category == "identity");
+
+        Assert.That(issue.Message, Does.Contain("{\"id\":\"beacon-a\"}"),
+            "the tracked device is the target, however few nodes reached it");
     }
 
     // ---------------------------------------------------------------- node moves
