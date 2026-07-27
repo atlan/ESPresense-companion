@@ -212,6 +212,10 @@ public class OptimizationRunner : BackgroundService
 
                     // Bodenwahrheit-Vergleichswert fuer dieses Intervall. Einmal, nicht je Kandidat:
                     // die Walk-Punkte aendern sich zwischen zwei Kandidaten nicht.
+                    // Knoten, deren Absorption aus Bodenwahrheit bestimmbar ist. Der Paar-Fit darf
+                    // sie nicht mehr anfassen, sonst dreht er sie jeden Zyklus zurueck.
+                    var groundTruthNodes = new WalkPointAbsorptionOptimizer(_state, _walkTest, _cfg).CoveredNodes();
+
                     var walkBaseline = optimization.WalkPointGate
                         ? _benchmark.Run(label: "gate-baseline", overrides: null, remember: false)
                         : null;
@@ -226,6 +230,24 @@ public class OptimizationRunner : BackgroundService
                     foreach (var optimizer in currentOptimizers)
                     {
                         var results = optimizer.Optimize(os, currentSettings);
+
+                        // ★ Eigentumsregel: wo Bodenwahrheit vorliegt, bestimmt sie die Absorption.
+                        // Bewusst VOR der Bewertung, damit der Kandidat an dem gemessen wird, was er
+                        // tatsaechlich anwenden darf - sonst punktet er mit einem Beitrag, den er
+                        // anschliessend gar nicht schreibt. rx_adj und tx_ref bleiben unberuehrt.
+                        if (!optimizer.ScoredByWalkPoints && groundTruthNodes.Count > 0)
+                        {
+                            var stripped = 0;
+                            foreach (var id in results.Nodes.Keys.Where(groundTruthNodes.Contains).ToList())
+                            {
+                                if (results.Nodes[id].Absorption == null) continue;
+                                results.Nodes[id].Absorption = null;
+                                stripped++;
+                            }
+                            if (stripped > 0)
+                                Log.Debug("Optimizer {0}: absorption for {1} node(s) left to the walk-point fit", optimizer.Name, stripped);
+                        }
+
                         var (corr, rmse) = results.Evaluate(snapshots, _nsd, optimization.ExcludedPairs);
                         // Use weights from ConfigOptimization
                         var composite = (corr * correlationWeight) + ((1 - rmse / (1 + rmse)) * rmseWeight);

@@ -61,6 +61,36 @@ public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest,
 
     private readonly record struct Sample(string NodeId, double Absorption, double TrueDist, double Rssi, double RefRssi);
 
+    /// <summary>
+    /// Knoten, deren Absorption aus Bodenwahrheit bestimmbar ist. Wer hier drin steht, GEHOERT
+    /// diesem Optimierer - der Paar-Fit darf ihre Absorption nicht mehr anfassen.
+    ///
+    /// Ohne diese Eigentumsregel entsteht ein Tauziehen, live beobachtet am 27.07.2026: der
+    /// Walk-Punkt-Fit senkt die Absorption, im naechsten Zyklus hebt der Paar-Fit sie zurueck (sein
+    /// Komposit ist durch die Senkung schlechter geworden, also gewinnt sein Kandidat mit Sicherheit),
+    /// und das Spiel wiederholt sich endlos. Beide Gates sagen jedes Mal ja, jeder fuer sich hat
+    /// recht - nur passiert unterm Strich nichts.
+    /// </summary>
+    public IReadOnlySet<string> CoveredNodes()
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var point in walkTest.GetPoints())
+        {
+            var truth = new Point3D(point.X, point.Y, point.Z);
+            foreach (var e in point.Raw)
+            {
+                if (e.R is null || e.Ref is null) continue;
+                if (!state.Nodes.TryGetValue(e.N, out var node) || !node.HasLocation) continue;
+                var logD = Math.Log10(node.Location.DistanceTo(truth));
+                if (Math.Abs(logD) < MinAbsLogDistance) continue;
+                counts[e.N] = counts.TryGetValue(e.N, out var n) ? n + 1 : 1;
+            }
+        }
+        return counts.Where(kv => kv.Value >= MinSamplesPerNode)
+                     .Select(kv => kv.Key)
+                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
     public OptimizationResults Optimize(OptimizationSnapshot os, Dictionary<string, NodeSettings> existingSettings)
     {
         var results = new OptimizationResults();
