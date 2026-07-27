@@ -34,5 +34,14 @@
 <div class="w-full h-full bg-surface-50-950">
 	<FloorTabs bind:floorId />
 	<BackgroundUpload />
-	<Map onselected={(item) => gotoDetail(item)} bind:floorId editable calibrationSpot={spot} />
+	<!-- calibrate schaltet in Map.svelte ausschliesslich die Sichtbarkeit des Markers frei (Zeile 175)
+	     und sonst nichts - ohne das Flag bleibt calibrationSpot wirkungslos. Genau daran ist der erste
+	     Versuch gescheitert. -->
+	<Map
+		onselected={(item) => gotoDetail(item)}
+		bind:floorId
+		editable
+		calibrate={spot != null}
+		calibrationSpot={spot}
+	/>
 </div>
