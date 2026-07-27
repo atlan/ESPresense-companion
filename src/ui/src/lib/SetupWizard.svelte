@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { gotoMapSpot } from '$lib/urls';
 	import { onMount, onDestroy } from 'svelte';
 	import { getToastStore } from '$lib/toast/toastStore';
 	import { calibration } from '$lib/stores';
@@ -1539,10 +1540,11 @@
 											<td>{p.floorName ?? p.floorId ?? '—'}</td>
 											<td>{p.roomName ?? '—'}</td>
 											<td>
-												<!-- Koordinaten als Link auf die Karte: zeigt die Etage und markiert die Stelle. -->
-												<a class="anchor font-mono"
-													href="/?floor={p.floorId ?? ''}&x={p.x}&y={p.y}"
-													title="Auf der Karte zeigen">{p.x} / {p.y} / {p.z}</a>
+												<!-- Kein rohes href: im HA-Ingress liegt die App unter einem Praefix, ein
+												     absoluter Pfad wuerde HA neu laden. goto()+resolve() bleibt in der App. -->
+												<button type="button" class="anchor font-mono"
+													onclick={() => gotoMapSpot(p.floorId, p.x, p.y)}
+													title="Auf der Karte zeigen">{p.x} / {p.y} / {p.z}</button>
 											</td>
 											<td class="text-right">{p.ticks}</td>
 											<td class="text-surface-600-400">{new Date(p.recordedAt).toLocaleDateString()}</td>

@@ -34,6 +34,22 @@ export function gotoMap() {
 	goto(resolve('/'));
 }
 
+/**
+ * Navigate to the map and mark one spot on it.
+ *
+ * Muss ueber resolve()+goto laufen, nicht ueber ein rohes href="/?...": im HA-Ingress laeuft die App
+ * unter einem Praefix, und ein absoluter Pfad verlaesst die App - der Rahmen laedt dann Home
+ * Assistant neu und landet auf dessen Startseite statt auf der Karte. Genau das ist beim ersten
+ * Versuch passiert.
+ */
+export function gotoMapSpot(floorId: string | null | undefined, x: number, y: number) {
+	const q = new URLSearchParams();
+	if (floorId) q.set('floor', floorId);
+	q.set('x', String(x));
+	q.set('y', String(y));
+	goto(`${resolve('/')}?${q}`);
+}
+
 export function gotoDevices() {
 	goto(resolve('/devices'));
 }

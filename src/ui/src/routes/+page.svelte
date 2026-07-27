@@ -12,13 +12,19 @@
 	// Koordinaten in einer Tabelle sagen einem nicht, wo man hinlaufen muss, ein Punkt auf dem
 	// Grundriss schon.
 	$: sp = $page.url.searchParams;
-	$: spotFloor = sp.get('floor');
-	$: spotX = Number(sp.get('x'));
-	$: spotY = Number(sp.get('y'));
-	$: spot = Number.isFinite(spotX) && Number.isFinite(spotY) && sp.has('x') && sp.has('y')
-		? { x: spotX, y: spotY }
-		: null;
-	$: if (spotFloor && floorId !== spotFloor) floorId = spotFloor;
+	$: spot =
+		sp.has('x') && sp.has('y') && Number.isFinite(Number(sp.get('x'))) && Number.isFinite(Number(sp.get('y')))
+			? { x: Number(sp.get('x')), y: Number(sp.get('y')) }
+			: null;
+
+	// Die Etage NUR beim Wechsel der Adresse setzen, nicht reaktiv auf floorId: sonst haengt die
+	// Zuweisung an ihrer eigenen Ausgabe und schnappt bei jedem manuellen Etagenwechsel zurueck.
+	let appliedSearch: string | null = null;
+	$: if ($page.url.search !== appliedSearch) {
+		appliedSearch = $page.url.search;
+		const f = new URLSearchParams($page.url.search).get('floor');
+		if (f) floorId = f;
+	}
 </script>
 
 <svelte:head>
