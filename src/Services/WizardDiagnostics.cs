@@ -102,6 +102,7 @@ public class WizardDiagnostics(
         var required = CheckRequiredAbsorption(config, result);
         CheckParameterSpread(config, required, result);
         CheckNoisyNodes(result);
+        CheckWalkPointsWithoutLevels(result);
         AnalyzeSignals(config, result);
 
         return result;
@@ -390,6 +391,47 @@ public class WizardDiagnostics(
                           $"fitted - widen {key}_{bound} and re-run, or exclude the node if it is genuinely atypical."
             });
         }
+    }
+
+    /// <summary>
+    /// Walk-Punkte ohne aufgezeichnete Pegel - die Nachhol-Liste.
+    ///
+    /// Solche Punkte koennen den LOCATOR bewerten, aber keine Kalibrierung: ohne Pegel laesst sich
+    /// die Distanz nicht neu rechnen, sie bleibt auf dem Wert eingefroren, den der Knoten damals
+    /// gemeldet hat. In einem Lauf mit Overrides mischen sie sich stumm unter die auswertbaren
+    /// Punkte und verduennen jede Aussage - am 27.07.2026 waren es 22 von 32 Punkten, also 59 % der
+    /// Ticks, die auf keine Aenderung reagieren konnten.
+    ///
+    /// Deshalb wird hier NAMENTLICH aufgelistet, was neu abgegangen werden muss. Eine Zahl allein
+    /// ("22 Punkte veraltet") laesst sich nicht abarbeiten, eine Liste mit Raum und Koordinaten
+    /// schon - und nach jedem Spaziergang wird sie kuerzer.
+    /// </summary>
+    private void CheckWalkPointsWithoutLevels(WizardDiagnosticsResult result)
+    {
+        var stale = new List<WalkTestService.WalkTestPoint>();
+        var total = 0;
+        foreach (var p in walkTest.GetPoints())
+        {
+            if (p.Raw.Count == 0) continue;
+            total++;
+            if (!p.Raw.Any(e => e.R.HasValue && e.Ref.HasValue)) stale.Add(p);
+        }
+        if (total == 0 || stale.Count == 0) return;
+
+        // Nach Etage gruppiert, damit ein Rundgang planbar wird statt Punkt fuer Punkt zu springen.
+        var byFloor = stale.GroupBy(p => p.FloorId ?? "?")
+                           .OrderByDescending(g => g.Count())
+                           .Select(g => $"{g.Key}: {string.Join(", ", g.OrderBy(p => p.Id).Select(p => $"{p.Id} ({p.X:0.#}/{p.Y:0.#}/{p.Z:0.#})"))}");
+
+        result.Issues.Add(new ValidationIssue
+        {
+            Severity = ValidationSeverity.Info,
+            Category = "stale-walkpoints",
+            Message = $"{stale.Count} of {total} walk points carry no recorded signal levels, so they cannot score " +
+                      $"calibration changes - only the locator. Any benchmark run with overrides silently blends " +
+                      $"them in and dilutes the result. Re-record these, one walk at a time; the list shrinks as you " +
+                      $"go. " + string.Join(" | ", byFloor)
+        });
     }
 
     /// <summary>

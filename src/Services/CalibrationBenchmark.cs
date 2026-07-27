@@ -104,6 +104,10 @@ public class CalibrationBenchmark(
         result.FloorContrastWeightUsed = contrastWeight;
 
         var allErrors = new List<double>();
+        // Getrennte Buchfuehrung fuer die Punkte, die auf die getestete Groesse reagieren koennen.
+        var respErrors = new List<double>();
+        var respPoints = 0;
+        int respRoomHits = 0, respRoomChecked = 0, respFloorHits = 0, respFloorChecked = 0;
         var perFloor = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
         var jitters = new List<double>();
         var roomHits = 0;
@@ -126,6 +130,8 @@ public class CalibrationBenchmark(
 
             var estimates = new List<Point3D>();
             var errors = new List<double>();
+            var recomputedAtPointStart = recomputed;
+            int pRoomHits = 0, pRoomChecked = 0, pFloorHits = 0, pFloorChecked = 0;
             var pointFloorHits = 0;
             var pointFloorChecked = 0;
             var bestOwnFloorHeard = 0;
@@ -183,10 +189,12 @@ public class CalibrationBenchmark(
                 if (winner?.Floor?.Id is { } guess)
                 {
                     floorChecked++;
+                    pFloorChecked++;
                     pointFloorChecked++;
                     if (string.Equals(guess, point.FloorId, StringComparison.OrdinalIgnoreCase))
                     {
                         floorHits++;
+                        pFloorHits++;
                         pointFloorHits++;
                         Bump(floorHitPerFloor, point.FloorId!);
                     }
@@ -209,10 +217,11 @@ public class CalibrationBenchmark(
                 if (truthRoom != null)
                 {
                     roomChecked++;
+                    pRoomChecked++;
                     // Der Raum des GEWINNER-Szenarios, nicht der aus der wahren Etage nachgeschlagene:
                     // liegt die Schaetzung auf der falschen Etage, ist der Raum falsch - und genau so
                     // erlebt es die Automation auch.
-                    if (winner.Room?.Id == truthRoom.Id) roomHits++;
+                    if (winner.Room?.Id == truthRoom.Id) { roomHits++; pRoomHits++; }
                 }
             }
 
@@ -246,6 +255,13 @@ public class CalibrationBenchmark(
             }
 
             allErrors.AddRange(errors);
+            if (recomputed > recomputedAtPointStart)
+            {
+                respPoints++;
+                respErrors.AddRange(errors);
+                respRoomHits += pRoomHits; respRoomChecked += pRoomChecked;
+                respFloorHits += pFloorHits; respFloorChecked += pFloorChecked;
+            }
             if (point.FloorId != null)
             {
                 if (!perFloor.TryGetValue(point.FloorId, out var list)) perFloor[point.FloorId] = list = new List<double>();
@@ -294,6 +310,27 @@ public class CalibrationBenchmark(
         result.MeanErrorM = Round(allErrors.Average());
         result.MeanJitterM = jitters.Count > 0 ? Round(jitters.Average()) : null;
         result.RoomHitRate = roomChecked > 0 ? Math.Round((double)roomHits / roomChecked, 3) : null;
+
+        result.ResponsivePoints = respPoints;
+        result.ResponsiveTicks = respErrors.Count;
+        if (respErrors.Count > 0)
+        {
+            result.ResponsiveMedianErrorM = Round(Median(respErrors));
+            result.ResponsiveRoomHitRate = respRoomChecked > 0 ? Math.Round((double)respRoomHits / respRoomChecked, 3) : null;
+            result.ResponsiveFloorHitRate = respFloorChecked > 0 ? Math.Round((double)respFloorHits / respFloorChecked, 3) : null;
+        }
+
+        // ★ Den Mischungsgrad benennen. Ein Lauf mit Overrides rechnet nur die Punkte MIT
+        // aufgezeichneten Pegeln neu; alle uebrigen liefern die Distanz von damals und koennen auf
+        // die getestete Groesse gar nicht reagieren. Die Kennzahlen oben mischen dann zwei Regime,
+        // und ohne diesen Satz liest man das Ergebnis als Ist-Zustand der Anlage. Genau so ist am
+        // 27.07.2026 eine Gate-Aussage entstanden, die nichts wert war.
+        if (overrides != null && respPoints < result.PointsUsed)
+            result.MixedRegimeNote =
+                $"Only {respPoints} of {result.PointsUsed} points ({result.ResponsiveTicks} of {result.Ticks} ticks) " +
+                $"carry recorded levels and can respond to the settings under test - the rest replay the distances " +
+                $"frozen into the recording. The headline figures therefore blend two regimes; the Responsive* " +
+                $"figures cover only the part that can move, at the cost of a smaller and possibly skewed sample.";
         result.FloorTicksChecked = floorChecked;
         result.FloorHitRate = floorChecked > 0 ? Math.Round((double)floorHits / floorChecked, 3) : null;
         result.FloorConfusion = confusion
@@ -485,6 +522,27 @@ public class BenchmarkResult
     /// calibration changes rather than just the locator.</summary>
     public int PointsWithLevels { get; set; }
     public int Ticks { get; set; }
+
+    /// <summary>
+    /// Ticks, die auf eine Kalibrierungsaenderung ueberhaupt REAGIEREN koennen - nur Punkte mit
+    /// aufgezeichneten Pegeln lassen sich neu rechnen, der Rest liefert die eingefrorene Distanz von
+    /// damals. Ohne diese Zahl liest man eine Mischung aus zwei Regimen als Ist-Zustand.
+    /// </summary>
+    public int ResponsiveTicks { get; set; }
+
+    public int ResponsivePoints { get; set; }
+
+    /// <summary>Kennzahlen NUR ueber die reagierenden Punkte. Reagiert auf die getestete Groesse,
+    /// traegt aber deren Stichprobenverzerrung - deshalb getrennt ausgewiesen und nie als
+    /// Schlagzeile.</summary>
+    public double? ResponsiveMedianErrorM { get; set; }
+
+    public double? ResponsiveRoomHitRate { get; set; }
+
+    public double? ResponsiveFloorHitRate { get; set; }
+
+    /// <summary>Klartext, wenn der Lauf zwei Regime mischt - sonst null.</summary>
+    public string? MixedRegimeNote { get; set; }
 
     public double? MedianErrorM { get; set; }
     public double? P90ErrorM { get; set; }
