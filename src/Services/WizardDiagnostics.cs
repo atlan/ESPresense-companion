@@ -46,6 +46,9 @@ public class WizardDiagnostics(
     /// <summary>Ab diesem Vielfachen des Flottenmedians gilt ein Knoten als auffaellig unruhig.</summary>
     private const double NoisyNodeFactor = 8.0;
 
+    /// <summary>Ab so viel Abweichung zwischen aufgezeichneter und heutiger Knotenposition wird gemeldet.</summary>
+    private const double GeometryDriftM = 0.25;
+
     /// <summary>
     /// Once reported, a pair keeps being reported until it falls below this. Without the gap, a pair
     /// sitting at 14-16 dB enters and leaves the list on alternate polls: measured 2026-07-26, 8 of
@@ -104,6 +107,7 @@ public class WizardDiagnostics(
         CheckParameterSpread(config, required, result);
         CheckNoisyNodes(result);
         CheckWalkPointsWithoutLevels(result);
+        CheckWalkPointGeometryDrift(result);
         AnalyzeSignals(config, result);
 
         return result;
@@ -441,6 +445,50 @@ public class WizardDiagnostics(
                       $"calibration changes - only the locator. Any benchmark run with overrides silently blends " +
                       $"them in and dilutes the result. Re-record them one walk at a time - the list below shrinks as you go."
         });
+    }
+
+    /// <summary>
+    /// Walk-Punkte, die eine ueberholte Geometrie beschreiben.
+    ///
+    /// Jeder Punkt speichert die Knotenpositionen von der Aufnahme mit. Wird ein Knoten spaeter
+    /// umgesetzt, beschreiben die alten Punkte fuer ihn eine Welt, die es nicht mehr gibt - die
+    /// Messung bleibt gueltig, nur nicht mehr fuer die heutige Entfernung. Am 27.07.2026 stand der
+    /// Kitchen-Knoten in 12 Punkten bis zu 1,76 m woanders.
+    ///
+    /// Das ist KEIN Migrationsartefakt, sondern der Normalfall im Betrieb: Knoten werden umgehaengt.
+    /// Der <see cref="NodeMoveTracker"/> meldet einen Umzug zwar, wenn er ihn miterlebt - er legt
+    /// beim allerersten Lauf aber nur seine Grundlinie an und schweigt (siehe _primed dort), und was
+    /// davor passiert ist, sieht er nie. Dieser Vergleich hier braucht keine Vorgeschichte: er haelt
+    /// die Aufzeichnung gegen den Ist-Zustand und findet die Abweichung auch nachtraeglich.
+    /// </summary>
+    private void CheckWalkPointGeometryDrift(WizardDiagnosticsResult result)
+    {
+        var drift = new Dictionary<string, (int Points, double MaxM)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in walkTest.GetPoints())
+        foreach (var agg in p.Nodes)
+        {
+            if (!state.Nodes.TryGetValue(agg.NodeId, out var node) || !node.HasLocation) continue;
+            var then = new Point3D(agg.NodeLocX, agg.NodeLocY, agg.NodeLocZ);
+            var d = then.DistanceTo(node.Location);
+            if (d <= GeometryDriftM) continue;
+            var cur = drift.TryGetValue(agg.NodeId, out var v) ? v : (0, 0.0);
+            drift[agg.NodeId] = (cur.Item1 + 1, Math.Max(cur.Item2, d));
+        }
+
+        foreach (var (nodeId, (points, maxM)) in drift.OrderByDescending(kv => kv.Value.Points))
+        {
+            var name = state.Nodes.TryGetValue(nodeId, out var n) ? n.Name ?? nodeId : nodeId;
+            result.Issues.Add(new ValidationIssue
+            {
+                Severity = ValidationSeverity.Warning,
+                Category = "geometry-drift",
+                NodeId = nodeId,
+                Message = $"Node '{name}' has moved since {points} walk point(s) were recorded - up to {maxM:0.00} m. " +
+                          $"Those points still describe where it used to be. Distances are therefore taken from the " +
+                          $"recording, not from today's map, so the fit stays correct - but anything scored against " +
+                          $"the CURRENT layout is only as good as those points are recent. Re-record them when convenient."
+            });
+        }
     }
 
     /// <summary>

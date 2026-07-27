@@ -102,7 +102,19 @@ public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest,
                      .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>Messungen je Walk-Punkt. Der Punkt traegt die Faltung, damit seine Messungen zusammenbleiben.</summary>
+    /// <summary>
+    /// Messungen je Walk-Punkt. Der Punkt traegt die Faltung, damit seine Messungen zusammenbleiben.
+    ///
+    /// ★ Die Entfernung kommt aus der AUFZEICHNUNG (<c>NodeAggregate.MapDistance</c>), nicht aus der
+    /// heutigen Knotenposition. Der Pegel wurde bei der Geometrie von damals gemessen, also gehoert
+    /// er auch dagegen gerechnet. Gemessen am 27.07.2026: der Kitchen-Knoten steht in 12 Punkten bis
+    /// zu 1,76 m woanders als heute - wer mit der heutigen Position rechnet, setzt eine Feldstaerke
+    /// gegen eine Entfernung, die es zum Messzeitpunkt nicht gab, und bekommt eine plausibel
+    /// aussehende, falsche Absorption. Genau die Groessenordnung, um die es beim Fit geht.
+    ///
+    /// Fallback auf die heutige Position nur, wenn der Punkt fuer diesen Knoten keinen Aggregat-
+    /// Eintrag hat - dann ist die aufgezeichnete Geometrie schlicht nicht bekannt.
+    /// </summary>
     private List<List<Sample>> Collect()
     {
         var perPoint = new List<List<Sample>>();
@@ -110,14 +122,20 @@ public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest,
         {
             if (point.Raw.Count == 0) continue;
             var truth = new Point3D(point.X, point.Y, point.Z);
+            var recorded = point.Nodes.ToDictionary(n => n.NodeId, n => n.MapDistance, StringComparer.OrdinalIgnoreCase);
             var samples = new List<Sample>();
 
             foreach (var e in point.Raw)
             {
                 if (e.R is not { } rssi || e.Ref is not { } refRssi) continue;
-                if (!state.Nodes.TryGetValue(e.N, out var node) || !node.HasLocation) continue;
 
-                var d = node.Location.DistanceTo(truth);
+                double d;
+                if (recorded.TryGetValue(e.N, out var mapDistance) && mapDistance > 0)
+                    d = mapDistance;
+                else if (state.Nodes.TryGetValue(e.N, out var node) && node.HasLocation)
+                    d = node.Location.DistanceTo(truth);
+                else continue;
+
                 if (d <= 0) continue;
                 var logD = Math.Log10(d);
                 if (Math.Abs(logD) < MinAbsLogDistance) continue;
