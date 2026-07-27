@@ -27,6 +27,8 @@
 	export let exclusive: boolean = false;
 	export let calibrate: boolean = false;
 	export let calibrationSpot: { x: number; y: number } | null = null;
+	/** Darf der Marker gezogen werden? Auf der Kartenseite nein - dort zeigt er nur eine Stelle. */
+	export let calibrationSpotInteractive: boolean = true;
 	export let editable: boolean = false;
 	export let onselected: ((item: Device | Node) => void) | undefined = undefined;
 
@@ -173,7 +175,7 @@
 				{/if}
 				<Devices {transform} {floorId} {deviceId} {exclusive} onselected={selectedDevice} onhovered={hoveredDevice} />
 				{#if calibrate && calibrationSpot}
-					<CalibrationSpot {transform} {bounds} bind:position={calibrationSpot} />
+					<CalibrationSpot {transform} {bounds} bind:position={calibrationSpot} interactive={calibrationSpotInteractive} />
 				{/if}
 				{#if editable}
 					<FloorplanEditor {transform} {floorId} svgEl={svg} />

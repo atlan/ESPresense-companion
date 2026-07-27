@@ -10,6 +10,12 @@
 
 	// The current d3 zoom transform.
 	export let transform = zoomIdentity;
+	/**
+	 * Ziehbar? Auf der Kartenseite wird der Punkt nur ANGEZEIGT ("hier liegt der Walk-Punkt") - dort
+	 * waere Verschieben irrefuehrend, weil niemand auf dragend hoert und die Position aus der
+	 * Adresszeile stammt. Die Kalibrieransicht laesst ihn weiterhin ziehen.
+	 */
+	export let interactive = true;
 	// The calibration spot's logical (data) position.
 	export let position = { x: 0, y: 0 };
 	// Data-space bounds.
@@ -121,12 +127,14 @@
   The inner <g> positions the calibration spot using $xScale and $yScale.
 -->
 <g transform={transform.toString()}>
-	<g transform="translate({$xScale(position.x)}, {$yScale(position.y)})" style="cursor: move">
+	<g transform="translate({$xScale(position.x)}, {$yScale(position.y)})" style="cursor: {interactive ? 'move' : 'default'}">
 		<!-- Outer ring -->
 		<circle r="10" fill="none" stroke="#4CAF50" stroke-width="2" opacity="0.8" />
 		<!-- Inner dot -->
 		<circle r="3" fill="#4CAF50" opacity="0.8" />
 		<!-- Invisible circle for easier interaction -->
-		<circle class="no-zoom" r="15" role="button" tabindex="0" fill="transparent" onmousedowncapture={handlePointerDown} ontouchstartcapture={handlePointerDown} style="cursor: move" />
+		{#if interactive}
+			<circle class="no-zoom" r="15" role="button" tabindex="0" fill="transparent" onmousedowncapture={handlePointerDown} ontouchstartcapture={handlePointerDown} style="cursor: move" />
+		{/if}
 	</g>
 </g>

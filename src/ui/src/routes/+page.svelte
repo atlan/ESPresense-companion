@@ -43,5 +43,6 @@
 		editable
 		calibrate={spot != null}
 		calibrationSpot={spot}
+		calibrationSpotInteractive={false}
 	/>
 </div>
