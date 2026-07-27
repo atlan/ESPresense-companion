@@ -98,6 +98,8 @@ public class CalibrationBenchmark(
         var useConsistency = overrides?.ConsistencyFilter ?? nw?.ConsistencyFilter ?? false;
         var toleranceM = overrides?.ConsistencyToleranceM ?? nw?.ConsistencyToleranceM ?? ConsistencyFilter.DefaultToleranceM;
         var toleranceFraction = overrides?.ConsistencyToleranceFraction ?? nw?.ConsistencyToleranceFraction ?? ConsistencyFilter.DefaultToleranceFraction;
+        var varianceWeight = overrides?.ConsistencyVarianceWeight ?? nw?.ConsistencyVarianceWeight
+                             ?? ConsistencyFilter.DefaultVarianceWeight;
         result.ConsistencyFilterUsed = useConsistency;
         result.FloorContrastWeightUsed = contrastWeight;
 
@@ -169,7 +171,8 @@ public class CalibrationBenchmark(
                     NadarayaWatsonKernel = result.Kernel,
                     ConsistencyFilter = useConsistency,
                     ConsistencyToleranceM = toleranceM,
-                    ConsistencyToleranceFraction = toleranceFraction
+                    ConsistencyToleranceFraction = toleranceFraction,
+                    ConsistencyVarianceWeight = varianceWeight
                 });
 
                 var ownFloorHeard = audible.Count(a =>
@@ -600,6 +603,9 @@ public class BenchmarkOverrides
     /// <summary>Slack on the triangle inequality, in metres, and as a share of the node separation.</summary>
     public double? ConsistencyToleranceM { get; set; }
     public double? ConsistencyToleranceFraction { get; set; }
+
+    /// <summary>Gewicht der Messunsicherheit im Konsistenz-Spielraum, in Sigma - fuer den Sweep.</summary>
+    public double? ConsistencyVarianceWeight { get; set; }
     /// <summary>
     /// Beyond this a reading no longer contributes a DISTANCE to the position fit, while still
     /// counting as presence for the floor decision. Null keeps every reading.

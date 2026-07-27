@@ -43,6 +43,22 @@ public static class ConsistencyFilter
     public const double DefaultToleranceM = 1.5;
     public const double DefaultToleranceFraction = 0.5;
 
+    /// <summary>
+    /// Gewicht der Messunsicherheit im Spielraum, in Standardabweichungen. 0 = aus, dann verhaelt
+    /// sich der Filter exakt wie bisher.
+    ///
+    /// Die Idee dahinter: die feste Toleranz behandelt alle Knoten gleich, obwohl ihre
+    /// Zuverlaessigkeit um zwei Groessenordnungen auseinanderliegt - am 27.07.2026 gemessen 0,2 bis
+    /// 42,8 Pegelvarianz in derselben Anlage. Ein Paar aus zwei ruhigen Knoten kann man eng fassen,
+    /// eines mit einem unruhigen Knoten muss man weit fassen, und ein einziger konstanter Wert ist
+    /// fuer beide falsch. Die Varianz je Messung liegt ohnehin vor (DistVar), sie wurde nur nie
+    /// benutzt.
+    ///
+    /// Bewusst mit Default 0 ausgeliefert: ob es den festen Wert schlaegt, entscheidet der
+    /// Walk-Punkt-Prüfstand, nicht diese Begruendung.
+    /// </summary>
+    public const double DefaultVarianceWeight = 0.0;
+
     /// <summary>Below this many readings there is nothing to cross-check against - keep them all.</summary>
     private const int MinForFiltering = 4;
 
@@ -55,7 +71,9 @@ public static class ConsistencyFilter
         Func<T, Point3D> location,
         Func<T, double> distance,
         double toleranceM = DefaultToleranceM,
-        double toleranceFraction = DefaultToleranceFraction)
+        double toleranceFraction = DefaultToleranceFraction,
+        Func<T, double?>? variance = null,
+        double varianceWeight = DefaultVarianceWeight)
     {
         var n = readings.Count;
         if (n < MinForFiltering) return readings;
@@ -71,6 +89,17 @@ public static class ConsistencyFilter
                 var di = distance(readings[i]);
                 var dj = distance(readings[j]);
                 var slack = toleranceM + toleranceFraction * separation;
+
+                // Messunsicherheit beider Beteiligten dazu, in Metern: die Dreiecksungleichung muss
+                // nur innerhalb dessen halten, was die Messung ueberhaupt aufloest. Sigma statt
+                // Varianz, weil der Spielraum eine Laenge ist und keine Flaeche.
+                if (varianceWeight > 0 && variance != null)
+                {
+                    var vi = variance(readings[i]);
+                    var vj = variance(readings[j]);
+                    if (vi is > 0) slack += varianceWeight * Math.Sqrt(vi.Value);
+                    if (vj is > 0) slack += varianceWeight * Math.Sqrt(vj.Value);
+                }
 
                 // Both spheres must be able to intersect: not too far apart, not one swallowing the other.
                 var ok = di + dj + slack >= separation && Math.Abs(di - dj) - slack <= separation;

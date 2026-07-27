@@ -29,6 +29,9 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
 
     public double? ConsistencyToleranceFractionOverride { get; init; }
 
+    /// <summary>Gewicht der Messunsicherheit im Konsistenz-Spielraum (Sigma). Null = Config.</summary>
+    public double? ConsistencyVarianceWeightOverride { get; init; }
+
     /// <summary>
     /// The core Nadaraya-Watson weighted-centroid estimate, factored out so the wizard's locator
     /// replay can score candidate bandwidth/kernel values against walk-test ground truth using
@@ -77,7 +80,9 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             var kept = ConsistencyFilter.LargestConsistent(heard,
                 n => n.Node!.Location, n => n.Distance,
                 ConsistencyToleranceMOverride ?? nwCfg?.ConsistencyToleranceM ?? ConsistencyFilter.DefaultToleranceM,
-                ConsistencyToleranceFractionOverride ?? nwCfg?.ConsistencyToleranceFraction ?? ConsistencyFilter.DefaultToleranceFraction);
+                ConsistencyToleranceFractionOverride ?? nwCfg?.ConsistencyToleranceFraction ?? ConsistencyFilter.DefaultToleranceFraction,
+                n => n.DistVar,
+                ConsistencyVarianceWeightOverride ?? nwCfg?.ConsistencyVarianceWeight ?? ConsistencyFilter.DefaultVarianceWeight);
             if (kept.Count >= 3) heard = kept.ToArray();
         }
 

@@ -131,6 +131,14 @@ namespace ESPresense.Models
         [YamlMember(Alias = "consistency_tolerance_fraction")]
         public double ConsistencyToleranceFraction { get; set; } = ESPresense.Locators.ConsistencyFilter.DefaultToleranceFraction;
 
+        /// <summary>
+        /// Gewicht der Messunsicherheit im Konsistenz-Spielraum, in Standardabweichungen.
+        /// 0 = aus (Default) und der Filter verhaelt sich exakt wie bisher. Ob eine
+        /// varianzabhaengige Toleranz die feste schlaegt, beantwortet der Walk-Punkt-Pruefstand.
+        /// </summary>
+        [YamlMember(Alias = "consistency_variance_weight")]
+        public double ConsistencyVarianceWeight { get; set; } = ESPresense.Locators.ConsistencyFilter.DefaultVarianceWeight;
+
     }
 
     public partial class NelderMeadConfig

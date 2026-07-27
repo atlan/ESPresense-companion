@@ -54,6 +54,9 @@ public class ScenarioReplay(State state, ConfigLoader configLoader)
         public double? ConsistencyToleranceM { get; init; }
 
         public double? ConsistencyToleranceFraction { get; init; }
+
+        /// <summary>Gewicht der Messunsicherheit im Konsistenz-Spielraum, in Sigma. Null = Config.</summary>
+        public double? ConsistencyVarianceWeight { get; init; }
     }
 
     /// <summary>Locators currently enabled in the configuration - the combination the live system runs.</summary>
@@ -102,7 +105,8 @@ public class ScenarioReplay(State state, ConfigLoader configLoader)
                     KernelOverride = options.NadarayaWatsonKernel,
                     ConsistencyFilterOverride = options.ConsistencyFilter,
                     ConsistencyToleranceMOverride = options.ConsistencyToleranceM,
-                    ConsistencyToleranceFractionOverride = options.ConsistencyToleranceFraction
+                    ConsistencyToleranceFractionOverride = options.ConsistencyToleranceFraction,
+                    ConsistencyVarianceWeightOverride = options.ConsistencyVarianceWeight
                 },
                 "nelder_mead" => new NelderMeadMultilateralizer(device, floor, state),
                 "mle" => new MLEMultilateralizer(device, floor, state),
