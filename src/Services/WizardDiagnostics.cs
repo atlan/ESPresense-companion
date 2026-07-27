@@ -30,6 +30,21 @@ public class WizardDiagnostics(
     /// <summary>Above this the measurement contradicts the map rather than merely disagreeing with it.</summary>
     private const double SignalContradictionDb = 15.0;
 
+    /// <summary>Anteil der erlaubten Spanne, ab dem ein Wert als "dicht an der Grenze" gilt.</summary>
+    private const double NearLimitFraction = 0.05;
+
+    /// <summary>Unter so vielen Knoten sagt eine Streuungsaussage nichts.</summary>
+    private const int MinNodesForSpread = 5;
+
+    /// <summary>So wenige verschiedene Werte bei mehr Knoten = die per-Knoten-Freiheit wird nicht genutzt.</summary>
+    private const int MaxCollapsedDistinct = 3;
+
+    /// <summary>Gefittete Streuung unter diesem Anteil der geforderten = faktisch ein globaler Wert.</summary>
+    private const double SpreadRatioFloor = 0.2;
+
+    /// <summary>Ab diesem Vielfachen des Flottenmedians gilt ein Knoten als auffaellig unruhig.</summary>
+    private const double NoisyNodeFactor = 8.0;
+
     /// <summary>
     /// Once reported, a pair keeps being reported until it falls below this. Without the gap, a pair
     /// sitting at 14-16 dB enters and leaves the list on alternate polls: measured 2026-07-26, 8 of
@@ -84,6 +99,9 @@ public class WizardDiagnostics(
         CheckNodeMoves(result);
         CheckNodeCoverage(result);
         CheckClampedParameters(config, result);
+        var required = CheckRequiredAbsorption(config, result);
+        CheckParameterSpread(config, required, result);
+        CheckNoisyNodes(result);
         AnalyzeSignals(config, result);
 
         return result;
@@ -329,7 +347,32 @@ public class WizardDiagnostics(
             double limit = 0;
             if (Math.Abs(v - min) <= ClampEpsilon) { bound = "min"; limit = min; }
             else if (Math.Abs(v - max) <= ClampEpsilon) { bound = "max"; limit = max; }
-            if (bound == null) return;
+            if (bound == null)
+            {
+                // Nicht am Anschlag, aber dicht davor. Am 27.07.2026 standen sechs Knoten bei
+                // rx_adj 24 von erlaubten 25 - der Anschlag-Check schwieg voellig zu Recht, und
+                // trotzdem war die Information wichtig: der Fit draengt gegen die Grenze. Deshalb
+                // wird die Naehe eigens gemeldet, als Hinweis statt als Warnung.
+                var span = max - min;
+                if (span > 0)
+                {
+                    var margin = span * NearLimitFraction;
+                    var nearBound = Math.Abs(v - min) <= margin ? "min"
+                                  : Math.Abs(v - max) <= margin ? "max" : null;
+                    if (nearBound != null)
+                        result.Issues.Add(new ValidationIssue
+                        {
+                            Severity = ValidationSeverity.Info,
+                            Category = "near-limit",
+                            NodeId = nodeId,
+                            Message = $"Node '{nodeName ?? nodeId}': {name} is {v:0.##}, within " +
+                                      $"{margin:0.##} of its {nearBound} limit ({(nearBound == "min" ? min : max):0.##}). " +
+                                      $"Not capped, but the fit is pushing that way - if more nodes join it, the " +
+                                      $"limit is shaping the calibration rather than the measurements."
+                        });
+                }
+                return;
+            }
 
             result.ClampedParameters.Add(new ClampedParameter
             {
@@ -345,6 +388,198 @@ public class WizardDiagnostics(
                 Message = $"Node '{nodeName ?? nodeId}': {name} sits on its configured {bound} of {limit:0.##}. " +
                           $"The optimizer wanted to go past it, so this node's calibration is capped rather than " +
                           $"fitted - widen {key}_{bound} and re-run, or exclude the node if it is genuinely atypical."
+            });
+        }
+    }
+
+    /// <summary>
+    /// Was fuer eine Absorption braeuchte jeder Knoten, damit sein gemessener Pegel zur BEKANNTEN
+    /// Entfernung des Walk-Punkts passt?
+    ///
+    /// Das ist die Frage, die am 27.07.2026 die Diagnose lieferte und die kein Panel beantwortete.
+    /// Sie trennt zwei Faelle, die sonst gleich aussehen: eine Kalibrierung, die noch nicht
+    /// konvergiert ist (dann liegt der geforderte Wert INNERHALB der Grenzen und weiteres Optimieren
+    /// hilft), und ein Weglaengenmodell, das diesen Knoten prinzipiell nicht abbilden kann (dann
+    /// liegt er ausserhalb, und kein Optimierer-Lauf der Welt bringt etwas). Gemessen wurde damals
+    /// eine Forderung von 1,67 bis 14,1 bei erlaubten 2,5 bis 4,8.
+    ///
+    /// Anders als AnalyzeSignals, das Knoten gegen Knoten rechnet, benutzt das hier die einzige
+    /// echte Bodenwahrheit im System: eine vom Menschen eingetragene Geraeteposition.
+    /// </summary>
+    private Dictionary<string, double> CheckRequiredAbsorption(Config? config, WizardDiagnosticsResult result)
+    {
+        var required = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        var opt = config?.Optimization;
+        if (opt == null) return required;
+
+        var samples = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var point in walkTest.GetPoints())
+        {
+            if (point.Raw.Count == 0) continue;
+            var truth = new Point3D(point.X, point.Y, point.Z);
+
+            foreach (var e in point.Raw)
+            {
+                if (e.R is not { } rssi || e.Ref is not { } refRssi) continue;
+                if (!state.Nodes.TryGetValue(e.N, out var node) || !node.HasLocation) continue;
+
+                var trueDist = node.Location.DistanceTo(truth);
+                var logD = Math.Log10(trueDist);
+                // Auf einem Meter faellt der Distanzterm weg, dort ist die Absorption nicht bestimmbar.
+                if (trueDist <= 0 || Math.Abs(logD) < 0.05) continue;
+
+                var a = (refRssi - rssi) / (10.0 * logD);
+                if (double.IsNaN(a) || double.IsInfinity(a)) continue;
+                samples.TryAdd(e.N, new List<double>());
+                samples[e.N].Add(a);
+            }
+        }
+
+        foreach (var (nodeId, values) in samples)
+        {
+            if (values.Count < 10) continue;   // zu duenn, um daraus etwas zu schliessen
+            values.Sort();
+            var median = values[values.Count / 2];
+            required[nodeId] = median;
+
+            if (median >= opt.AbsorptionMin && median <= opt.AbsorptionMax) continue;
+
+            var name = state.Nodes.TryGetValue(nodeId, out var n) ? n.Name ?? nodeId : nodeId;
+            var side = median < opt.AbsorptionMin ? "below" : "above";
+            result.Issues.Add(new ValidationIssue
+            {
+                Severity = ValidationSeverity.Warning,
+                Category = "model-limit",
+                NodeId = nodeId,
+                Message = $"Node '{name}': the walk points demand an absorption of {median:0.0} to explain its " +
+                          $"levels at the distances it actually stood at - {side} the allowed " +
+                          $"{opt.AbsorptionMin:0.0}..{opt.AbsorptionMax:0.0}. No optimizer run can reach that, so this " +
+                          $"is not a calibration that has not converged: the path-loss model cannot represent this " +
+                          $"node. Look at where it sits and what is between it and the room, or widen the limits " +
+                          $"knowing they are then absorbing a physical problem."
+            });
+        }
+
+        return required;
+    }
+
+    /// <summary>
+    /// Wird die per-Knoten-Freiheit ueberhaupt genutzt?
+    ///
+    /// Ein Optimierer mit 18 freien Absorptionen, der 18-mal praktisch denselben Wert liefert, ist
+    /// ein globaler Optimierer mit 18-fachem Aufwand - und niemand sieht es, weil jede Zahl fuer sich
+    /// plausibel aussieht. Am 27.07.2026 lagen alle 18 Knoten zwischen 4,14 und 4,33, waehrend die
+    /// Walk-Punkte Werte von 1,67 bis 14,1 verlangten. Zwei unabhaengige Anzeichen werden geprueft:
+    /// zu wenige VERSCHIEDENE Werte (rx_adj hatte drei fuer 18 Knoten), und eine Streuung, die
+    /// gegenueber der geforderten verschwindet.
+    /// </summary>
+    private void CheckParameterSpread(Config? config, Dictionary<string, double> required,
+        WizardDiagnosticsResult result)
+    {
+        var opt = config?.Optimization;
+        if (opt == null) return;
+
+        var absorption = new List<double>();
+        var rxAdj = new List<double>();
+        foreach (var node in state.Nodes.Values)
+        {
+            var cal = nodeSettings.Get(node.Id)?.Calibration;
+            if (cal?.Absorption is { } a) absorption.Add(a);
+            if (cal?.RxAdjRssi is { } r) rxAdj.Add(r);
+        }
+
+        // ★ Alles hier haengt an einer Vorbedingung: es muss Bodenwahrheit geben, die zeigt, dass die
+        // Anlage ueberhaupt uneinheitlich IST. Ohne sie ist "alle Knoten haben denselben Wert" kein
+        // Befund, sondern der Normalzustand einer frisch aufgesetzten Installation, in der noch nie
+        // etwas gefittet wurde - und eine Diagnose, die dort schon meckert, bringt man dem Benutzer
+        // bei zu ignorieren. (Ein Test hat genau diesen Fehlalarm gefangen.)
+        if (required.Count < MinNodesForSpread) return;
+
+        Distinct("rx_adj_rssi", rxAdj);
+        Distinct("absorption", absorption);
+
+        // Gefittete gegen geforderte Streuung - nur aussagekraeftig, wenn genug Knoten beides haben.
+        if (absorption.Count >= MinNodesForSpread)
+        {
+            var fittedSpread = absorption.Max() - absorption.Min();
+            var req = required.Values.OrderBy(v => v).ToList();
+            // 10./90. Perzentil statt min/max: ein einziger pathologischer Knoten soll die Aussage
+            // nicht allein tragen.
+            var requiredSpread = req[(int)(0.9 * (req.Count - 1))] - req[(int)(0.1 * (req.Count - 1))];
+            if (requiredSpread > 0 && fittedSpread < requiredSpread * SpreadRatioFloor)
+                result.Issues.Add(new ValidationIssue
+                {
+                    Severity = ValidationSeverity.Warning,
+                    Category = "spread",
+                    Message = $"Per-node absorption spans only {fittedSpread:0.00} across {absorption.Count} nodes, " +
+                              $"while the walk points demand a span of {requiredSpread:0.00}. The per-node optimizer " +
+                              $"is delivering what a global one would, at {absorption.Count} times the free " +
+                              $"parameters - weights.absorption_penalty is the knob that flattens this."
+                });
+        }
+
+        void Distinct(string name, List<double> values)
+        {
+            if (values.Count < MinNodesForSpread) return;
+            var distinct = values.Select(v => Math.Round(v, 2)).Distinct().Count();
+            if (distinct > MaxCollapsedDistinct) return;
+            result.Issues.Add(new ValidationIssue
+            {
+                Severity = ValidationSeverity.Warning,
+                Category = "spread",
+                Message = $"{values.Count} nodes share only {distinct} distinct {name} value" +
+                          $"{(distinct == 1 ? "" : "s")}. A per-node parameter that takes {distinct} values is not " +
+                          $"being fitted per node - either the penalty pulls them together or the optimizer is " +
+                          $"converging into a few basins. Worth knowing before tuning anything downstream of it."
+            });
+        }
+    }
+
+    /// <summary>
+    /// Knoten, deren Pegel unruhiger sind als der Rest der Flotte.
+    ///
+    /// Am 27.07.2026 hatte der Labor-Knoten rssiVar 28,7 gegen 0,2 bis 3,7 bei allen anderen - Faktor
+    /// zehn bis hundert - und war ausgerechnet der naechstgelegene, also derjenige, der die Loesung
+    /// haette festnageln muessen. Kein Panel zeigte es. Ein unruhiger Pfad ist etwas anderes als ein
+    /// falsch kalibrierter: kein Parameter repariert Mehrwegeausbreitung, da hilft nur Umhaengen.
+    /// </summary>
+    private void CheckNoisyNodes(WizardDiagnosticsResult result)
+    {
+        var perNode = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in state.Devices.Values)
+        foreach (var (nodeId, dn) in device.Nodes)
+        {
+            if (dn.RssiVar is not { } v || v <= 0) continue;
+            perNode.TryAdd(nodeId, new List<double>());
+            perNode[nodeId].Add(v);
+        }
+
+        var medians = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (nodeId, values) in perNode)
+        {
+            if (values.Count < 3) continue;
+            values.Sort();
+            medians[nodeId] = values[values.Count / 2];
+        }
+        if (medians.Count < MinNodesForSpread) return;
+
+        var fleet = medians.Values.OrderBy(v => v).ToList();
+        var fleetMedian = fleet[fleet.Count / 2];
+        if (fleetMedian <= 0) return;
+
+        foreach (var (nodeId, med) in medians.OrderByDescending(kv => kv.Value))
+        {
+            if (med < fleetMedian * NoisyNodeFactor) continue;
+            var name = state.Nodes.TryGetValue(nodeId, out var n) ? n.Name ?? nodeId : nodeId;
+            result.Issues.Add(new ValidationIssue
+            {
+                Severity = ValidationSeverity.Warning,
+                Category = "noisy",
+                NodeId = nodeId,
+                Message = $"Node '{name}': level variance {med:0.0}, about {med / fleetMedian:0}x the fleet median " +
+                          $"of {fleetMedian:0.0}. Its readings scatter far more than everyone else's, which no " +
+                          $"calibration parameter can absorb - that is a path problem (metal, a case, something in " +
+                          $"the way), and it hurts most when this node is the closest one to the device."
             });
         }
     }
