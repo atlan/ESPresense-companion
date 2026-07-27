@@ -86,6 +86,8 @@ builder.Services.AddSingleton(sp => new WalkTestService(
     sp.GetRequiredService<NodeSettingsStore>(),
     Path.Combine(storageDir, "walktest-points.json")));
 builder.Services.AddSingleton<AutoTuneService>();
+// Der eine Szenarien-Replay, den alle Wizard-Messungen benutzen (siehe ScenarioReplay).
+builder.Services.AddSingleton<ESPresense.Locators.ScenarioReplay>();
 builder.Services.AddSingleton<LocatorTuneService>();
 builder.Services.AddSingleton<WizardService>();
 // Subscribes to device messages on construction, so it must be created eagerly - see below.
@@ -99,6 +101,7 @@ builder.Services.AddSingleton(sp => new CalibrationBenchmark(
     sp.GetRequiredService<State>(),
     sp.GetRequiredService<WalkTestService>(),
     sp.GetRequiredService<ConfigLoader>(),
+    sp.GetRequiredService<ESPresense.Locators.ScenarioReplay>(),
     Path.Combine(storageDir, "benchmark-history.json")));
 builder.Services.AddSingleton(sp => new NodeMoveTracker(
     sp.GetRequiredService<State>(),

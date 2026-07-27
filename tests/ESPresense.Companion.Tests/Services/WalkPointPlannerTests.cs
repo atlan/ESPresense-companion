@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Locators;
 using ESPresense.Services;
 using MathNet.Spatial.Euclidean;
 using Moq;
@@ -27,7 +28,7 @@ public class WalkPointPlannerTests
     {
         _dir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "cfg", Guid.NewGuid().ToString());
         Directory.CreateDirectory(_dir);
-        await File.WriteAllTextAsync(Path.Combine(_dir, "config.yaml"), "mqtt:\n  host: localhost\n");
+        await File.WriteAllTextAsync(Path.Combine(_dir, "config.yaml"), "mqtt:\n  host: localhost\nlocators:\n  nadaraya_watson:\n    enabled: true\n");
         _configLoader = new ConfigLoader(_dir);
         await _configLoader.ConfigAsync();
         _state = new State(_configLoader, new NodeTelemetryStore(new Mock<IMqttCoordinator>().Object));
@@ -37,7 +38,7 @@ public class WalkPointPlannerTests
             new NodeSettingsStore(new Mock<IMqttCoordinator>().Object,
                 Mock.Of<Microsoft.Extensions.Logging.ILogger<NodeSettingsStore>>()),
             _pointsPath);
-        _benchmark = new CalibrationBenchmark(_state, _walkTest, _configLoader, Path.Combine(_dir, "benchmark.json"));
+        _benchmark = new CalibrationBenchmark(_state, _walkTest, _configLoader, new ScenarioReplay(_state, _configLoader), Path.Combine(_dir, "benchmark.json"));
     }
 
     [TearDown]

@@ -12,6 +12,24 @@ namespace ESPresense.Locators;
 public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State state, NodeTelemetryStore nts) : ILocate
 {
     /// <summary>
+    /// Bandwidth/kernel override for replays that need to score candidate values. Null means "take the
+    /// configured value", which is what the live path always does. Exists so the wizard can vary these
+    /// through the REAL scenario competition instead of calling <see cref="Estimate"/> on its own -
+    /// scoring one estimator in isolation measures a path, not the system.
+    /// </summary>
+    public double? BandwidthOverride { get; init; }
+
+    public string? KernelOverride { get; init; }
+
+    /// <summary>Consistency-filter overrides, same purpose: let a replay measure the effect of a
+    /// setting before it is adopted live. Null = take the configured value.</summary>
+    public bool? ConsistencyFilterOverride { get; init; }
+
+    public double? ConsistencyToleranceMOverride { get; init; }
+
+    public double? ConsistencyToleranceFractionOverride { get; init; }
+
+    /// <summary>
     /// The core Nadaraya-Watson weighted-centroid estimate, factored out so the wizard's locator
     /// replay can score candidate bandwidth/kernel values against walk-test ground truth using
     /// EXACTLY the math the live locator runs - a reimplementation would silently drift.
@@ -54,11 +72,12 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
         // estimator is a weighted average of NODE POSITIONS, so a node that wrongly believes itself
         // close drags the answer onto itself - and neither rank nor variance weighting catches that,
         // because such a reading looks closest and stays steady. Geometry catches it.
-        if ((nwCfg?.ConsistencyFilter ?? false) && heard.Length > 0)
+        if ((ConsistencyFilterOverride ?? nwCfg?.ConsistencyFilter ?? false) && heard.Length > 0)
         {
             var kept = ConsistencyFilter.LargestConsistent(heard,
                 n => n.Node!.Location, n => n.Distance,
-                nwCfg!.ConsistencyToleranceM, nwCfg.ConsistencyToleranceFraction);
+                ConsistencyToleranceMOverride ?? nwCfg?.ConsistencyToleranceM ?? ConsistencyFilter.DefaultToleranceM,
+                ConsistencyToleranceFractionOverride ?? nwCfg?.ConsistencyToleranceFraction ?? ConsistencyFilter.DefaultToleranceFraction);
             if (kept.Count >= 3) heard = kept.ToArray();
         }
 
@@ -97,8 +116,8 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             {
                 (est, weightedError) = Estimate(
                     heard.Select(n => (n.Node!.Location, n.Distance)).ToList(),
-                    nwCfg?.Bandwidth ?? 0.5,
-                    nwCfg?.Kernel);
+                    BandwidthOverride ?? nwCfg?.Bandwidth ?? 0.5,
+                    KernelOverride ?? nwCfg?.Kernel);
                 scenario.Error = weightedError;
             }
 

@@ -1,5 +1,6 @@
 using ESPresense.Locators;
 using ESPresense.Models;
+using ESPresense.Utils;
 using MathNet.Spatial.Euclidean;
 using Serilog;
 
@@ -12,10 +13,20 @@ namespace ESPresense.Services;
 /// over every tick of every point; scored on mean 2D position error (accuracy) plus the standard
 /// deviation of the estimates while the beacon sat still (jitter - the room-flapping symptom).
 ///
-/// Honest limitations: stationary noise only (no walking-motion dynamics), and the Kalman/scenario
-/// smoothing layered above the locators isn't replayed - this scores the locator geometry itself.
+/// ★ Korrektur 2026-07-27: bis dahin rief dieser Dienst <c>NadarayaWatsonMultilateralizer.Estimate</c>
+/// direkt auf UND filterte die hörbaren Knoten vorher auf die WAHRE Etage des Walk-Punkts. Damit
+/// bewertete er einen einzelnen Schätzer, dem die schwerste Teilaufgabe - die Etagenentscheidung -
+/// schon geschenkt worden war, und meldete das Ergebnis, als sei es das System. Genau der Fehler,
+/// den <see cref="LocatorSweepService"/> am Benchmark benannt hatte. Jetzt läuft jeder Kandidat
+/// durch denselben <see cref="ScenarioReplay"/> wie Sweep und Benchmark: alle konfigurierten
+/// Locators auf ALLEN Etagen im Wettbewerb, Sieger nach Konfidenz. Dadurch sind die Zahlen dieses
+/// Panels mit denen der anderen vergleichbar - und fallen erwartungsgemäß schlechter aus als vorher,
+/// weil vorher zu viel verraten war.
+///
+/// Honest limitation, unverändert: stationäres Rauschen (keine Gehbewegung), und die
+/// Kalman-Glättung über den Locators wird nicht nachgespielt - ein Walk-Punkt steht still.
 /// </summary>
-public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoader configLoader)
+public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoader configLoader, ScenarioReplay replay)
 {
     public class Candidate
     {
@@ -34,6 +45,13 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
         public int Ticks { get; set; }
         public int Points { get; set; }
         public bool IsCurrent { get; set; }
+
+        /// <summary>Median statt Mittel - robuster gegen einzelne Ausreisser und dieselbe Kennzahl,
+        /// die der Locator-Sweep und der Benchmark ausweisen, damit die Panels vergleichbar sind.</summary>
+        public double? MedianErrorM { get; set; }
+
+        public double? RoomHitRate { get; set; }
+        public double? FloorHitRate { get; set; }
     }
 
     public class RunResult
@@ -82,35 +100,63 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
             var results = new List<CandidateResult>();
             var totalTicks = 0;
 
+            var floors = state.Floors.Values.Where(f => f.Id != null).ToList();
+            var locators = replay.ConfiguredLocators();
+            var contrastWeight = replay.ConfiguredContrastWeight();
+            if (!locators.Contains("nadaraya_watson"))
+            {
+                result.Error = "nadaraya_watson is not enabled, so its bandwidth and kernel have no effect on " +
+                               "the live result. Enable it under Locator Selection first, or tune what is actually running.";
+                _last = result;
+                return result;
+            }
+
             foreach (var candidate in candidates)
             {
                 var perTickErrors = new List<double>();
                 var perPointJitters = new List<double>();
                 var pointsUsed = 0;
+                var roomHits = 0; var roomChecked = 0;
+                var floorHits = 0; var floorChecked = 0;
 
                 foreach (var point in points)
                 {
                     var truth = new Point3D(point.X, point.Y, point.Z);
+                    var truthFloor = floors.FirstOrDefault(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase));
+                    var truthRoom = SpatialUtils.FindRoomContaining(truth, truthFloor);
                     var estimates = new List<Point3D>();
 
                     foreach (var tickGroup in point.Raw.GroupBy(r => r.T))
                     {
-                        // Same-floor nodes only - mirrors the live locator's floor filter.
-                        var heard = new List<(Point3D loc, double dist)>();
+                        // KEIN Etagen-Vorfilter mehr: live kennt das System die Etage nicht, sie ist
+                        // genau das, was entschieden werden muss. Vorher wurde sie hier verraten.
+                        var heard = new List<(Node node, double dist)>();
                         foreach (var entry in tickGroup)
                         {
                             if (!state.Nodes.TryGetValue(entry.N, out var node) || !node.HasLocation) continue;
-                            if (point.FloorId != null &&
-                                !(node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)) continue;
-                            heard.Add((node.Location, entry.D));
+                            if (entry.D <= 0) continue;
+                            heard.Add((node, entry.D));
                         }
-                        if (heard.Count < 3) continue;
-                        heard.Sort((a, b) => a.dist.CompareTo(b.dist));
 
-                        var (est, _) = NadarayaWatsonMultilateralizer.Estimate(heard, candidate.Bandwidth, candidate.Kernel);
-                        estimates.Add(est);
-                        // 2D error - Z is dominated by node mounting heights, not locator quality.
-                        perTickErrors.Add(Math.Sqrt(Math.Pow(est.X - truth.X, 2) + Math.Pow(est.Y - truth.Y, 2)));
+                        var winner = replay.BestScenario(heard, floors, new ScenarioReplay.Options
+                        {
+                            Locators = locators,
+                            ContrastWeight = contrastWeight,
+                            NadarayaWatsonBandwidth = candidate.Kernel == "gaussian" ? candidate.Bandwidth : null,
+                            NadarayaWatsonKernel = candidate.Kernel
+                        });
+                        if (winner == null) continue;
+
+                        estimates.Add(winner.Location);
+                        perTickErrors.Add(ScenarioReplay.Error2D(winner.Location, truth));
+
+                        floorChecked++;
+                        if (string.Equals(winner.Floor?.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) floorHits++;
+                        if (truthRoom != null)
+                        {
+                            roomChecked++;
+                            if (winner.Room?.Id == truthRoom.Id) roomHits++;
+                        }
                     }
 
                     if (estimates.Count < MinTicksPerPoint) continue;
@@ -125,6 +171,7 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                 if (perTickErrors.Count == 0) continue;
                 totalTicks = Math.Max(totalTicks, perTickErrors.Count);
 
+                var sorted = perTickErrors.OrderBy(e => e).ToList();
                 var meanError = perTickErrors.Average();
                 var meanJitter = perPointJitters.Count > 0 ? perPointJitters.Average() : 0;
                 results.Add(new CandidateResult
@@ -132,6 +179,9 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                     Candidate = candidate,
                     MeanErrorM = meanError,
                     MeanJitterM = meanJitter,
+                    MedianErrorM = Math.Round(sorted[sorted.Count / 2], 2),
+                    RoomHitRate = roomChecked > 0 ? Math.Round((double)roomHits / roomChecked, 3) : null,
+                    FloorHitRate = floorChecked > 0 ? Math.Round((double)floorHits / floorChecked, 3) : null,
                     Score = meanError + JitterWeight * meanJitter,
                     Ticks = perTickErrors.Count,
                     Points = pointsUsed,

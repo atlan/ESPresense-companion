@@ -820,6 +820,12 @@
 		{#if loading}
 			<p class="text-surface-600-400">Loading setup checks...</p>
 		{:else}
+			<section class="space-y-6">
+				<header class="flex items-baseline gap-3 pt-2">
+					<span class="badge preset-filled-primary-500 shrink-0">Schritt 1</span>
+					<h2 class="text-xl font-bold">Pruefen</h2>
+				</header>
+				<p class="text-sm text-surface-600-400 -mt-4">Stimmen Knoten und Konfiguration? Alles Weitere misst sonst nur den Defekt.</p>
 			<!-- 1. Health gate -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
@@ -863,7 +869,6 @@
 					{/if}
 				{/if}
 			</div>
-
 			<!-- 2. Validation issues -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
@@ -889,393 +894,14 @@
 					{/if}
 				{/if}
 			</div>
+			</section>
 
-			<!-- 2b. Measurement diagnostics: does the radio data agree with the map? -->
-			<div class="card p-4">
-				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Measurement Diagnostics</h2>
-					{#if diagnostics}
-						<span class="badge {diagnostics.issues.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
-							{diagnostics.issues.length === 0 ? 'Nothing flagged' : `${diagnostics.issues.length} finding${diagnostics.issues.length === 1 ? '' : 's'}`}
-						</span>
-					{/if}
+			<section class="space-y-6">
+				<header class="flex items-baseline gap-3 pt-2">
+					<span class="badge preset-filled-primary-500 shrink-0">Schritt 2</span>
+					<h2 class="text-xl font-bold">Messen</h2>
 				</header>
-				<p class="text-sm text-surface-600-400 mb-3">
-					Configuration Checks above validates the map. This checks the radio data against it - readings no
-					path-loss setting can explain, parameters pinned to their limit, and how much of each room actually
-					has a node close enough to work with.
-				</p>
-
-				{#if diagnostics}
-					{#if diagnostics.near.pairs > 0 || diagnostics.far.pairs > 0}
-						<div class="flex gap-6 text-sm mb-3">
-							<span>Under {diagnostics.nearFarSplitM} m: <strong>{diagnostics.near.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.near.pairs} pairs)</span>
-							<span>Beyond: <strong>{diagnostics.far.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.far.pairs} pairs)</span>
-						</div>
-					{/if}
-
-					{#if diagnostics.issues.length > 0}
-						<ul class="space-y-2 mb-3 max-h-80 overflow-y-auto pr-2">
-							{#each diagnostics.issues as issue}
-								<li class="flex items-start gap-2">
-									<span class="badge {severityClass(issue.severity)} shrink-0 mt-0.5">{issue.category}</span>
-									<span class="text-sm">{issue.message}</span>
-								</li>
-							{/each}
-						</ul>
-					{/if}
-
-					{#if diagnostics.roomCoverage.length > 0}
-						<h3 class="font-semibold text-sm mb-2">Node coverage per room</h3>
-						<p class="text-xs text-surface-600-400 mb-2">
-							Measured here: spots with a node within 1.5 m averaged 1.1 m position error, spots beyond it
-							2.5 m. Distance to the third-nearest node made no difference - one node close enough is what counts.
-						</p>
-						<div class="overflow-x-auto overflow-y-auto max-h-80">
-							<table class="table table-compact">
-								<thead><tr><th>Room</th><th>Floor</th><th>Nearest node</th><th>Worst corner</th><th>In range</th></tr></thead>
-								<tbody>
-									{#each diagnostics.roomCoverage as r}
-										<tr>
-											<td>{r.roomName ?? '-'}</td>
-											<td class="text-surface-600-400">{r.floorId}</td>
-											<td><span class="badge {coverageClass(r.medianNearestNodeM)}">{r.medianNearestNodeM.toFixed(1)} m</span></td>
-											<td>{r.worstNearestNodeM.toFixed(1)} m</td>
-											<td>{Math.round(r.wellCoveredFraction * 100)}%</td>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
-						</div>
-					{/if}
-				{/if}
-			</div>
-
-			<!-- 2d. Accuracy benchmark -->
-			<div class="card p-4">
-				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Accuracy Benchmark</h2>
-					<button class="btn preset-filled-primary-500" onclick={runBenchmark} disabled={benchBusy}>
-						{benchBusy ? 'Running...' : 'Run'}
-					</button>
-				</header>
-				<p class="text-sm text-surface-600-400 mb-3">
-					Replays the recorded walk points through the locator with the current settings, so two runs can be
-					compared. Without one figure computed the same way every time, "that made it better" is an opinion.
-				</p>
-				{#if benchmark?.last}
-					{@const b = benchmark.last}
-					{#if b.error}
-						<p class="text-sm text-warning-600-400">{b.error}</p>
-					{:else}
-						<p class="text-sm mb-2">{b.verdict}</p>
-						<div class="flex flex-wrap gap-6 text-sm mb-3">
-							<span>Median <strong>{b.medianErrorM?.toFixed(2)} m</strong></span>
-							<span>90th pct <strong>{b.p90ErrorM?.toFixed(2)} m</strong></span>
-							<span>Right room <strong>{Math.round((b.roomHitRate ?? 0) * 100)}%</strong></span>
-							{#if b.floorHitRate != null}
-								<span>Right floor <strong class={b.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>{Math.round(b.floorHitRate * 100)}%</strong></span>
-							{/if}
-							<span class="text-surface-600-400">{b.pointsUsed} points, {b.pointsWithLevels} with signal levels</span>
-							{#if b.pointsSkipped > 0}
-								<span class="text-warning-600-400">{b.pointsSkipped} not scored</span>
-							{/if}
-						</div>
-						{#if b.floors.length > 0}
-							<div class="overflow-x-auto">
-								<table class="table table-compact">
-									<thead><tr><th>Floor</th><th>Median</th><th>Found</th><th>Ticks</th></tr></thead>
-									<tbody>
-										{#each b.floors as f}
-											<tr>
-												<td>{f.floorId}</td>
-												<td>{f.medianErrorM?.toFixed(2)} m</td>
-												<td class={f.floorHitRate != null && f.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>
-													{f.floorHitRate != null ? `${Math.round(f.floorHitRate * 100)}%` : '-'}
-												</td>
-												<td>{f.ticks}</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
-						{/if}
-						{#if (b.skipped ?? []).length > 0}
-							<div class="mt-3 p-3 rounded preset-tonal-warning">
-								<p class="text-sm font-semibold mb-1">Walk points not scored</p>
-								<p class="text-xs text-surface-600-400 mb-2">
-									These were recorded but could not be measured against. Worth reading rather than
-									skipping: a point that no node on its own floor can hear is not missing data, it is
-									data about a gap.
-								</p>
-								<ul class="space-y-1">
-									{#each b.skipped as sk (sk.id)}
-										<li class="text-sm">
-											<span class="font-medium">{sk.roomName ?? sk.id}</span>
-											<span class="text-surface-600-400">({sk.floorId}) — {sk.reason}</span>
-										</li>
-									{/each}
-								</ul>
-							</div>
-						{/if}
-						{#if (b.floorConfusion ?? []).length > 0}
-							<p class="text-xs text-surface-600-400 mt-2">
-								Wrong floor most often: {b.floorConfusion.map((c) => `${c.pair} (${c.ticks}x)`).join(', ')}
-							</p>
-						{/if}
-						<p class="text-xs text-surface-600-400 mt-2">
-							"Found" is the only figure here scored without knowing the answer - median, 90th percentile
-							and room are all measured on the correct floor, so a run can improve by centimetres while
-							sending the device upstairs.
-						</p>
-					{/if}
-				{:else}
-					<p class="text-sm text-surface-600-400">Not run yet. Needs at least one walk test point.</p>
-				{/if}
-			</div>
-
-			<!-- 2d2. Which locators should be enabled -->
-			<div class="card p-4">
-				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Locator Selection</h2>
-					<button class="btn preset-filled-primary-500" onclick={runLocatorSweep} disabled={locatorBusy}>
-						{locatorBusy ? 'Measuring...' : 'Measure'}
-					</button>
-				</header>
-				<p class="text-sm text-surface-600-400 mb-3">
-					Several position estimators can run at once, each producing a candidate per floor, and the most
-					confident one wins. Which of them earn their place is a question about your building, not a
-					matter of taste - so it is measured here by replaying your walk points through the real
-					estimators, not a stand-in.
-				</p>
-
-				{#if locatorSweep?.error}
-					<p class="text-sm text-warning-600-400">{locatorSweep.error}</p>
-				{:else if locatorSweep}
-					{#if locatorSweep.recommendation}
-						{@const rec = locatorSweep.recommendation}
-						<div class="p-3 rounded preset-tonal-primary mb-3">
-							<div class="flex items-start justify-between gap-3">
-								<div>
-									<p class="text-sm font-semibold">Recommended: {rec.label}</p>
-									<p class="text-xs text-surface-600-400 mt-1">{rec.reason}</p>
-								</div>
-								{#if rec.alreadyConfigured}
-									<span class="badge preset-filled-success-500 shrink-0">already set</span>
-								{:else}
-									<button class="btn btn-sm preset-filled-primary-500 shrink-0"
-										onclick={() => applyLocatorChoice(rec.locators)} disabled={locatorBusy}>
-										Apply
-									</button>
-								{/if}
-							</div>
-							{#if locatorApplied}
-								<p class="text-xs text-success-600-400 mt-2">
-									Written to the configuration. Tracking picks it up on the next locator cycle.
-								</p>
-							{/if}
-						</div>
-					{/if}
-
-					<div class="overflow-x-auto">
-						<table class="table table-compact">
-							<thead>
-								<tr><th>Combination</th><th>Right room</th><th>Right floor</th><th>Median</th><th>Points</th></tr>
-							</thead>
-							<tbody>
-								{#each locatorSweep.runs as r (r.label)}
-									<tr class={r.isCurrentConfiguration ? 'font-semibold' : ''}>
-										<td>{r.label}{r.isCurrentConfiguration ? ' (current)' : ''}</td>
-										<td>
-											{r.error ? '-' : `${Math.round((r.roomHitRate ?? 0) * 100)}%`}
-											{#if r.roomHitStandardErrorPoints}
-												<span class="text-surface-600-400">±{Math.round(r.roomHitStandardErrorPoints * 100)}</span>
-											{/if}
-										</td>
-										<td>{r.error ? '-' : `${Math.round((r.floorHitRate ?? 0) * 100)}%`}</td>
-										<td>{r.error ? '-' : `${r.medianErrorM?.toFixed(2)} m`}</td>
-										<td>{r.pointsUsed}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-					<p class="text-xs text-surface-600-400 mt-2">
-						Ranked by right-room rate, because that is what presence automations consume - and it already
-						contains the rest: a scenario on the wrong floor cannot name the right room, and neither can
-						one that is half a room off. The ± is measured across walk points rather than across ticks,
-						since the ticks within one point are the same device standing in the same place.
-					</p>
-				{:else}
-					<p class="text-sm text-surface-600-400">Not measured yet. Needs recorded walk points.</p>
-				{/if}
-			</div>
-
-			<!-- 2e. Calibration sweep -->
-			<div class="card p-4">
-				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Calibration Sweep</h2>
-					<button class="btn preset-filled-primary-500" onclick={runCalibrationSweep} disabled={sweepBusy}>
-						{sweepBusy ? 'Fitting...' : 'Run'}
-					</button>
-				</header>
-				<p class="text-sm text-surface-600-400 mb-3">
-					Fits the calibration several different ways on the current measurements and scores each one
-					against your recorded walk points. The Locator Tune further down sweeps how positions are
-					computed; this sweeps what the nodes believe about the radio. Nothing is written - it only
-					reports which settings would have done better.
-				</p>
-
-				{#if sweep?.error}
-					<p class="text-sm text-warning-600-400">{sweep.error}</p>
-				{:else if sweep}
-					<div class="mb-3 p-3 rounded {sweep.respondingPoints === 0 || sweep.respondingPoints / Math.max(sweep.totalPoints, 1) < 0.5 ? 'preset-tonal-warning' : 'preset-tonal'}">
-						<p class="text-sm font-semibold">
-							{sweep.respondingPoints} of {sweep.totalPoints} walk points can respond to a calibration change
-						</p>
-						<p class="text-xs text-surface-600-400 mt-1">
-							Only points recorded with per-tick signal levels can react at all - the rest replay a
-							distance their node derived at the time, which no setting here can alter. If that share is
-							small, a flat column below means "mostly ballast", not "makes no difference". Record fresh
-							walk points to raise it.
-						</p>
-					</div>
-
-					{#if sweep.verdict}<p class="text-sm mb-3">{sweep.verdict}</p>{/if}
-
-					<div class="overflow-x-auto">
-						<table class="table table-compact">
-							<thead>
-								<tr>
-									<th>Candidate</th>
-									<th>Responding</th>
-									<th>All points</th>
-									<th>90th pct</th>
-									<th>Room</th>
-									<th>Floor</th>
-									<th>Absorption fitted</th>
-									<th>Pulled to</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#if sweep.baseline}
-									<tr class="opacity-70">
-										<td>{sweep.baseline.label}</td>
-										<td>-</td>
-										<td>{sweep.baseline.medianErrorM?.toFixed(2)} m</td>
-										<td>{sweep.baseline.p90ErrorM?.toFixed(2)} m</td>
-										<td>{Math.round((sweep.baseline.roomHitRate ?? 0) * 100)}%</td>
-										<td>{Math.round((sweep.baseline.floorHitRate ?? 0) * 100)}%</td>
-										<td colspan="2">no fit performed</td>
-									</tr>
-								{/if}
-								{#each sweep.runs as r, i (r.label)}
-									<tr class={i === 0 && !r.error ? 'font-semibold' : ''}>
-										<td>{r.label}</td>
-										<td>{r.error ? '-' : `${r.respondingMedianErrorM?.toFixed(2)} m`}</td>
-										<td>{r.error ? '-' : `${r.medianErrorM?.toFixed(2)} m`}</td>
-										<td>{r.error ? '-' : `${r.p90ErrorM?.toFixed(2)} m`}</td>
-										<td>{r.error ? '-' : `${Math.round((r.roomHitRate ?? 0) * 100)}%`}</td>
-										<td>{r.error ? '-' : `${Math.round((r.floorHitRate ?? 0) * 100)}%`}</td>
-										<td>
-											{#if r.error}
-												<span class="text-warning-600-400">{r.error}</span>
-											{:else}
-												{r.absorptionMinFitted?.toFixed(2)} – {r.absorptionMaxFitted?.toFixed(2)}
-												<span class="text-surface-600-400">(median {r.absorptionMedianFitted?.toFixed(2)})</span>
-											{/if}
-										</td>
-										<td>{r.targetAbsorption?.toFixed(2) ?? '-'}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-					<p class="text-xs text-surface-600-400 mt-2">
-						"Pulled to" is where the regularization shrinks absorption. It used to be the midpoint of the
-						configured limits unconditionally, which quietly turned the limits into a target - widening
-						them moved the goal instead of freeing the fit. It now follows the fleet's own median unless
-						<code>weights.absorption_target</code> says otherwise.
-					</p>
-				{:else}
-					<p class="text-sm text-surface-600-400">Not run yet. Needs recorded walk points and nodes that currently hear each other.</p>
-				{/if}
-			</div>
-
-			<!-- 3. Calibrate now -->
-			<div class="card p-4">
-				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Calibration</h2>
-					<button class="btn preset-filled-primary-500" onclick={calibrateNow} disabled={calibrateBusy}>
-						{calibrateBusy ? 'Triggering...' : 'Calibrate now'}
-					</button>
-				</header>
-				<p class="text-sm text-surface-600-400 mb-3">Runs a fit cycle immediately instead of waiting for the next scheduled interval. Useful right after moving a node or changing its coordinates.</p>
-				{#if $calibration?.optimizerState}
-					<!-- Same metric order as the Nodes calibration page: RMSE, R, Best RMSE, Best R -->
-					<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-						<div class="card p-3 preset-tonal">
-							<div class="text-xl font-bold text-primary-500">{$calibration?.rmse?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">RMSE</div>
-						</div>
-						<div class="card p-3 preset-tonal">
-							<div class="text-xl font-bold text-primary-500">{$calibration?.r?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">R</div>
-						</div>
-						<div class="card p-3 preset-tonal">
-							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestRMSE?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">Best RMSE</div>
-						</div>
-						<div class="card p-3 preset-tonal">
-							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestR?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">Best R</div>
-						</div>
-					</div>
-				{/if}
-			</div>
-
-			<!-- 4. Excluded pair suggestions -->
-			<div class="card p-4">
-				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Problem Pair Suggestions</h2>
-					<span class="badge {suggestions.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
-						{suggestions.length === 0 ? 'None' : suggestions.length}
-					</span>
-				</header>
-				<p class="text-sm text-surface-600-400 mb-3">
-					Same-floor node pairs whose distance error stays persistently high - usually an RF obstruction (wall, appliance) between them. Pairs only appear after at least 2 hours of observation with the error above threshold most of that time, so post-move calibration transients don't trigger false suggestions; moving a node resets its pairs' statistics.
-				</p>
-				{#if suggestions.length === 0}
-					<p class="text-sm text-surface-600-400">No persistently bad pairs detected (pairs need 2h+ of consistently high error to appear here).</p>
-				{:else}
-					<div class="overflow-x-auto">
-						<table class="table table-compact">
-							<thead>
-								<tr><th>Pair</th><th>Avg error</th><th>Bad</th><th>Observed</th><th></th></tr>
-							</thead>
-							<tbody>
-								{#each suggestions as s (s.pairId)}
-									<tr>
-										<td>{s.nodeAName ?? s.nodeA} ↔ {s.nodeBName ?? s.nodeB}</td>
-										<td>{(s.avgAbsPercentError * 100).toFixed(0)}%</td>
-										<td>{(s.aboveThresholdFraction * 100).toFixed(0)}% of time</td>
-										<td>{s.observedHours < 48 ? `${s.observedHours.toFixed(1)}h` : `${(s.observedHours / 24).toFixed(1)}d`}</td>
-										<td>
-											<button class="btn btn-sm preset-filled-warning-500" onclick={() => excludePair(s)} disabled={pairBusy[s.pairId]}>
-												Exclude
-											</button>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{/if}
-				{#if currentlyExcluded.length > 0}
-					<p class="text-xs text-surface-600-400 mt-3">Currently excluded: {currentlyExcluded.join(', ')}</p>
-				{/if}
-			</div>
-
+				<p class="text-sm text-surface-600-400 -mt-4">Der Walk-Test liefert die Grundwahrheit, gegen die alle folgenden Schritte rechnen. Ohne ihn koennen sie nichts sagen.</p>
 			<!-- 5. Walk test -->
 			<div class="card p-4" bind:this={walkCardEl}>
 				<header class="flex items-center justify-between mb-3">
@@ -1399,7 +1025,135 @@
 					<p class="text-xs text-surface-600-400 mt-2">Points persist across restarts. Points whose receiving node was moved afterwards are ignored automatically.</p>
 				{/if}
 			</div>
+			</section>
 
+			<section class="space-y-6">
+				<header class="flex items-baseline gap-3 pt-2">
+					<span class="badge preset-filled-primary-500 shrink-0">Schritt 3</span>
+					<h2 class="text-xl font-bold">Kalibrieren</h2>
+				</header>
+				<p class="text-sm text-surface-600-400 -mt-4">Aus den Messungen die Funkparameter je Knoten bestimmen - Absorption, Empfindlichkeit, Ausreisser-Paare.</p>
+			<!-- 3. Calibrate now -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Calibration</h2>
+					<button class="btn preset-filled-primary-500" onclick={calibrateNow} disabled={calibrateBusy}>
+						{calibrateBusy ? 'Triggering...' : 'Calibrate now'}
+					</button>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">Runs a fit cycle immediately instead of waiting for the next scheduled interval. Useful right after moving a node or changing its coordinates.</p>
+				{#if $calibration?.optimizerState}
+					<!-- Same metric order as the Nodes calibration page: RMSE, R, Best RMSE, Best R -->
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+						<div class="card p-3 preset-tonal">
+							<div class="text-xl font-bold text-primary-500">{$calibration?.rmse?.toFixed(3) ?? 'n/a'}</div>
+							<div class="text-xs text-surface-600-400">RMSE</div>
+						</div>
+						<div class="card p-3 preset-tonal">
+							<div class="text-xl font-bold text-primary-500">{$calibration?.r?.toFixed(3) ?? 'n/a'}</div>
+							<div class="text-xs text-surface-600-400">R</div>
+						</div>
+						<div class="card p-3 preset-tonal">
+							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestRMSE?.toFixed(3) ?? 'n/a'}</div>
+							<div class="text-xs text-surface-600-400">Best RMSE</div>
+						</div>
+						<div class="card p-3 preset-tonal">
+							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestR?.toFixed(3) ?? 'n/a'}</div>
+							<div class="text-xs text-surface-600-400">Best R</div>
+						</div>
+					</div>
+				{/if}
+			</div>
+			<!-- 2e. Calibration sweep -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Calibration Sweep</h2>
+					<button class="btn preset-filled-primary-500" onclick={runCalibrationSweep} disabled={sweepBusy}>
+						{sweepBusy ? 'Fitting...' : 'Run'}
+					</button>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Fits the calibration several different ways on the current measurements and scores each one
+					against your recorded walk points. The Locator Tune further down sweeps how positions are
+					computed; this sweeps what the nodes believe about the radio. Nothing is written - it only
+					reports which settings would have done better.
+				</p>
+
+				{#if sweep?.error}
+					<p class="text-sm text-warning-600-400">{sweep.error}</p>
+				{:else if sweep}
+					<div class="mb-3 p-3 rounded {sweep.respondingPoints === 0 || sweep.respondingPoints / Math.max(sweep.totalPoints, 1) < 0.5 ? 'preset-tonal-warning' : 'preset-tonal'}">
+						<p class="text-sm font-semibold">
+							{sweep.respondingPoints} of {sweep.totalPoints} walk points can respond to a calibration change
+						</p>
+						<p class="text-xs text-surface-600-400 mt-1">
+							Only points recorded with per-tick signal levels can react at all - the rest replay a
+							distance their node derived at the time, which no setting here can alter. If that share is
+							small, a flat column below means "mostly ballast", not "makes no difference". Record fresh
+							walk points to raise it.
+						</p>
+					</div>
+
+					{#if sweep.verdict}<p class="text-sm mb-3">{sweep.verdict}</p>{/if}
+
+					<div class="overflow-x-auto">
+						<table class="table table-compact">
+							<thead>
+								<tr>
+									<th>Candidate</th>
+									<th>Responding</th>
+									<th>All points</th>
+									<th>90th pct</th>
+									<th>Room</th>
+									<th>Floor</th>
+									<th>Absorption fitted</th>
+									<th>Pulled to</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#if sweep.baseline}
+									<tr class="opacity-70">
+										<td>{sweep.baseline.label}</td>
+										<td>-</td>
+										<td>{sweep.baseline.medianErrorM?.toFixed(2)} m</td>
+										<td>{sweep.baseline.p90ErrorM?.toFixed(2)} m</td>
+										<td>{Math.round((sweep.baseline.roomHitRate ?? 0) * 100)}%</td>
+										<td>{Math.round((sweep.baseline.floorHitRate ?? 0) * 100)}%</td>
+										<td colspan="2">no fit performed</td>
+									</tr>
+								{/if}
+								{#each sweep.runs as r, i (r.label)}
+									<tr class={i === 0 && !r.error ? 'font-semibold' : ''}>
+										<td>{r.label}</td>
+										<td>{r.error ? '-' : `${r.respondingMedianErrorM?.toFixed(2)} m`}</td>
+										<td>{r.error ? '-' : `${r.medianErrorM?.toFixed(2)} m`}</td>
+										<td>{r.error ? '-' : `${r.p90ErrorM?.toFixed(2)} m`}</td>
+										<td>{r.error ? '-' : `${Math.round((r.roomHitRate ?? 0) * 100)}%`}</td>
+										<td>{r.error ? '-' : `${Math.round((r.floorHitRate ?? 0) * 100)}%`}</td>
+										<td>
+											{#if r.error}
+												<span class="text-warning-600-400">{r.error}</span>
+											{:else}
+												{r.absorptionMinFitted?.toFixed(2)} – {r.absorptionMaxFitted?.toFixed(2)}
+												<span class="text-surface-600-400">(median {r.absorptionMedianFitted?.toFixed(2)})</span>
+											{/if}
+										</td>
+										<td>{r.targetAbsorption?.toFixed(2) ?? '-'}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-2">
+						"Pulled to" is where the regularization shrinks absorption. It used to be the midpoint of the
+						configured limits unconditionally, which quietly turned the limits into a target - widening
+						them moved the goal instead of freeing the fit. It now follows the fleet's own median unless
+						<code>weights.absorption_target</code> says otherwise.
+					</p>
+				{:else}
+					<p class="text-sm text-surface-600-400">Not run yet. Needs recorded walk points and nodes that currently hear each other.</p>
+				{/if}
+			</div>
 			<!-- 6. Optimizer auto-tune -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
@@ -1462,7 +1216,131 @@
 					<p class="text-xs text-surface-600-400 mt-2">Holdout = mean composite score on pairs excluded from fitting (higher is better). A big train-vs-holdout gap indicates overfitting.</p>
 				{/if}
 			</div>
+			<!-- 4. Excluded pair suggestions -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Problem Pair Suggestions</h2>
+					<span class="badge {suggestions.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
+						{suggestions.length === 0 ? 'None' : suggestions.length}
+					</span>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Same-floor node pairs whose distance error stays persistently high - usually an RF obstruction (wall, appliance) between them. Pairs only appear after at least 2 hours of observation with the error above threshold most of that time, so post-move calibration transients don't trigger false suggestions; moving a node resets its pairs' statistics.
+				</p>
+				{#if suggestions.length === 0}
+					<p class="text-sm text-surface-600-400">No persistently bad pairs detected (pairs need 2h+ of consistently high error to appear here).</p>
+				{:else}
+					<div class="overflow-x-auto">
+						<table class="table table-compact">
+							<thead>
+								<tr><th>Pair</th><th>Avg error</th><th>Bad</th><th>Observed</th><th></th></tr>
+							</thead>
+							<tbody>
+								{#each suggestions as s (s.pairId)}
+									<tr>
+										<td>{s.nodeAName ?? s.nodeA} ↔ {s.nodeBName ?? s.nodeB}</td>
+										<td>{(s.avgAbsPercentError * 100).toFixed(0)}%</td>
+										<td>{(s.aboveThresholdFraction * 100).toFixed(0)}% of time</td>
+										<td>{s.observedHours < 48 ? `${s.observedHours.toFixed(1)}h` : `${(s.observedHours / 24).toFixed(1)}d`}</td>
+										<td>
+											<button class="btn btn-sm preset-filled-warning-500" onclick={() => excludePair(s)} disabled={pairBusy[s.pairId]}>
+												Exclude
+											</button>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+				{#if currentlyExcluded.length > 0}
+					<p class="text-xs text-surface-600-400 mt-3">Currently excluded: {currentlyExcluded.join(', ')}</p>
+				{/if}
+			</div>
+			</section>
 
+			<section class="space-y-6">
+				<header class="flex items-baseline gap-3 pt-2">
+					<span class="badge preset-filled-primary-500 shrink-0">Schritt 4</span>
+					<h2 class="text-xl font-bold">Verorten</h2>
+				</header>
+				<p class="text-sm text-surface-600-400 -mt-4">Welche Locators sollen laufen und mit welchen Parametern? Gemessen am Szenarien-Wettbewerb, so wie er live entscheidet.</p>
+			<!-- 2d2. Which locators should be enabled -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Locator Selection</h2>
+					<button class="btn preset-filled-primary-500" onclick={runLocatorSweep} disabled={locatorBusy}>
+						{locatorBusy ? 'Measuring...' : 'Measure'}
+					</button>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Several position estimators can run at once, each producing a candidate per floor, and the most
+					confident one wins. Which of them earn their place is a question about your building, not a
+					matter of taste - so it is measured here by replaying your walk points through the real
+					estimators, not a stand-in.
+				</p>
+
+				{#if locatorSweep?.error}
+					<p class="text-sm text-warning-600-400">{locatorSweep.error}</p>
+				{:else if locatorSweep}
+					{#if locatorSweep.recommendation}
+						{@const rec = locatorSweep.recommendation}
+						<div class="p-3 rounded preset-tonal-primary mb-3">
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<p class="text-sm font-semibold">Recommended: {rec.label}</p>
+									<p class="text-xs text-surface-600-400 mt-1">{rec.reason}</p>
+								</div>
+								{#if rec.alreadyConfigured}
+									<span class="badge preset-filled-success-500 shrink-0">already set</span>
+								{:else}
+									<button class="btn btn-sm preset-filled-primary-500 shrink-0"
+										onclick={() => applyLocatorChoice(rec.locators)} disabled={locatorBusy}>
+										Apply
+									</button>
+								{/if}
+							</div>
+							{#if locatorApplied}
+								<p class="text-xs text-success-600-400 mt-2">
+									Written to the configuration. Tracking picks it up on the next locator cycle.
+								</p>
+							{/if}
+						</div>
+					{/if}
+
+					<div class="overflow-x-auto">
+						<table class="table table-compact">
+							<thead>
+								<tr><th>Combination</th><th>Right room</th><th>Right floor</th><th>Median</th><th>Points</th></tr>
+							</thead>
+							<tbody>
+								{#each locatorSweep.runs as r (r.label)}
+									<tr class={r.isCurrentConfiguration ? 'font-semibold' : ''}>
+										<td>{r.label}{r.isCurrentConfiguration ? ' (current)' : ''}</td>
+										<td>
+											{r.error ? '-' : `${Math.round((r.roomHitRate ?? 0) * 100)}%`}
+											{#if r.roomHitStandardErrorPoints}
+												<span class="text-surface-600-400">±{Math.round(r.roomHitStandardErrorPoints * 100)}</span>
+											{/if}
+										</td>
+										<td>{r.error ? '-' : `${Math.round((r.floorHitRate ?? 0) * 100)}%`}</td>
+										<td>{r.error ? '-' : `${r.medianErrorM?.toFixed(2)} m`}</td>
+										<td>{r.pointsUsed}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<p class="text-xs text-surface-600-400 mt-2">
+						Ranked by right-room rate, because that is what presence automations consume - and it already
+						contains the rest: a scenario on the wrong floor cannot name the right room, and neither can
+						one that is half a room off. The ± is measured across walk points rather than across ticks,
+						since the ticks within one point are the same device standing in the same place.
+					</p>
+				{:else}
+					<p class="text-sm text-surface-600-400">Not measured yet. Needs recorded walk points.</p>
+				{/if}
+			</div>
 			<!-- 7. Locator tuning via walk-test replay -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
@@ -1511,7 +1389,164 @@
 					<p class="text-xs text-surface-600-400 mt-2">Based on {locatorTune.pointsUsed} walk point{locatorTune.pointsUsed === 1 ? '' : 's'}. Caveats: stationary noise only (no walking-motion dynamics), and the scenario/Kalman smoothing above the locators is not replayed.</p>
 				{/if}
 			</div>
+			</section>
 
+			<section class="space-y-6">
+				<header class="flex items-baseline gap-3 pt-2">
+					<span class="badge preset-filled-primary-500 shrink-0">Schritt 5</span>
+					<h2 class="text-xl font-bold">Nachweisen</h2>
+				</header>
+				<p class="text-sm text-surface-600-400 -mt-4">Was kommt am Ende heraus? Dieselbe Messweise wie in Schritt 4, damit die Zahlen vergleichbar sind.</p>
+			<!-- 2d. Accuracy benchmark -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Accuracy Benchmark</h2>
+					<button class="btn preset-filled-primary-500" onclick={runBenchmark} disabled={benchBusy}>
+						{benchBusy ? 'Running...' : 'Run'}
+					</button>
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Replays the recorded walk points through the locator with the current settings, so two runs can be
+					compared. Without one figure computed the same way every time, "that made it better" is an opinion.
+				</p>
+				{#if benchmark?.last}
+					{@const b = benchmark.last}
+					{#if b.error}
+						<p class="text-sm text-warning-600-400">{b.error}</p>
+					{:else}
+						<p class="text-sm mb-2">{b.verdict}</p>
+						<div class="flex flex-wrap gap-6 text-sm mb-3">
+							<span>Median <strong>{b.medianErrorM?.toFixed(2)} m</strong></span>
+							<span>90th pct <strong>{b.p90ErrorM?.toFixed(2)} m</strong></span>
+							<span>Right room <strong>{Math.round((b.roomHitRate ?? 0) * 100)}%</strong></span>
+							{#if b.floorHitRate != null}
+								<span>Right floor <strong class={b.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>{Math.round(b.floorHitRate * 100)}%</strong></span>
+							{/if}
+							<span class="text-surface-600-400">{b.pointsUsed} points, {b.pointsWithLevels} with signal levels</span>
+							{#if b.pointsSkipped > 0}
+								<span class="text-warning-600-400">{b.pointsSkipped} not scored</span>
+							{/if}
+						</div>
+						{#if b.floors.length > 0}
+							<div class="overflow-x-auto">
+								<table class="table table-compact">
+									<thead><tr><th>Floor</th><th>Median</th><th>Found</th><th>Ticks</th></tr></thead>
+									<tbody>
+										{#each b.floors as f}
+											<tr>
+												<td>{f.floorId}</td>
+												<td>{f.medianErrorM?.toFixed(2)} m</td>
+												<td class={f.floorHitRate != null && f.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>
+													{f.floorHitRate != null ? `${Math.round(f.floorHitRate * 100)}%` : '-'}
+												</td>
+												<td>{f.ticks}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+						{#if (b.skipped ?? []).length > 0}
+							<div class="mt-3 p-3 rounded preset-tonal-warning">
+								<p class="text-sm font-semibold mb-1">Walk points not scored</p>
+								<p class="text-xs text-surface-600-400 mb-2">
+									These were recorded but could not be measured against. Worth reading rather than
+									skipping: a point that no node on its own floor can hear is not missing data, it is
+									data about a gap.
+								</p>
+								<ul class="space-y-1">
+									{#each b.skipped as sk (sk.id)}
+										<li class="text-sm">
+											<span class="font-medium">{sk.roomName ?? sk.id}</span>
+											<span class="text-surface-600-400">({sk.floorId}) — {sk.reason}</span>
+										</li>
+									{/each}
+								</ul>
+							</div>
+						{/if}
+						{#if (b.floorConfusion ?? []).length > 0}
+							<p class="text-xs text-surface-600-400 mt-2">
+								Wrong floor most often: {b.floorConfusion.map((c) => `${c.pair} (${c.ticks}x)`).join(', ')}
+							</p>
+						{/if}
+						<p class="text-xs text-surface-600-400 mt-2">
+							"Found" is the only figure here scored without knowing the answer - median, 90th percentile
+							and room are all measured on the correct floor, so a run can improve by centimetres while
+							sending the device upstairs.
+						</p>
+					{/if}
+				{:else}
+					<p class="text-sm text-surface-600-400">Not run yet. Needs at least one walk test point.</p>
+				{/if}
+			</div>
+			<!-- 2b. Measurement diagnostics: does the radio data agree with the map? -->
+			<div class="card p-4">
+				<header class="flex items-center justify-between mb-3">
+					<h2 class="text-lg font-semibold">Measurement Diagnostics</h2>
+					{#if diagnostics}
+						<span class="badge {diagnostics.issues.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
+							{diagnostics.issues.length === 0 ? 'Nothing flagged' : `${diagnostics.issues.length} finding${diagnostics.issues.length === 1 ? '' : 's'}`}
+						</span>
+					{/if}
+				</header>
+				<p class="text-sm text-surface-600-400 mb-3">
+					Configuration Checks above validates the map. This checks the radio data against it - readings no
+					path-loss setting can explain, parameters pinned to their limit, and how much of each room actually
+					has a node close enough to work with.
+				</p>
+
+				{#if diagnostics}
+					{#if diagnostics.near.pairs > 0 || diagnostics.far.pairs > 0}
+						<div class="flex gap-6 text-sm mb-3">
+							<span>Under {diagnostics.nearFarSplitM} m: <strong>{diagnostics.near.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.near.pairs} pairs)</span>
+							<span>Beyond: <strong>{diagnostics.far.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.far.pairs} pairs)</span>
+						</div>
+					{/if}
+
+					{#if diagnostics.issues.length > 0}
+						<ul class="space-y-2 mb-3 max-h-80 overflow-y-auto pr-2">
+							{#each diagnostics.issues as issue}
+								<li class="flex items-start gap-2">
+									<span class="badge {severityClass(issue.severity)} shrink-0 mt-0.5">{issue.category}</span>
+									<span class="text-sm">{issue.message}</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+
+					{#if diagnostics.roomCoverage.length > 0}
+						<h3 class="font-semibold text-sm mb-2">Node coverage per room</h3>
+						<p class="text-xs text-surface-600-400 mb-2">
+							Measured here: spots with a node within 1.5 m averaged 1.1 m position error, spots beyond it
+							2.5 m. Distance to the third-nearest node made no difference - one node close enough is what counts.
+						</p>
+						<div class="overflow-x-auto overflow-y-auto max-h-80">
+							<table class="table table-compact">
+								<thead><tr><th>Room</th><th>Floor</th><th>Nearest node</th><th>Worst corner</th><th>In range</th></tr></thead>
+								<tbody>
+									{#each diagnostics.roomCoverage as r}
+										<tr>
+											<td>{r.roomName ?? '-'}</td>
+											<td class="text-surface-600-400">{r.floorId}</td>
+											<td><span class="badge {coverageClass(r.medianNearestNodeM)}">{r.medianNearestNodeM.toFixed(1)} m</span></td>
+											<td>{r.worstNearestNodeM.toFixed(1)} m</td>
+											<td>{Math.round(r.wellCoveredFraction * 100)}%</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					{/if}
+				{/if}
+			</div>
+			</section>
+
+			<section class="space-y-6">
+				<header class="flex items-baseline gap-3 pt-2">
+					<span class="badge preset-tonal-surface shrink-0">Experten</span>
+					<h2 class="text-xl font-bold">Einstellungen</h2>
+				</header>
+				<p class="text-sm text-surface-600-400 -mt-4">Schreibt direkt in die config.yaml. Wer hier dreht, sollte wissen warum - die Schritte oben messen und empfehlen dieselben Werte.</p>
 			<!-- 8. Settings -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
@@ -1667,6 +1702,7 @@
 					<p class="text-xs text-surface-600-400 mt-3">Writes these config.yaml sections directly - changes apply within a few seconds (config is polled), no restart needed. Changing MQTT to a wrong broker disconnects the companion from the fleet - the Supervisor default is usually right. correlation/rmse weights and floor assignments are deliberately not exposed here.</p>
 				{/if}
 			</div>
+			</section>
 		{/if}
 	</div>
 </div>

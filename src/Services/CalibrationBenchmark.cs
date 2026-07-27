@@ -27,6 +27,7 @@ public class CalibrationBenchmark(
     State state,
     WalkTestService walkTest,
     ConfigLoader configLoader,
+    ScenarioReplay replay,
     string? persistPath = null)
 {
     /// <summary>Fewer usable ticks than this and a point says more about luck than accuracy.</summary>
@@ -77,6 +78,16 @@ public class CalibrationBenchmark(
         var nw = configLoader.Config?.Locators?.NadarayaWatson;
         result.Bandwidth = nw?.Bandwidth ?? 0.5;
         result.Kernel = nw?.Kernel ?? "gaussian";
+
+        // Dieselbe Kombination, die live laeuft - der Massstab muss das System messen, nicht einen
+        // seiner Pfade. benchFloors ist die Liste, ueber die der Wettbewerb geht.
+        var locators = replay.ConfiguredLocators();
+        var benchFloors = state.Floors.Values.Where(f => f.Id != null).ToList();
+        if (locators.Count == 0)
+        {
+            result.Error = "No locators are enabled, so there is nothing to measure. Enable at least one under Locator Selection.";
+            return remember ? Remember(result) : result;
+        }
 
         // The yardstick has to measure the system that is running, so every knob starts from the
         // configuration and an override only replaces it. Reading 0 where the config says 20 made a
@@ -129,10 +140,44 @@ public class CalibrationBenchmark(
                     audible.Add((node, DistanceFor(entry, overrides, ref recomputed)));
                 }
 
-                // Scored on every audible node, deliberately BEFORE the same-floor cut below: that
-                // cut is given the answer, so an error figure computed after it cannot say anything
-                // about whether the floor would have been found in the first place.
-                if (GuessFloor(audible, result.Bandwidth, result.Kernel, contrastWeight) is { } guess)
+                // ★ Seit 2026-07-27 entscheidet EIN Szenarien-Wettbewerb ueber Etage UND Position,
+                // derselbe, den der Locator-Sweep und das Locator-Tuning benutzen. Vorher wurde die
+                // Etage mit einem eigenen NW-Nachbau geraten und die Position anschliessend aus den
+                // Knoten der WAHREN Etage gerechnet - der Positionsfehler bekam die Antwort also
+                // geschenkt, und die Etagenquote stammte aus einem von vier konkurrierenden Pfaden.
+                // Deshalb meldete dieses Panel 62 % Raumtrefferquote, wo der Sweep 52 % mass.
+                var trusted = overrides?.MaxTrustedDistanceM is { } maxTrust
+                    ? audible.Where(a => a.dist <= maxTrust).ToList()
+                    : audible;
+                droppedFar += audible.Count - trusted.Count;
+
+                // Der Filter wirkt jetzt IM Locator. Hier wird nur noch gezaehlt, wie viele Messwerte
+                // er verwirft, damit die Kennzahl im Panel erhalten bleibt - sie beeinflusst die
+                // Schaetzung nicht mehr, sie beschreibt sie.
+                if (useConsistency && trusted.Count >= ScenarioReplay.MinNodesPerTick)
+                {
+                    var kept = ConsistencyFilter.LargestConsistent(trusted, h => h.node.Location, h => h.dist,
+                        toleranceM, toleranceFraction);
+                    if (kept.Count >= ScenarioReplay.MinNodesPerTick) dropped += trusted.Count - kept.Count;
+                }
+
+                var winner = replay.BestScenario(trusted, benchFloors, new ScenarioReplay.Options
+                {
+                    Locators = locators,
+                    ContrastWeight = contrastWeight,
+                    NadarayaWatsonBandwidth = result.Bandwidth,
+                    NadarayaWatsonKernel = result.Kernel,
+                    ConsistencyFilter = useConsistency,
+                    ConsistencyToleranceM = toleranceM,
+                    ConsistencyToleranceFraction = toleranceFraction
+                });
+
+                var ownFloorHeard = audible.Count(a =>
+                    a.node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false);
+                bestOwnFloorHeard = Math.Max(bestOwnFloorHeard, ownFloorHeard);
+                bestOtherFloorHeard = Math.Max(bestOtherFloorHeard, audible.Count - ownFloorHeard);
+
+                if (winner?.Floor?.Id is { } guess)
                 {
                     floorChecked++;
                     pointFloorChecked++;
@@ -149,49 +194,22 @@ public class CalibrationBenchmark(
                     Bump(floorTotalPerFloor, point.FloorId!);
                 }
 
-                var ownFloorCount = audible.Count(a =>
-                    a.node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false);
-                var heard = audible
-                    .Where(a => a.node.Floors?.Any(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)
-                    // A reading past the trust radius leaves the POSITION fit only. It stays in
-                    // `audible`, so it still counts towards the floor decision - "this node hears the
-                    // device" holds up long after "and it is 9 m away" has stopped meaning anything.
-                    // That separation is the whole idea; the firmware's max_distance silences the
-                    // node instead and throws the presence away together with the distance.
-                    .Where(a => overrides?.MaxTrustedDistanceM is not { } max || a.dist <= max)
-                    .Select(a => (loc: a.node.Location, dist: a.dist))
-                    .ToList();
-                if (overrides?.MaxTrustedDistanceM is not null)
-                    droppedFar += ownFloorCount - heard.Count;
-                bestOwnFloorHeard = Math.Max(bestOwnFloorHeard, heard.Count);
-                bestOtherFloorHeard = Math.Max(bestOtherFloorHeard, audible.Count - heard.Count);
-                if (heard.Count < MinNodesPerTick) continue;
+                if (winner == null) continue;
 
-                // Optional, so the effect can be measured before it is adopted live.
-                if (useConsistency)
-                {
-                    var kept = ConsistencyFilter.LargestConsistent(heard, h => h.loc, h => h.dist,
-                        toleranceM, toleranceFraction);
-                    if (kept.Count >= MinNodesPerTick)
-                    {
-                        dropped += heard.Count - kept.Count;
-                        heard = kept.ToList();
-                    }
-                }
-
-                heard.Sort((a, b) => a.dist.CompareTo(b.dist));
-
-                var (est, _) = NadarayaWatsonMultilateralizer.Estimate(heard, result.Bandwidth, result.Kernel);
+                var est = winner.Location;
                 estimates.Add(est);
 
                 // 2D only: Z is dominated by where the nodes happen to be mounted, not by how well
                 // the locator works, and mixing it in would make the figure track ceiling heights.
-                errors.Add(Math.Sqrt(Math.Pow(est.X - truth.X, 2) + Math.Pow(est.Y - truth.Y, 2)));
+                errors.Add(ScenarioReplay.Error2D(est, truth));
 
                 if (truthRoom != null)
                 {
                     roomChecked++;
-                    if (SpatialUtils.FindRoomContaining(est, floor)?.Id == truthRoom.Id) roomHits++;
+                    // Der Raum des GEWINNER-Szenarios, nicht der aus der wahren Etage nachgeschlagene:
+                    // liegt die Schaetzung auf der falschen Etage, ist der Raum falsch - und genau so
+                    // erlebt es die Automation auch.
+                    if (winner.Room?.Id == truthRoom.Id) roomHits++;
                 }
             }
 
@@ -408,71 +426,9 @@ public class CalibrationBenchmark(
     private static void Bump(Dictionary<string, int> counter, string key)
         => counter[key] = counter.TryGetValue(key, out var n) ? n + 1 : 1;
 
-    /// <summary>
-    /// Which floor would the live locator have landed on for this tick?
-    ///
-    /// Floor detection is not a separate algorithm in ESPresense - <see cref="State.GetScenarios"/>
-    /// builds one scenario PER FLOOR and <see cref="MultiScenarioLocator"/> publishes whichever wins
-    /// on confidence. So scoring it means doing exactly that: fit every floor from the nodes on it
-    /// and see which one comes out ahead. The arithmetic below mirrors
-    /// <see cref="NadarayaWatsonMultilateralizer.Locate"/> including its two-node branch, because
-    /// that branch exists precisely to keep sparsely-covered floors competitive - skipping it here
-    /// would score a system that is not the one running.
-    ///
-    /// One honest approximation: the live code counts only nodes currently ONLINE as the coverage
-    /// denominator, and a recording does not say who was online at the time. Nodes with a position
-    /// are counted instead, which understates confidence on a floor that had a node down. It shifts
-    /// both floors in the same direction, so comparisons between runs stay sound.
-    /// </summary>
-    private string? GuessFloor(IReadOnlyList<(Node node, double dist)> audible, double bandwidth, string? kernel, double contrastWeight)
-    {
-        string? best = null;
-        var bestConfidence = 0;
-
-        foreach (var floor in state.Floors.Values)
-        {
-            var heard = audible.Where(a => a.node.Floors?.Contains(floor) ?? false)
-                               .OrderBy(a => a.dist)
-                               .ToList();
-            if (heard.Count <= 1) continue;
-
-            Point3D est;
-            double error;
-            double? pearson;
-
-            if (heard.Count < 3 || floor.Bounds == null)
-            {
-                est = Point3D.MidPoint(heard[0].node.Location, heard[1].node.Location);
-                error = heard.Average(n => Math.Pow(est.DistanceTo(n.node.Location) - n.dist, 2));
-                pearson = null;
-            }
-            else
-            {
-                (est, error) = NadarayaWatsonMultilateralizer.Estimate(
-                    heard.Select(n => (n.node.Location, n.dist)).ToList(), bandwidth, kernel);
-                pearson = MathUtils.CalculatePearsonCorrelation(
-                    heard.Select(n => n.dist).ToList(),
-                    heard.Select(n => est.DistanceTo(n.node.Location)).ToList());
-            }
-
-            var possible = state.Nodes.Values.Count(n => (n.Floors?.Contains(floor) ?? false) && n.HasLocation);
-            var confidence = MathUtils.CalculateConfidence(error, pearson, heard.Count, possible);
-
-            // The readings every floor scenario throws away, used to tell the storeys apart rather
-            // than to place the device. See FloorContrast for the physics and the measurements.
-            confidence += (int)Math.Round(FloorContrast.Adjustment(
-                est, audible, r => r.node.Location, r => r.dist,
-                r => r.node.Floors?.Contains(floor) ?? false, contrastWeight));
-
-            if (confidence > bestConfidence)
-            {
-                bestConfidence = confidence;
-                best = floor.Id;
-            }
-        }
-
-        return best;
-    }
+    // GuessFloor ist am 27.07.2026 entfallen: die Etage entscheidet jetzt derselbe
+    // ScenarioReplay, der auch die Position liefert. Der Nachbau hier bildete nur
+    // Nadaraya-Watson nach und meldete dessen Etagenquote als die des Systems.
 
     private static double? Round(double v) => Math.Round(v, 2);
 

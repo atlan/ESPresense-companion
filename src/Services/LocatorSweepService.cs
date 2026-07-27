@@ -25,12 +25,13 @@ namespace ESPresense.Services;
 /// locator classes, and lets them compete exactly as they do live. Slower, and the only way the
 /// answer means anything.
 /// </summary>
-public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLoader configLoader)
+public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLoader configLoader, ScenarioReplay replay)
 {
-    /// <summary>Mirrors the live path: a locator needs three ranges before it says anything.</summary>
-    private const int MinNodesPerTick = 3;
+    // Schwellen und Szenarien-Wettbewerb kommen aus ScenarioReplay - genau derselbe Massstab,
+    // den Benchmark und Locator-Tuning benutzen.
+    private const int MinNodesPerTick = ScenarioReplay.MinNodesPerTick;
 
-    private const int MinTicksPerPoint = 5;
+    private const int MinTicksPerPoint = ScenarioReplay.MinTicksPerPoint;
 
     public LocatorSweepResult Run(LocatorSweepRequest? request = null)
     {
@@ -94,8 +95,17 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
     ///    with far less scatter, and they do separate. A wrong storey is also the error a resident
     ///    actually notices, so falling back to it is not a consolation prize.
     ///
-    /// 3. FEWEST locators when neither separates anything. Less computation, one less thing to
+    /// 3. MEDIAN POSITION ERROR when room and floor both tie. Added 2026-07-27 after the rule picked
+    ///    the horizontally WORST candidate on this installation (2.40 m against 1.95 m) purely on
+    ///    floor, and said nothing about it - the user saw a 2.5 m drift on the map and the wizard
+    ///    reported everything as fine. Metres are not a consolation prize either: two candidates that
+    ///    name the same room equally often still differ in where inside it they put the device.
+    ///
+    /// 4. FEWEST locators when nothing separates anything. Less computation, one less thing to
     ///    explain, and no evidence to justify paying for extras.
+    ///
+    /// Whatever decides, the trade against the best alternative is NAMED (see the closing sentence
+    /// built below) rather than silently taken.
     ///
     /// Uncertainty is computed across walk POINTS, never across ticks. Thousands of ticks sound like
     /// a large sample, but the ticks inside one point are the same device standing in one place - the
@@ -122,11 +132,19 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
         {
             var floorTied = WithinNoise(roomTied, r => r.FloorHitRate ?? 0, r => r.FloorHitStandardErrorPoints);
             if (floorTied.Count < roomTied.Count) { field = floorTied; decidedBy = "floor"; }
-            else { field = floorTied; decidedBy = "simplicity"; }
+            else
+            {
+                // Raum und Etage trennen beide nicht - dann entscheiden die Meter. Negiert, weil
+                // WithinNoise "groesser ist besser" erwartet und beim Fehler das Gegenteil gilt.
+                var medianTied = WithinNoise(floorTied, r => -(r.MedianErrorM ?? 0), r => r.MedianErrorStandardErrorM);
+                if (medianTied.Count < floorTied.Count) { field = medianTied; decidedBy = "position"; }
+                else { field = medianTied; decidedBy = "simplicity"; }
+            }
         }
 
         var pick = field
             .OrderBy(r => r.Locators.Count)
+            .ThenBy(r => r.MedianErrorM ?? double.MaxValue)
             .ThenByDescending(r => r.FloorHitRate ?? 0)
             .ThenByDescending(r => r.RoomHitRate ?? 0)
             .First();
@@ -143,12 +161,27 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
                 $"spread across all of them is inside the ±{roomMargin:P0} uncertainty across {pick.PointsUsed} walk " +
                 $"points), so that figure cannot choose. The floor does separate them: '{pick.Label}' gets the storey " +
                 $"right {pick.FloorHitRate:P0} of the time, and being on the wrong floor is the error you actually notice.",
+            "position" =>
+                $"Right-room rates tie (within ±{roomMargin:P0} across {pick.PointsUsed} walk points) and so do the " +
+                $"floor rates, so neither can choose. The distances do: '{pick.Label}' lands a median " +
+                $"{pick.MedianErrorM:0.00} m from the truth, further than the scatter of the measurement itself from " +
+                $"any other candidate. Same room, but closer to the right spot inside it.",
             _ =>
                 $"Nothing measurable separates the candidates - right-room rates all sit within ±{roomMargin:P0} of " +
-                $"each other across {pick.PointsUsed} walk points, and the floor rates agree too. '{pick.Label}' is " +
-                $"recommended because it achieves that with the fewest estimators, which costs the least computation " +
-                $"and leaves less to go wrong."
+                $"each other across {pick.PointsUsed} walk points, the floor rates agree too, and so do the median " +
+                $"position errors. '{pick.Label}' is recommended because it achieves that with the fewest estimators, " +
+                $"which costs the least computation and leaves less to go wrong."
         };
+
+        // ★ Den Handel benennen statt ihn stillschweigend einzugehen. Entscheidet die Etage, zahlt man
+        // dafuer oft in Metern - auf dieser Anlage 0,45 m, und niemand sah es. Wer die Empfehlung
+        // annimmt, soll wissen, was er dafuer aufgibt.
+        var bestMedian = usable.Where(r => r.MedianErrorM.HasValue).MinBy(r => r.MedianErrorM);
+        if (bestMedian != null && pick.MedianErrorM is { } pickMedian && bestMedian.MedianErrorM is { } bestM
+            && !bestMedian.Locators.ToHashSet().SetEquals(pick.Locators) && pickMedian - bestM >= 0.1)
+            reason += $" The trade: '{bestMedian.Label}' is {pickMedian - bestM:0.00} m better on median position " +
+                      $"error ({bestM:0.00} m against {pickMedian:0.00} m), but gets the storey right " +
+                      $"{bestMedian.FloorHitRate:P0} of the time instead of {pick.FloorHitRate:P0}.";
 
         var current = usable.FirstOrDefault(r => r.IsCurrentConfiguration);
         if (current != null && !current.Locators.ToHashSet().SetEquals(pick.Locators))
@@ -202,6 +235,7 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             var truthFloor = floors.FirstOrDefault(f => string.Equals(f.Id, point.FloorId, StringComparison.OrdinalIgnoreCase));
             var truthRoom = SpatialUtils.FindRoomContaining(truth, truthFloor);
             var scored = 0;
+            var pointErrors = new List<double>();
             var pointRoomHits = 0;
             var pointRoomChecked = 0;
             var pointFloorHits = 0;
@@ -215,11 +249,16 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
                     .ToList();
                 if (readings.Count < MinNodesPerTick) continue;
 
-                var best = BestScenario(readings, floors, candidate, contrastWeight);
+                var best = replay.BestScenario(readings, floors, new ScenarioReplay.Options
+                {
+                    Locators = candidate.Locators, ContrastWeight = contrastWeight
+                });
                 if (best == null) continue;
 
                 scored++;
-                errors.Add(Math.Sqrt(Math.Pow(best.Location.X - truth.X, 2) + Math.Pow(best.Location.Y - truth.Y, 2)));
+                var err = ScenarioReplay.Error2D(best.Location, truth);
+                errors.Add(err);
+                pointErrors.Add(err);
 
                 floorChecked++;
                 pointFloorChecked++;
@@ -239,6 +278,11 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             // same spot, so counting them as independent makes any difference look far more certain
             // than it is - thousands of ticks, but only as many real observations as there are places
             // the device was actually put.
+            if (pointErrors.Count > 0)
+            {
+                pointErrors.Sort();
+                run.PerPointMedianErrorM.Add(pointErrors[pointErrors.Count / 2]);
+            }
             if (pointRoomChecked > 0) run.PerPointRoomHitRate.Add((double)pointRoomHits / pointRoomChecked);
             if (pointFloorChecked > 0) run.PerPointFloorHitRate.Add((double)pointFloorHits / pointFloorChecked);
         }
@@ -258,63 +302,8 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
         run.RoomHitRate = roomChecked > 0 ? Math.Round((double)roomHits / roomChecked, 3) : null;
         run.RoomHitStandardErrorPoints = StandardError(run.PerPointRoomHitRate);
         run.FloorHitStandardErrorPoints = StandardError(run.PerPointFloorHitRate);
+        run.MedianErrorStandardErrorM = StandardError(run.PerPointMedianErrorM);
         return run;
-    }
-
-    /// <summary>
-    /// One tick, run through every enabled locator on every floor, winner by confidence - which is
-    /// what <see cref="MultiScenarioLocator"/> feeds its Kalman filter from. The smoothing and
-    /// motion-consistency weighting on top are deliberately not reproduced: they describe how a
-    /// moving device is followed, while a walk point is a device standing still, and reproducing
-    /// them would only blur the comparison between candidates.
-    /// </summary>
-    private Scenario? BestScenario(List<(Node node, double dist)> readings, List<Floor> floors,
-        LocatorCandidate candidate, double contrastWeight)
-    {
-        var config = configLoader.Config;
-        var device = new Device($"sweep-{Guid.Empty}", null, TimeSpan.FromSeconds(30));
-        foreach (var (node, dist) in readings)
-            device.Nodes[node.Id] = new DeviceToNode(device, node)
-            {
-                Distance = dist, LastDistance = dist, DistVar = 0.1,
-                Rssi = -70, RefRssi = -59, RssiVar = 1.0,
-                LastHit = DateTime.UtcNow, Hits = 10
-            };
-
-        var scenarios = new List<Scenario>();
-        foreach (var floor in floors)
-        {
-            foreach (var name in candidate.Locators)
-            {
-                ILocate? locator = name switch
-                {
-                    "nadaraya_watson" => new NadarayaWatsonMultilateralizer(device, floor, state, state.NodeTelemetry),
-                    "nelder_mead" => new NelderMeadMultilateralizer(device, floor, state),
-                    "mle" => new MLEMultilateralizer(device, floor, state),
-                    "bfgs" => new BfgsMultilateralizer(device, floor, state),
-                    _ => null
-                };
-                if (locator != null) scenarios.Add(new Scenario(config, locator, floor.Name));
-            }
-        }
-        if (candidate.Locators.Contains("nearest_node"))
-            scenarios.Add(new Scenario(config, new NearestNode(device, state), "NearestNode"));
-
-        foreach (var scenario in scenarios) scenario.Locate();
-
-        // The same cross-floor contrast the live locator applies, and for the same reason: without it
-        // the locators that do not know about other floors decide the storey on their own.
-        if (contrastWeight > 0)
-            foreach (var scenario in scenarios)
-            {
-                if (scenario.Floor is not { } floor || scenario.Confidence is not { } confidence) continue;
-                var adjusted = confidence + FloorContrast.Adjustment(
-                    scenario.Location, readings, r => r.node.Location, r => r.dist,
-                    r => r.node.Floors?.Contains(floor) ?? false, contrastWeight);
-                scenario.Confidence = (int)Math.Round(Math.Clamp(adjusted, 0, 100));
-            }
-
-        return scenarios.Where(s => s.Confidence > 0).MaxBy(s => s.Confidence);
     }
 
     /// <summary>
@@ -424,6 +413,15 @@ public class LocatorSweepRun
     public double? RoomHitStandardErrorPoints { get; set; }
 
     public double? FloorHitStandardErrorPoints { get; set; }
+
+    /// <summary>
+    /// Standard error of the median position error across walk POINTS, on the same footing as the two
+    /// hit rates - so "is this half metre real or scatter" can be answered instead of guessed.
+    /// </summary>
+    public double? MedianErrorStandardErrorM { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<double> PerPointMedianErrorM { get; set; } = new();
 
     [System.Text.Json.Serialization.JsonIgnore]
     public List<double> PerPointRoomHitRate { get; set; } = new();
