@@ -62,16 +62,22 @@ public class OptimizationRunner : BackgroundService
     private IList<IOptimizer> BuildOptimizers(string? mode)
     {
         mode = mode?.ToLowerInvariant() ?? "legacy";
+        // Der Walk-Punkt-Optimierer laeuft ZUSAETZLICH zur gewaehlten Kette, nicht statt ihrer: er
+        // fasst nur die Absorption an und nur fuer Knoten mit Walk-Punkt-Abdeckung. Alles andere
+        // (rx_adj, tx_ref, Knoten ohne Abdeckung) bleibt Sache des Paar-Fits. Er kommt zuletzt,
+        // damit er auf dessen Ergebnis aufsetzt statt dagegen zu arbeiten.
+        var walk = new WalkPointAbsorptionOptimizer(_state, _walkTest, _cfg);
         return mode switch
         {
-            "global_absorption" => new List<IOptimizer> { new GlobalAbsorptionRxTxOptimizer(_state) },
-            "per_node_absorption" => new List<IOptimizer> { new PerNodeAbsorptionRxTx(_state) },
+            "global_absorption" => new List<IOptimizer> { new GlobalAbsorptionRxTxOptimizer(_state), walk },
+            "per_node_absorption" => new List<IOptimizer> { new PerNodeAbsorptionRxTx(_state), walk },
             _ => new List<IOptimizer>
             {
                 new RxAdjRssiOptimizer(_state),
                 new AbsorptionAvgOptimizer(_state),
                 new AbsorptionErrOptimizer(_state),
-                new IsotonicRegressionOptimizer(_state)
+                new IsotonicRegressionOptimizer(_state),
+                walk
             }
         };
     }
@@ -228,6 +234,25 @@ public class OptimizationRunner : BackgroundService
                         // snapshots yet to evaluate a baseline, or a very sparse floor) - without this
                         // explicit check, any finite candidate composite would silently bypass rejection
                         // and get applied unvalidated, since there's nothing valid to compare it against.
+                        // Optimierer, die gegen die Bodenwahrheit arbeiten, duerfen das Komposit
+                        // verschlechtern - genau das ist ihr Zweck. Fuer sie entscheidet allein das
+                        // Walk-Punkt-Gate weiter unten; ohne verwertbare Walk-Punkte gibt es fuer sie
+                        // keine Grundlage, dann wird uebersprungen statt blind angewandt.
+                        if (optimizer.ScoredByWalkPoints)
+                        {
+                            if (results.Nodes.Count == 0) continue;
+                            if (walkBaseline == null)
+                            {
+                                Log.Information("Optimizer {0,-24} skipped: scored against walk points, but the walk-point gate is off or unusable", optimizer.Name);
+                                continue;
+                            }
+                            if (!PassesWalkPointGate(optimizer.Name, results, walkBaseline, optimization)) continue;
+                            Log.Information("Optimizer {0,-24} accepted on ground truth (composite {1:0.000} vs {2:0.000} is deliberately not the criterion here)",
+                                optimizer.Name, composite, bestScore);
+                            await ApplyResults(results);
+                            continue;
+                        }
+
                         if (double.IsNaN(composite) || double.IsInfinity(composite) || double.IsNaN(bestScore) || double.IsInfinity(bestScore) || composite <= bestScore)
                         {
                             if (double.IsNaN(bestScore) || double.IsInfinity(bestScore))
@@ -255,24 +280,7 @@ public class OptimizationRunner : BackgroundService
                         _state.OptimizerState.BestR = corr;
                         _state.OptimizerState.BestRMSE = rmse;
 
-                        foreach (var (id, result) in results.Nodes)
-                        {
-                            // Only real config nodes get settings written - synthetic transmitters
-                            // (walk test points, anchored devices) also receive a fitted txRefRssi
-                            // from the optimizer, but publishing retained node settings under a
-                            // device id would pollute MQTT with bogus espresense/rooms/<device>/ topics.
-                            if (!_state.Nodes.ContainsKey(id))
-                                continue;
-
-                            Log.Information("Applied {0,-20}: Absorption={1:0.00}, RxAdj={2:00}, TxAdj={3:00}, Error={4}",
-                                id, result.Absorption, result.RxAdjRssi, result.TxRefRssi, result.Error);
-
-                            var nodeSettings = _nsd.Get(id);
-                            if (result.Absorption != null) nodeSettings.Calibration.Absorption = result.Absorption;
-                            if (result.RxAdjRssi != null) nodeSettings.Calibration.RxAdjRssi = (int?)Math.Round(result.RxAdjRssi.Value);
-                            if (result.TxRefRssi != null) nodeSettings.Calibration.TxRefRssi = (int?)Math.Round(result.TxRefRssi.Value);
-                            await _nsd.Set(id, nodeSettings);
-                        }
+                        await ApplyResults(results);
 
                         bestScore = composite;
                     }
@@ -353,6 +361,31 @@ public class OptimizationRunner : BackgroundService
         Log.Information("Optimizer {0,-24} passed walk-point gate: room {1:P1} -> {2:P1}, median {3:0.00} m -> {4:0.00} m",
             optimizerName, baseline.RoomHitRate, candidate.RoomHitRate, baseline.MedianErrorM, candidate.MedianErrorM);
         return true;
+    }
+
+
+    /// <summary>
+    /// Schreibt eine angenommene Kandidatenloesung in die Knoten-Einstellungen.
+    ///
+    /// Nur echte Config-Knoten bekommen etwas geschrieben: synthetische Sender (Walk-Punkte,
+    /// verankerte Geraete) erhalten vom Fit ebenfalls ein txRefRssi, aber retained Node-Settings
+    /// unter einer Geraete-ID wuerden MQTT mit espresense/rooms/&lt;device&gt;-Themen zumuellen.
+    /// </summary>
+    private async Task ApplyResults(OptimizationResults results)
+    {
+        foreach (var (id, result) in results.Nodes)
+        {
+            if (!_state.Nodes.ContainsKey(id)) continue;
+
+            Log.Information("Applied {0,-20}: Absorption={1:0.00}, RxAdj={2:00}, TxAdj={3:00}, Error={4}",
+                id, result.Absorption, result.RxAdjRssi, result.TxRefRssi, result.Error);
+
+            var nodeSettings = _nsd.Get(id);
+            if (result.Absorption != null) nodeSettings.Calibration.Absorption = result.Absorption;
+            if (result.RxAdjRssi != null) nodeSettings.Calibration.RxAdjRssi = (int?)Math.Round(result.RxAdjRssi.Value);
+            if (result.TxRefRssi != null) nodeSettings.Calibration.TxRefRssi = (int?)Math.Round(result.TxRefRssi.Value);
+            await _nsd.Set(id, nodeSettings);
+        }
     }
 
 }
