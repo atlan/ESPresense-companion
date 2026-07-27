@@ -151,7 +151,7 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
         };
 
         var current = usable.FirstOrDefault(r => r.IsCurrentConfiguration);
-        if (current != null && !ReferenceEquals(current, pick))
+        if (current != null && !current.Locators.ToHashSet().SetEquals(pick.Locators))
         {
             var dropped = current.Locators.Except(pick.Locators).ToList();
             var added = pick.Locators.Except(current.Locators).ToList();
@@ -171,7 +171,10 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             MedianErrorM = pick.MedianErrorM,
             FloorHitRate = pick.FloorHitRate,
             DecidedBy = decidedBy,
-            AlreadyConfigured = current != null && ReferenceEquals(current, pick),
+            // Vergleich ueber die Locator-MENGE, nicht ueber Objektidentitaet: zwei Kandidaten mit
+            // demselben Satz sind dasselbe Ergebnis, egal ob es dieselbe Instanz ist und in welcher
+            // Reihenfolge die Namen stehen.
+            AlreadyConfigured = current != null && current.Locators.ToHashSet().SetEquals(pick.Locators),
             Reason = reason
         };
     }
@@ -338,13 +341,29 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             new() { Label = "nadaraya_watson + mle", Locators = { "nadaraya_watson", "mle" } }
         };
 
+        // Mark the configured combination rather than appending it a second time. It used to be added
+        // unconditionally, so a configuration that already matched one of the fixed candidates was
+        // swept twice as two distinct objects with identical scores. The tie then went to the fixed
+        // entry, and the ReferenceEquals check in Recommend() compared object identity - so the very
+        // case where nothing needs changing reported "not configured yet" and offered an Apply button
+        // for the settings already in force. Marking in place also saves a full sweep run and keeps
+        // the combination from showing up twice in the results table.
         if (configured.Count > 0)
-            candidates.Add(new LocatorCandidate
+        {
+            var existing = candidates.FirstOrDefault(c => c.Locators.ToHashSet().SetEquals(configured));
+            if (existing != null)
             {
-                Label = $"as configured ({string.Join(" + ", configured)})",
-                Locators = configured,
-                IsCurrentConfiguration = true
-            });
+                existing.IsCurrentConfiguration = true;
+                existing.Label += " (as configured)";
+            }
+            else
+                candidates.Add(new LocatorCandidate
+                {
+                    Label = $"as configured ({string.Join(" + ", configured)})",
+                    Locators = configured,
+                    IsCurrentConfiguration = true
+                });
+        }
 
         return candidates;
     }
