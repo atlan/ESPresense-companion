@@ -64,6 +64,16 @@ public class WalkTestService
         public double D { get; set; }
 
         /// <summary>
+        /// Distanz-Varianz dieser Messung. Aufgezeichnet, weil ein Filter, der Messwerte gegen-
+        /// einander prueft, wissen muss, wie zuverlaessig sie einzeln sind - die Zuverlaessigkeit
+        /// schwankt in einer Anlage um zwei Groessenordnungen. Ohne sie kann ein Replay eine
+        /// varianzabhaengige Toleranz nicht bewerten: er muesste fuer jede Messung denselben Wert
+        /// annehmen, und dann addiert das Gewicht ueberall dieselbe Konstante. Nullable, weil
+        /// aeltere Aufzeichnungen sie nicht haben.
+        /// </summary>
+        public double? V { get; set; }
+
+        /// <summary>
         /// Raw level at this tick. Recorded because the distance next to it is already a DERIVED
         /// value - the node computed it from this rssi with the absorption and rssi@1m in force at
         /// the time. A replay over D alone can therefore only score the locator; anything upstream
@@ -413,7 +423,7 @@ public class WalkTestService
             Raw = s.Samples
                 .Where(x => aggregates.Any(a => a.NodeId.Equals(x.NodeId, StringComparison.OrdinalIgnoreCase)))
                 .OrderBy(x => x.Tick)
-                .Select(x => new RawTickEntry { T = x.Tick, N = x.NodeId, D = x.Distance, R = x.Rssi, A = x.RssiRxAdj, Ref = x.RefRssi })
+                .Select(x => new RawTickEntry { T = x.Tick, N = x.NodeId, D = x.Distance, R = x.Rssi, A = x.RssiRxAdj, Ref = x.RefRssi, V = x.DistVar })
                 .ToList()
         };
         _points[point.Id] = point;

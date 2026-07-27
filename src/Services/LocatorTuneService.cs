@@ -130,12 +130,12 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                     {
                         // KEIN Etagen-Vorfilter mehr: live kennt das System die Etage nicht, sie ist
                         // genau das, was entschieden werden muss. Vorher wurde sie hier verraten.
-                        var heard = new List<(Node node, double dist)>();
+                        var heard = new List<(Node node, double dist, double? var)>();
                         foreach (var entry in tickGroup)
                         {
                             if (!state.Nodes.TryGetValue(entry.N, out var node) || !node.HasLocation) continue;
                             if (entry.D <= 0) continue;
-                            heard.Add((node, entry.D));
+                            heard.Add((node, entry.D, entry.V));
                         }
 
                         var winner = replay.BestScenario(heard, floors, new ScenarioReplay.Options

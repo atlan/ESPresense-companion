@@ -135,11 +135,11 @@ public class CalibrationBenchmark(
 
             foreach (var tick in point.Raw.GroupBy(r => r.T))
             {
-                var audible = new List<(Node node, double dist)>();
+                var audible = new List<(Node node, double dist, double? var)>();
                 foreach (var entry in tick)
                 {
                     if (!state.Nodes.TryGetValue(entry.N, out var node) || !node.HasLocation) continue;
-                    audible.Add((node, DistanceFor(entry, overrides, ref recomputed)));
+                    audible.Add((node, DistanceFor(entry, overrides, ref recomputed), entry.V));
                 }
 
                 // ★ Seit 2026-07-27 entscheidet EIN Szenarien-Wettbewerb ueber Etage UND Position,
@@ -159,7 +159,7 @@ public class CalibrationBenchmark(
                 if (useConsistency && trusted.Count >= ScenarioReplay.MinNodesPerTick)
                 {
                     var kept = ConsistencyFilter.LargestConsistent(trusted, h => h.node.Location, h => h.dist,
-                        toleranceM, toleranceFraction);
+                        toleranceM, toleranceFraction, h => h.var, varianceWeight);
                     if (kept.Count >= ScenarioReplay.MinNodesPerTick) dropped += trusted.Count - kept.Count;
                 }
 

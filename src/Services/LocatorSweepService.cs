@@ -244,7 +244,7 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             foreach (var tick in point.Raw.GroupBy(r => r.T))
             {
                 var readings = tick
-                    .Select(e => state.Nodes.TryGetValue(e.N, out var n) && n.HasLocation ? (node: n, dist: e.D) : default)
+                    .Select(e => state.Nodes.TryGetValue(e.N, out var n) && n.HasLocation ? (node: n, dist: e.D, var: e.V) : default)
                     .Where(r => r.node != null && r.dist > 0)
                     .ToList();
                 if (readings.Count < MinNodesPerTick) continue;

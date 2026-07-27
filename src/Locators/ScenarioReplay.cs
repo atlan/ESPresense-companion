@@ -78,17 +78,20 @@ public class ScenarioReplay(State state, ConfigLoader configLoader)
     /// Returns the winning scenario for one tick, or null when nothing reached a usable confidence.
     /// <paramref name="readings"/> is what the nodes heard: node plus its reported distance.
     /// </summary>
-    public Scenario? BestScenario(IReadOnlyList<(Node node, double dist)> readings,
+    public Scenario? BestScenario(IReadOnlyList<(Node node, double dist, double? var)> readings,
         IReadOnlyList<Floor> floors, Options options)
     {
         if (readings.Count < MinNodesPerTick) return null;
 
         var config = configLoader.Config;
         var device = new Device($"replay-{Guid.Empty}", null, TimeSpan.FromSeconds(30));
-        foreach (var (node, dist) in readings)
+        foreach (var (node, dist, variance) in readings)
             device.Nodes[node.Id] = new DeviceToNode(device, node)
             {
-                Distance = dist, LastDistance = dist, DistVar = 0.1,
+                // Aufgezeichnete Varianz, wenn vorhanden - der frueher fest verdrahtete Ersatzwert
+                // machte jede varianzabhaengige Bewertung wirkungslos, weil alle Messungen gleich
+                // zuverlaessig aussahen.
+                Distance = dist, LastDistance = dist, DistVar = variance ?? 0.1,
                 Rssi = -70, RefRssi = -59, RssiVar = 1.0,
                 LastHit = DateTime.UtcNow, Hits = 10
             };
