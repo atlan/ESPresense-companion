@@ -21,6 +21,7 @@ public class OptimizationRunner : BackgroundService
     private string? _lastOptimizerMode;
     private readonly PairErrorTracker _pairErrorTracker;
     private readonly WalkTestService _walkTest;
+    private readonly CalibrationBenchmark _benchmark;
 
     // "Calibrate now" support: TriggerNow() completes the current TCS (waking whichever
     // InterruptibleDelay is pending) and opens a short skip window so ALL remaining delays in a
@@ -28,8 +29,9 @@ public class OptimizationRunner : BackgroundService
     private volatile TaskCompletionSource _triggerNow = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private DateTime _skipDelaysUntil = DateTime.MinValue;
 
-    public OptimizationRunner(State state, NodeSettingsStore nsd, ILogger<OptimizationRunner> logger, ConfigLoader cfg, ILeaseService leaseService, PairErrorTracker pairErrorTracker, WalkTestService walkTest)
+    public OptimizationRunner(State state, NodeSettingsStore nsd, ILogger<OptimizationRunner> logger, ConfigLoader cfg, ILeaseService leaseService, PairErrorTracker pairErrorTracker, WalkTestService walkTest, CalibrationBenchmark benchmark)
     {
+        _benchmark = benchmark;
         _state = state;
         _nsd = nsd;
         _logger = logger;
@@ -202,6 +204,12 @@ public class OptimizationRunner : BackgroundService
                     _state.OptimizerState.BestR = bestCorr;
                     _state.OptimizerState.BestRMSE = bestRmse;
 
+                    // Bodenwahrheit-Vergleichswert fuer dieses Intervall. Einmal, nicht je Kandidat:
+                    // die Walk-Punkte aendern sich zwischen zwei Kandidaten nicht.
+                    var walkBaseline = optimization.WalkPointGate
+                        ? _benchmark.Run(label: "gate-baseline", overrides: null, remember: false)
+                        : null;
+
                     IList<IOptimizer> currentOptimizers;
                     lock (_optimizersLock)
                         currentOptimizers = _optimizers.ToList();
@@ -233,6 +241,14 @@ public class OptimizationRunner : BackgroundService
                                     id, result.Absorption, result.RxAdjRssi, result.TxRefRssi, result.Error);
                             continue;
                         }
+
+                        // ★ Zweites Gate, gegen die Bodenwahrheit. Das erste bewertet nur, wie gut die
+                        // Knoten UNTEREINANDER zusammenpassen - eine Aenderung kann das verbessern und
+                        // die Ortung verschlechtern. Genau so fiel die Guete unbemerkt von r 0,88 auf
+                        // 0,49. Ein Kandidat, der die Walk-Punkte verschlechtert, wird jetzt verworfen,
+                        // egal wie gut sein Komposit aussieht.
+                        if (walkBaseline != null && !PassesWalkPointGate(optimizer.Name, results, walkBaseline, optimization))
+                            continue;
 
                         Log.Information("Optimizer {0,-24} found better results: Composite={1:0.000} > Best={2:0.000} (R={3:0.000}, RMSE={4:0.000})",
                             optimizer.Name, composite, bestScore, corr, rmse);
@@ -276,4 +292,67 @@ public class OptimizationRunner : BackgroundService
             }
         }
     }
+
+    /// <summary>
+    /// Spielt die Kandidaten-Kalibrierung ueber die Walk-Punkte und vergleicht sie mit dem
+    /// Ist-Zustand. Distanzen werden dabei aus den aufgezeichneten PEGELN neu gerechnet - deshalb
+    /// braucht es Punkte, die Pegel mitgeschrieben haben; aeltere Aufzeichnungen enthalten nur die
+    /// fertige Distanz, und die ist gegen eine Kalibrierungsaenderung blind.
+    ///
+    /// Bewertet wird zuerst die Raumtrefferquote (das, was Praesenz-Automationen konsumieren) und
+    /// danach der Medianfehler. Verschlechtert sich eine von beiden ueber die Toleranz hinaus, wird
+    /// abgelehnt - lieber eine Kalibrierung behalten, die nachweislich funktioniert, als eine
+    /// annehmen, die auf dem Papier besser aussieht.
+    /// </summary>
+    private bool PassesWalkPointGate(string optimizerName, OptimizationResults results,
+        BenchmarkResult baseline, ConfigOptimization optimization)
+    {
+        if (baseline.Error != null || baseline.RoomHitRate == null || baseline.MedianErrorM == null)
+            return true;   // ohne verwertbare Grundlage nicht blockieren
+
+        var absorption = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        var rxAdj = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, r) in results.Nodes)
+        {
+            if (r.Absorption is { } a) absorption[id] = a;
+            if (r.RxAdjRssi is { } x) rxAdj[id] = x;
+        }
+        if (absorption.Count == 0 && rxAdj.Count == 0) return true;
+
+        var candidate = _benchmark.Run(label: $"gate-{optimizerName}", remember: false,
+            overrides: new BenchmarkOverrides
+            {
+                AbsorptionByNode = absorption.Count > 0 ? absorption : null,
+                RxAdjByNode = rxAdj.Count > 0 ? rxAdj : null
+            });
+
+        if (candidate.Error != null || candidate.RoomHitRate == null || candidate.MedianErrorM == null)
+            return true;
+
+        // Keine einzige Distanz neu gerechnet = die Punkte tragen keine Pegel, der Vergleich waere
+        // ein Vergleich mit sich selbst. Das ist keine Zustimmung, nur ein ehrliches Achselzucken.
+        if (candidate.RecomputedTicks == 0)
+        {
+            Log.Debug("Walk-point gate skipped for {0}: recorded points carry no levels to replay", optimizerName);
+            return true;
+        }
+
+        var roomDrop = baseline.RoomHitRate.Value - candidate.RoomHitRate.Value;
+        var medianGrowth = candidate.MedianErrorM.Value - baseline.MedianErrorM.Value;
+
+        if (roomDrop > optimization.WalkGateRoomDrop || medianGrowth > optimization.WalkGateMedianToleranceM)
+        {
+            Log.Warning("Optimizer {0,-24} REJECTED by walk-point gate: room {1:P1} -> {2:P1}, median {3:0.00} m -> {4:0.00} m " +
+                        "(tolerances {5:P1} / {6:0.00} m). Its node-pair fit improved, the actual positioning did not.",
+                optimizerName, baseline.RoomHitRate, candidate.RoomHitRate,
+                baseline.MedianErrorM, candidate.MedianErrorM,
+                optimization.WalkGateRoomDrop, optimization.WalkGateMedianToleranceM);
+            return false;
+        }
+
+        Log.Information("Optimizer {0,-24} passed walk-point gate: room {1:P1} -> {2:P1}, median {3:0.00} m -> {4:0.00} m",
+            optimizerName, baseline.RoomHitRate, candidate.RoomHitRate, baseline.MedianErrorM, candidate.MedianErrorM);
+        return true;
+    }
+
 }

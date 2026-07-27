@@ -226,6 +226,28 @@ namespace ESPresense.Models
         [YamlIgnore] public double RxAdjRssiMin => Limits.TryGetValue("rx_adj_rssi_min", out var val) ? val : -5;
         [YamlIgnore] public double RxAdjRssiMax => Limits.TryGetValue("rx_adj_rssi_max", out var val) ? val : 30;
 
+        /// <summary>
+        /// Prueft eine Kandidaten-Kalibrierung zusaetzlich gegen die Walk-Punkte, bevor sie
+        /// angewandt wird.
+        ///
+        /// Warum das noetig ist: das bisherige Accept-Gate bewertet ausschliesslich, wie gut die
+        /// Knoten UNTEREINANDER zusammenpassen. Eine Aenderung kann diese Zahl verbessern und die
+        /// tatsaechliche Ortung verschlechtern, und genau das ist unbemerkt passiert - die Guete fiel
+        /// von r 0,88 auf 0,49, ohne dass irgendetwas Alarm schlug. Die Walk-Punkte sind die einzige
+        /// Bodenwahrheit im System; wer sie hat, sollte gegen sie pruefen.
+        ///
+        /// Greift nur, wenn Walk-Punkte MIT aufgezeichneten Pegeln vorliegen - nur dann lassen sich
+        /// die Distanzen mit der Kandidaten-Kalibrierung neu rechnen. Ohne sie ist der Vergleich
+        /// blind und der Kandidat wird durchgelassen.
+        /// </summary>
+        [YamlMember(Alias = "walk_point_gate")] public bool WalkPointGate { get; set; } = true;
+
+        /// <summary>Um so viele Prozentpunkte darf die Raumtrefferquote fallen, bevor abgelehnt wird.</summary>
+        [YamlIgnore] public double WalkGateRoomDrop => Limits.TryGetValue("walk_gate_room_drop", out var val) ? val : 0.02;
+
+        /// <summary>Um so viele Meter darf der Medianfehler wachsen, bevor abgelehnt wird.</summary>
+        [YamlIgnore] public double WalkGateMedianToleranceM => Limits.TryGetValue("walk_gate_median_tolerance_m", out var val) ? val : 0.15;
+
         [YamlIgnore] public double CorrelationWeight => Weights.TryGetValue("correlation", out var val) ? val : 0.5;
         [YamlIgnore] public double RmseWeight => Weights.TryGetValue("rmse", out var val) ? val : 0.5;
 

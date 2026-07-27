@@ -157,6 +157,7 @@ namespace ESPresense.Models
                 Optimizer = Optimizer,
                 Objective = Objective,
                 IntervalSecs = IntervalSecs,
+                WalkPointGate = WalkPointGate,
                 KeepSnapshotMins = KeepSnapshotMins,
                 Limits = new Dictionary<string, double>(Limits),
                 Weights = new Dictionary<string, double>(Weights),
