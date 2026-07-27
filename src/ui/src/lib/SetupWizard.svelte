@@ -127,6 +127,17 @@
 		roomCoverage: RoomCoverage[];
 		signalOutliers: { rxName?: string; rxId: string; txName?: string; txId: string; mapDistanceM: number; deltaDb: number }[];
 		clampedParameters: { nodeName?: string; nodeId: string; parameter: string; value: number; bound: string; limit: number }[];
+		staleWalkPoints?: {
+			id: string;
+			floorId?: string;
+			floorName?: string;
+			roomName?: string;
+			x: number;
+			y: number;
+			z: number;
+			ticks: number;
+			recordedAt: string;
+		}[];
 	}
 
 	interface LocatorRun {
@@ -1512,6 +1523,34 @@
 								</li>
 							{/each}
 						</ul>
+					{/if}
+
+					{#if (diagnostics.staleWalkPoints?.length ?? 0) > 0 && diagnostics.staleWalkPoints}
+						<h3 class="font-semibold text-sm mb-2">Walk-Punkte ohne Pegel — nachzuholen ({diagnostics.staleWalkPoints.length})</h3>
+						<div class="overflow-x-auto mb-3">
+							<table class="table table-compact w-full text-sm">
+								<thead>
+									<tr><th>Punkt</th><th>Etage</th><th>Raum</th><th>Position</th><th class="text-right">Ticks</th><th>aufgenommen</th></tr>
+								</thead>
+								<tbody>
+									{#each diagnostics.staleWalkPoints as p}
+										<tr>
+											<td class="font-mono">{p.id}</td>
+											<td>{p.floorName ?? p.floorId ?? '—'}</td>
+											<td>{p.roomName ?? '—'}</td>
+											<td>
+												<!-- Koordinaten als Link auf die Karte: zeigt die Etage und markiert die Stelle. -->
+												<a class="anchor font-mono"
+													href="/?floor={p.floorId ?? ''}&x={p.x}&y={p.y}"
+													title="Auf der Karte zeigen">{p.x} / {p.y} / {p.z}</a>
+											</td>
+											<td class="text-right">{p.ticks}</td>
+											<td class="text-surface-600-400">{new Date(p.recordedAt).toLocaleDateString()}</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
 					{/if}
 
 					{#if diagnostics.roomCoverage.length > 0}

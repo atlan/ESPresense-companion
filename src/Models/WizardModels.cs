@@ -93,6 +93,13 @@ public class WizardDiagnosticsResult
     /// <summary>Calibration parameters sitting on a configured limit - the optimizer wanted to go further.</summary>
     public List<ClampedParameter> ClampedParameters { get; set; } = new();
 
+    /// <summary>
+    /// Walk-Punkte ohne aufgezeichnete Pegel - die Nachhol-Liste. Strukturiert statt als Fliesstext,
+    /// damit die Oberflaeche daraus eine abarbeitbare Tabelle machen und jeden Punkt auf der Karte
+    /// zeigen kann; als Satz waren es 700 Zeichen, aus denen man sich die IDs klauben musste.
+    /// </summary>
+    public List<StaleWalkPoint> StaleWalkPoints { get; set; } = new();
+
     /// <summary>Device ids that belong to the same hardware address.</summary>
     public List<SplitIdentityInfo> SplitIdentities { get; set; } = new();
 
@@ -180,4 +187,18 @@ public class RoomCoverage
     public double WorstNearestNodeM { get; set; }
     /// <summary>Share of the room within the distance that measured good accuracy here.</summary>
     public double WellCoveredFraction { get; set; }
+}
+
+/// <summary>Ein Walk-Punkt, der keine Pegel traegt und deshalb keine Kalibrierung bewerten kann.</summary>
+public class StaleWalkPoint
+{
+    public string Id { get; set; } = "";
+    public string? FloorId { get; set; }
+    public string? FloorName { get; set; }
+    public string? RoomName { get; set; }
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double Z { get; set; }
+    public int Ticks { get; set; }
+    public DateTime RecordedAt { get; set; }
 }

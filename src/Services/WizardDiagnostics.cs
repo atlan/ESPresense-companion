@@ -1,5 +1,6 @@
 using ESPresense.Models;
 using MathNet.Spatial.Euclidean;
+using ESPresense.Utils;
 
 namespace ESPresense.Services;
 
@@ -418,19 +419,27 @@ public class WizardDiagnostics(
         }
         if (total == 0 || stale.Count == 0) return;
 
-        // Nach Etage gruppiert, damit ein Rundgang planbar wird statt Punkt fuer Punkt zu springen.
-        var byFloor = stale.GroupBy(p => p.FloorId ?? "?")
-                           .OrderByDescending(g => g.Count())
-                           .Select(g => $"{g.Key}: {string.Join(", ", g.OrderBy(p => p.Id).Select(p => $"{p.Id} ({p.X:0.#}/{p.Y:0.#}/{p.Z:0.#})"))}");
+        foreach (var p in stale.OrderBy(p => p.FloorId).ThenBy(p => p.Id))
+        {
+            var floor = state.Floors.Values.FirstOrDefault(f => string.Equals(f.Id, p.FloorId, StringComparison.OrdinalIgnoreCase));
+            var room = SpatialUtils.FindRoomContaining(new Point3D(p.X, p.Y, p.Z), floor);
+            result.StaleWalkPoints.Add(new StaleWalkPoint
+            {
+                Id = p.Id, FloorId = p.FloorId, FloorName = floor?.Name, RoomName = room?.Name,
+                X = Math.Round(p.X, 2), Y = Math.Round(p.Y, 2), Z = Math.Round(p.Z, 2),
+                Ticks = p.Raw.Count, RecordedAt = p.RecordedAt
+            });
+        }
 
+        // Der Satz bleibt - er erklaert das WARUM. Die Punkte selbst stehen jetzt strukturiert
+        // daneben, damit die Oberflaeche eine Tabelle daraus machen kann.
         result.Issues.Add(new ValidationIssue
         {
             Severity = ValidationSeverity.Info,
             Category = "stale-walkpoints",
             Message = $"{stale.Count} of {total} walk points carry no recorded signal levels, so they cannot score " +
                       $"calibration changes - only the locator. Any benchmark run with overrides silently blends " +
-                      $"them in and dilutes the result. Re-record these, one walk at a time; the list shrinks as you " +
-                      $"go. " + string.Join(" | ", byFloor)
+                      $"them in and dilutes the result. Re-record them one walk at a time - the list below shrinks as you go."
         });
     }
 
