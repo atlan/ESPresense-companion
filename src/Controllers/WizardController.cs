@@ -61,15 +61,24 @@ public class WizardController(
     {
         // Overrides only bite on points that carry per-tick levels; without them the recorded
         // distance is all there is and the run measures the state as recorded.
+        // AbsorptionByNode/RxAdjByNode fehlten hier: DistanceFor beherrscht per-Knoten-Overrides
+        // laengst, aber ueber die API waren sie nicht erreichbar - ein Aufruf mit ihnen wurde
+        // stillschweigend zu "keine Overrides" und lieferte das unveraenderte Ergebnis. Ohne sie
+        // laesst sich von aussen gar nicht pruefen, was ein Optimierer-Kandidat bewirken wuerde.
         var overrides = req?.RefRssi != null || req?.Absorption != null || req?.ConsistencyFilter == true
                         || req?.FloorContrastWeight != null || req?.MaxTrustedDistanceM != null
+                        || req?.AbsorptionByNode is { Count: > 0 } || req?.RxAdjByNode is { Count: > 0 }
+                        || req?.ConsistencyVarianceWeight != null
             ? new BenchmarkOverrides
             {
                 RefRssi = req.RefRssi,
                 Absorption = req.Absorption,
+                AbsorptionByNode = req.AbsorptionByNode,
+                RxAdjByNode = req.RxAdjByNode,
                 ConsistencyFilter = req.ConsistencyFilter,
                 ConsistencyToleranceM = req.ConsistencyToleranceM,
                 ConsistencyToleranceFraction = req.ConsistencyToleranceFraction,
+                ConsistencyVarianceWeight = req.ConsistencyVarianceWeight,
                 MaxTrustedDistanceM = req.MaxTrustedDistanceM,
                 FloorContrastWeight = req.FloorContrastWeight
             }
@@ -619,4 +628,10 @@ public class BenchmarkRunRequest
     public double? ConsistencyToleranceFraction { get; set; }
     /// <summary>Beyond this a reading counts as presence only, not as a distance.</summary>
     public double? MaxTrustedDistanceM { get; set; }
+    /// <summary>Per-node path-loss exponent, keyed by node id - was ein Optimierer-Lauf liefert.</summary>
+    public Dictionary<string, double>? AbsorptionByNode { get; set; }
+    /// <summary>Per-node receive adjustment, keyed by node id.</summary>
+    public Dictionary<string, double>? RxAdjByNode { get; set; }
+    /// <summary>Gewicht der Messunsicherheit im Konsistenz-Spielraum, in Sigma.</summary>
+    public double? ConsistencyVarianceWeight { get; set; }
 }

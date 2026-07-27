@@ -216,8 +216,14 @@ public class OptimizationRunner : BackgroundService
                     // sie nicht mehr anfassen, sonst dreht er sie jeden Zyklus zurueck.
                     var groundTruthNodes = new WalkPointAbsorptionOptimizer(_state, _walkTest, _cfg).CoveredNodes();
 
+                    // ★ Die Basis muss GENAUSO gerechnet werden wie der Kandidat. Ohne Overrides
+                    // benutzt der Benchmark die AUFGEZEICHNETEN Distanzen - also die Kalibrierung von
+                    // damals, eingefroren im Mitschnitt. Ein Kandidat mit Overrides wird dagegen neu
+                    // gerechnet. Verglichen wurden damit "Zustand zur Aufnahmezeit" gegen "Kandidat",
+                    // nicht "heute" gegen "Kandidat" - jeder Unterschied konnte als Verbesserung
+                    // durchgehen. Deshalb bekommt die Basis die HEUTIGEN Werte als Overrides.
                     var walkBaseline = optimization.WalkPointGate
-                        ? _benchmark.Run(label: "gate-baseline", overrides: null, remember: false)
+                        ? _benchmark.Run(label: "gate-baseline", overrides: CurrentCalibrationOverrides(), remember: false)
                         : null;
 
                     IList<IOptimizer> currentOptimizers;
@@ -340,14 +346,19 @@ public class OptimizationRunner : BackgroundService
         if (baseline.Error != null || baseline.RoomHitRate == null || baseline.MedianErrorM == null)
             return true;   // ohne verwertbare Grundlage nicht blockieren
 
-        var absorption = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-        var rxAdj = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        // Kandidat = heutige Werte, ueberschrieben mit dem, was er vorschlaegt. So unterscheiden
+        // sich Basis und Kandidat NUR in den vorgeschlagenen Groessen; Knoten, die er nicht
+        // anfasst, wuerden sonst auf den Wert aus dem Mitschnitt zurueckfallen.
+        var ov = CurrentCalibrationOverrides();
+        var absorption = new Dictionary<string, double>(ov.AbsorptionByNode ?? new(), StringComparer.OrdinalIgnoreCase);
+        var rxAdj = new Dictionary<string, double>(ov.RxAdjByNode ?? new(), StringComparer.OrdinalIgnoreCase);
+        var changed = 0;
         foreach (var (id, r) in results.Nodes)
         {
-            if (r.Absorption is { } a) absorption[id] = a;
-            if (r.RxAdjRssi is { } x) rxAdj[id] = x;
+            if (r.Absorption is { } a) { absorption[id] = a; changed++; }
+            if (r.RxAdjRssi is { } x) { rxAdj[id] = x; changed++; }
         }
-        if (absorption.Count == 0 && rxAdj.Count == 0) return true;
+        if (changed == 0) return true;
 
         var candidate = _benchmark.Run(label: $"gate-{optimizerName}", remember: false,
             overrides: new BenchmarkOverrides
@@ -408,6 +419,29 @@ public class OptimizationRunner : BackgroundService
             if (result.TxRefRssi != null) nodeSettings.Calibration.TxRefRssi = (int?)Math.Round(result.TxRefRssi.Value);
             await _nsd.Set(id, nodeSettings);
         }
+    }
+
+
+    /// <summary>
+    /// Die heute geltende Kalibrierung als Benchmark-Overrides. Noetig, damit ein Replay den
+    /// IST-Zustand misst statt den Zustand, der beim Aufzeichnen der Walk-Punkte galt - die
+    /// gespeicherten Distanzen sind bereits abgeleitete Werte und gegen spaetere Aenderungen blind.
+    /// </summary>
+    private BenchmarkOverrides CurrentCalibrationOverrides()
+    {
+        var absorption = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        var rxAdj = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in _state.Nodes.Keys)
+        {
+            var cal = _nsd.Get(id)?.Calibration;
+            if (cal?.Absorption is { } a) absorption[id] = a;
+            if (cal?.RxAdjRssi is { } x) rxAdj[id] = x;
+        }
+        return new BenchmarkOverrides
+        {
+            AbsorptionByNode = absorption.Count > 0 ? absorption : null,
+            RxAdjByNode = rxAdj.Count > 0 ? rxAdj : null
+        };
     }
 
 }
