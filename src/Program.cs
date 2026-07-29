@@ -148,7 +148,20 @@ app.Services.GetRequiredService<DeviceIdentityTracker>();
 // heraus unbrauchbar sind (zu wenige Messwerte, Pegel staerker als physikalisch moeglich).
 // Bewusst NUR die modellunabhaengigen Regeln - Urteile, die die Kalibrierung selbst zum
 // Massstab nehmen, bleiben Vorschlaege in der Diagnose. Siehe WalkPointHygiene.
-try { app.Services.GetRequiredService<WalkPointHygiene>().Apply(); }
+try
+{
+    var hygiene = app.Services.GetRequiredService<WalkPointHygiene>();
+    hygiene.Apply();
+
+    // Danach die Einzelknoten-Widersprueche: zwei Aufnahmen am selben Ort, bei denen GENAU EIN
+    // Knoten aus der Reihe faellt. Reihenfolge zaehlt - Apply() nimmt vorher unbrauchbare
+    // Messungen heraus, die den Vergleich sonst mit verzerren wuerden.
+    var diag = app.Services.GetRequiredService<WizardDiagnostics>().Analyze();
+    var einzel = diag.ConflictingWalkPairs
+        .Where(c => c.Irreconcilable && c.SingleNodeOnly && c.MaxDeltaNode != null)
+        .Select(c => (c.IdA, c.IdB, c.MaxDeltaNode!, c.MaxDeltaDb, c.ExplainableDb));
+    hygiene.ResolveSingleNodeConflicts(einzel);
+}
 catch (Exception ex) { Log.Warning(ex, "Walk-Punkt-Hygiene beim Start fehlgeschlagen"); }
 
 app.UseWebSockets(new WebSocketOptions

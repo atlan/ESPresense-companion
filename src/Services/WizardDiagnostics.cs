@@ -317,26 +317,40 @@ public class WizardDiagnostics(
                 };
                 result.RoomCoverage.Add(coverage);
 
-                if (coverage.WellCoveredFraction >= 0.5) continue;
-
-                var expected = coverage.MedianNearestNodeM <= GoodCoverageM ? 1.1 : 2.5;
-                result.Issues.Add(new ValidationIssue
-                {
-                    Severity = coverage.MedianNearestNodeM > PoorCoverageM ? ValidationSeverity.Warning : ValidationSeverity.Info,
-                    Category = "coverage",
-                    FloorId = floor.Id,
-                    RoomId = room.Id,
-                    Message = $"'{room.Name ?? room.Id}': the nearest node is {coverage.MedianNearestNodeM:0.0} m away " +
-                              $"across the middle of the room, up to {coverage.WorstNearestNodeM:0.0} m at the far end, " +
-                              $"and only {coverage.WellCoveredFraction:P0} of it lies within {GoodCoverageM:0.0} m of one. " +
-                              $"Expect around {expected:0.0} m accuracy here - measured on this installation, spots with " +
-                              $"a node inside {GoodCoverageM:0.0} m averaged 1.1 m error and spots beyond it 2.5 m. " +
-                              "One additional node in this room helps more than any calibration change."
-                });
             }
         }
 
         result.RoomCoverage = result.RoomCoverage.OrderByDescending(r => r.MedianNearestNodeM).ToList();
+
+        // ★ EINE Meldung, nicht eine je Raum. Vorher standen hier 13 Zeilen, die jedes Mal
+        // dasselbe sagten und sich nie aenderten - Abdeckung ist eine Eigenschaft des Gebaeudes,
+        // kein Vorfall. Wer bei jedem Aufruf dreizehn unveraenderte Warnungen sieht, lernt, die
+        // ganze Liste zu ueberblaettern, und uebersieht dann auch die eine, die neu ist.
+        // Die Raeume selbst stehen vollstaendig in RoomCoverage - die Tabelle traegt die Details,
+        // die Meldung nur den Befund.
+        var duenn = result.RoomCoverage.Where(r => r.WellCoveredFraction < 0.5).ToList();
+        if (duenn.Count > 0)
+        {
+            var schlimmste = duenn.OrderByDescending(r => r.MedianNearestNodeM).Take(3)
+                                  .Select(r => $"{r.RoomName ?? r.RoomId} ({r.MedianNearestNodeM:0.0} m)");
+            // Bei genau EINEM Fall bleibt die Zuordnung erhalten - erst wenn mehrere zusammenkommen,
+            // gibt es keinen einen Raum mehr, auf den die Meldung zeigen koennte.
+            var einzig = duenn.Count == 1 ? duenn[0] : null;
+            result.Issues.Add(new ValidationIssue
+            {
+                Severity = duenn.Any(r => r.MedianNearestNodeM > PoorCoverageM)
+                    ? ValidationSeverity.Warning : ValidationSeverity.Info,
+                Category = "coverage",
+                FloorId = einzig?.FloorId,
+                RoomId = einzig?.RoomId,
+                Message = $"{duenn.Count} of {result.RoomCoverage.Count} rooms have less than half their area within " +
+                          $"{GoodCoverageM:0.0} m of a node, the thinnest being {string.Join(", ", schlimmste)}. " +
+                          "Measured on this installation, spots with a node inside that radius averaged 1.1 m error " +
+                          "and spots beyond it 2.5 m. One additional node in those rooms helps more than any " +
+                          "calibration change. This reflects where the nodes hang - it does not change between runs " +
+                          "and is not something calibration can fix. Full list in the room coverage table."
+            });
+        }
     }
 
     /// <summary>Grid spacing when sampling a room - fine enough to catch a long room with one node at one end.</summary>
@@ -363,6 +377,8 @@ public class WizardDiagnostics(
     {
         var opt = config?.Optimization;
         if (opt == null) return;
+
+        var nahAmAnschlag = new List<string>();
 
         foreach (var node in state.Nodes.Values)
         {
@@ -395,16 +411,7 @@ public class WizardDiagnostics(
                     var nearBound = Math.Abs(v - min) <= margin ? "min"
                                   : Math.Abs(v - max) <= margin ? "max" : null;
                     if (nearBound != null)
-                        result.Issues.Add(new ValidationIssue
-                        {
-                            Severity = ValidationSeverity.Info,
-                            Category = "near-limit",
-                            NodeId = nodeId,
-                            Message = $"Node '{nodeName ?? nodeId}': {name} is {v:0.##}, within " +
-                                      $"{margin:0.##} of its {nearBound} limit ({(nearBound == "min" ? min : max):0.##}). " +
-                                      $"Not capped, but the fit is pushing that way - if more nodes join it, the " +
-                                      $"limit is shaping the calibration rather than the measurements."
-                        });
+                        nahAmAnschlag.Add($"{nodeName ?? nodeId} {name} {v:0.##} ({nearBound} {(nearBound == "min" ? min : max):0.##})");
                 }
                 return;
             }
@@ -414,15 +421,42 @@ public class WizardDiagnostics(
                 NodeId = nodeId, NodeName = nodeName, Parameter = name, Value = v, Limit = limit, Bound = bound
             });
 
-            var key = name == "absorption" ? "limits.absorption" : $"limits.{name}";
+        }
+
+        // ★ EINE Meldung je BEFUND, nicht je Knoten. Die Einzelfaelle stehen vollstaendig in
+        // ClampedParameters - die Tabelle traegt die Details. Sieben gleichlautende Warnungen
+        // sagen nicht mehr als eine, sie verdecken nur die uebrigen Befunde.
+        if (result.ClampedParameters.Count > 0)
+        {
+            var jeParameter = result.ClampedParameters
+                .GroupBy(c => $"{c.Parameter} {c.Bound}")
+                .Select(g => $"{g.Count()}x {g.Key} ({string.Join(", ", g.Take(3).Select(c => c.NodeName ?? c.NodeId))}" +
+                             (g.Count() > 3 ? ", …" : "") + ")");
+            var einzigerKnoten = result.ClampedParameters.Count == 1 ? result.ClampedParameters[0].NodeId : null;
             result.Issues.Add(new ValidationIssue
             {
                 Severity = ValidationSeverity.Warning,
                 Category = "clamped",
-                NodeId = nodeId,
-                Message = $"Node '{nodeName ?? nodeId}': {name} sits on its configured {bound} of {limit:0.##}. " +
-                          $"The optimizer wanted to go past it, so this node's calibration is capped rather than " +
-                          $"fitted - widen {key}_{bound} and re-run, or exclude the node if it is genuinely atypical."
+                NodeId = einzigerKnoten,
+                Message = $"{result.ClampedParameters.Count} node parameters sit on a configured limit: " +
+                          $"{string.Join(" · ", jeParameter)}. Those nodes are capped rather than fitted - the limit " +
+                          "is shaping their calibration instead of the measurements - widen the matching " +
+                          "optimization.limits entry and re-run, or exclude a node that is genuinely atypical. " +
+                          "Full list in the clamped-parameters table." +
+                          (nahAmAnschlag.Count > 0
+                              ? $" A further {nahAmAnschlag.Count} are close to a limit without touching it: " +
+                                $"{string.Join(", ", nahAmAnschlag)}."
+                              : "")
+            });
+        }
+        else if (nahAmAnschlag.Count > 0)
+        {
+            result.Issues.Add(new ValidationIssue
+            {
+                Severity = ValidationSeverity.Info,
+                Category = "near-limit",
+                Message = $"{nahAmAnschlag.Count} node parameters are close to a limit without touching it: " +
+                          $"{string.Join(", ", nahAmAnschlag)}. Nothing is capped yet, but the fit is pushing that way."
             });
         }
     }
@@ -763,6 +797,8 @@ public class WizardDiagnostics(
             }
         }
 
+        var ausserhalb = new List<(string Name, double Median)>();
+        var ausserhalbIds = new List<string>();
         foreach (var (nodeId, values) in samples)
         {
             if (values.Count < 10) continue;   // zu duenn, um daraus etwas zu schliessen
@@ -773,18 +809,41 @@ public class WizardDiagnostics(
             if (median >= opt.AbsorptionMin && median <= opt.AbsorptionMax) continue;
 
             var name = state.Nodes.TryGetValue(nodeId, out var n) ? n.Name ?? nodeId : nodeId;
-            var side = median < opt.AbsorptionMin ? "below" : "above";
+            ausserhalb.Add((name, median));
+            ausserhalbIds.Add(nodeId);
+        }
+
+        // ★ EINE Meldung. Acht gleichlautende Warnungen waren dieselbe Aussage achtmal: das
+        // Pfadverlustmodell kann diese Knoten nicht abbilden. Wichtig ist, WIE VIELE und in
+        // welche Richtung - das ist ein systemischer Befund ueber die Anlage, kein Vorfall
+        // je Knoten.
+        if (ausserhalb.Count > 0)
+        {
+            var drunter = ausserhalb.Where(x => x.Median < opt.AbsorptionMin)
+                                    .OrderBy(x => x.Median).ToList();
+            var drueber = ausserhalb.Where(x => x.Median > opt.AbsorptionMax)
+                                    .OrderByDescending(x => x.Median).ToList();
+            string Liste(List<(string Name, double Median)> l) =>
+                string.Join(", ", l.Take(4).Select(x => $"{x.Name} {x.Median:0.0}")) + (l.Count > 4 ? ", …" : "");
+
             result.Issues.Add(new ValidationIssue
             {
                 Severity = ValidationSeverity.Warning,
                 Category = "model-limit",
-                NodeId = nodeId,
-                Message = $"Node '{name}': the walk points demand an absorption of {median:0.0} to explain its " +
-                          $"levels at the distances it actually stood at - {side} the allowed " +
-                          $"{opt.AbsorptionMin:0.0}..{opt.AbsorptionMax:0.0}. No optimizer run can reach that, so this " +
-                          $"is not a calibration that has not converged: the path-loss model cannot represent this " +
-                          $"node. Look at where it sits and what is between it and the room, or widen the limits " +
-                          $"knowing they are then absorbing a physical problem."
+                NodeId = ausserhalb.Count == 1 ? ausserhalbIds[0] : null,
+                Message = $"{ausserhalb.Count} nodes need an absorption outside the allowed " +
+                          $"{opt.AbsorptionMin:0.0}..{opt.AbsorptionMax:0.0} to explain their levels at the distances " +
+                          $"they actually stood at" +
+                          (drunter.Count > 0 ? $" - {drunter.Count} below the minimum ({Liste(drunter)})" : "") +
+                          (drueber.Count > 0 ? $"{(drunter.Count > 0 ? " and" : " -")} {drueber.Count} above the maximum ({Liste(drueber)})" : "") +
+                          ". No optimizer run can reach those values, so this is not a calibration that has not " +
+                          "converged: the path-loss model cannot represent these nodes. " +
+                          (drunter.Count >= 3
+                              ? "Several nodes below the minimum at once points at the limit itself rather than at " +
+                                "the individual nodes - but note that lowering absorption_min was measured on this " +
+                                "installation and made positioning WORSE, so widen it only with a benchmark run. "
+                              : "") +
+                          "Look at where those nodes sit and what stands between them and the room."
             });
         }
 
@@ -1013,22 +1072,32 @@ public class WizardDiagnostics(
             .Take(20)
             .ToList();
 
-        foreach (var contradiction in result.SignalOutliers.Where(s => s.Reported))
+        // ★ EINE Meldung statt bis zu zwanzig. Alle sagen dasselbe: dieses Knotenpaar misst
+        // etwas, das kein Pfadverlust erklaert. Die Einzelfaelle stehen vollstaendig in
+        // SignalOutliers - dort mit Pegeln, Entfernungen und Alter. Zwanzig Textzeilen davor
+        // machten aus einem Befund eine Wand, hinter der die uebrigen Befunde verschwanden.
+        var widersprueche = result.SignalOutliers.Where(s => s.Reported).ToList();
+        if (widersprueche.Count > 0)
         {
-            var sign = contradiction.DeltaDb >= 0 ? "+" : "";
+            var schlimmste = widersprueche.OrderByDescending(o => Math.Abs(o.DeltaDb)).Take(3)
+                .Select(o => $"{o.RxName ?? o.RxId} → {o.TxName ?? o.TxId} ({o.DeltaDb:+0;-0} dB)");
+            // Welcher Knoten steckt am haeufigsten drin? Wenn EINER die Liste dominiert, ist er
+            // die Ursache - und das ist die eigentlich handlungsleitende Information.
+            var haeufigster = widersprueche.GroupBy(o => o.RxName ?? o.RxId)
+                .OrderByDescending(g => g.Count()).First();
             result.Issues.Add(new ValidationIssue
             {
                 Severity = ValidationSeverity.Warning,
                 Category = "signal",
-                NodeId = contradiction.RxId,
-                Message = $"'{contradiction.RxName ?? contradiction.RxId}' hears " +
-                          $"'{contradiction.TxName ?? contradiction.TxId}' at {contradiction.MeasuredRssi:0} dBm " +
-                          $"from {contradiction.MapDistanceM:0.0} m away, but the model needs " +
-                          $"{contradiction.RequiredRssi:0} dBm there ({sign}{contradiction.DeltaDb:0} dB off, " +
-                          $"absorption {contradiction.Absorption:0.00}). " +
-                          "No path-loss setting explains a gap this " +
-                          "large - treat it as a contradiction (check the mapped position, the antenna, or exclude " +
-                          "the pair) rather than something calibration can absorb." + Age(contradiction.ObservedHours)
+                NodeId = widersprueche.Count == 1 ? widersprueche[0].RxId : null,
+                Message = $"{widersprueche.Count} node pairs measure a level that no path-loss setting explains, " +
+                          $"the largest being {string.Join(", ", schlimmste)}. " +
+                          (haeufigster.Count() >= 3
+                              ? $"'{haeufigster.Key}' appears in {haeufigster.Count()} of them - check that node " +
+                                "first (mapped position, antenna, what stands around it). "
+                              : "") +
+                          "These are contradictions, not calibration error: no optimizer run can absorb them. " +
+                          "Check the mapped positions or exclude the pair. Full list in the signal outlier table."
             });
         }
 

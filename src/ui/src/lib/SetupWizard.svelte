@@ -23,6 +23,8 @@
 	};
 
 	async function messungSchalten(pointId: string, nodeId: string, disabled: boolean, reason?: string) {
+		// Beim Zurücknehmen darf der Benutzer festhalten, WARUM — das ist die eine Information,
+		// die er hat und das System nicht („ich hatte das Handy in der Tasche"). Freiwillig.
 		const res = await fetch(
 			apiPath(`/api/wizard/walktest/points/${encodeURIComponent(pointId)}/nodes/${encodeURIComponent(nodeId)}/disabled`),
 			{
@@ -40,22 +42,6 @@
 			background: 'preset-filled-success-500'
 		});
 		await fetchAll();
-	}
-
-	async function einzelknotenStilllegen(c: ConflictingWalkPair) {
-		if (!c.maxDeltaNode) return;
-		const ok = await showConfirm({
-			title: 'Messung stilllegen',
-			body:
-				`Die Messung des Knotens „${c.maxDeltaNode}" wird in BEIDEN Aufnahmen (${c.idA} und ${c.idB}) ` +
-				`stillgelegt — welche der beiden falsch liegt, lässt sich nicht sagen, und der Widerspruch ` +
-				`verschwindet nur, wenn beide Seiten weg sind. Alle übrigen Messungen der beiden Punkte ` +
-				`bleiben erhalten. Jederzeit rücknehmbar.`
-		});
-		if (!ok) return;
-		const grund = `Einzelner Knoten weicht um ${c.maxDeltaDb} dB ab, erklärbar wären ${c.explainableDb} dB (Doppel-Aufnahme ${c.idA}/${c.idB}).`;
-		await messungSchalten(c.idA, c.maxDeltaNode, true, grund);
-		await messungSchalten(c.idB, c.maxDeltaNode, true, grund);
 	}
 
 	interface ConflictingWalkPair {
@@ -1627,7 +1613,7 @@
 											<th class="text-right">Knoten</th><th class="text-right">Δ gemessen</th>
 											<th class="text-right">− Geometrie</th><th class="text-right">= Rest</th>
 											<th class="text-right">erklärbar</th><th class="text-right">Rest max</th>
-											<th>A</th><th>B</th>
+											<th>Was geschieht</th>
 										</tr>
 									</thead>
 									<tbody>
@@ -1648,26 +1634,17 @@
 												<td class="text-right font-semibold">{c.medianResidualDb} dB</td>
 												<td class="text-right text-surface-600-400">{c.explainableDb} dB</td>
 												<td class="text-right" title={c.maxDeltaNode ?? ''}>{c.maxDeltaDb} dB</td>
-												{#if c.singleNodeOnly}
-													<td colspan="2">
-														<button type="button" class="btn btn-sm preset-tonal-warning w-full"
-															onclick={() => einzelknotenStilllegen(c)}
-															title="Nur die Messung dieses einen Knotens stilllegen — beide Aufnahmen bleiben erhalten">
-															nur „{c.maxDeltaNode}" stilllegen
-														</button>
-													</td>
-												{:else}
-													<td>
-														<button type="button" class="btn btn-sm preset-tonal-error"
-															onclick={() => deleteWalkPointConfirmed(c.idA, new Date(c.recordedAtA).toLocaleDateString())}
-															title="Aufnahme A löschen">{c.idA}</button>
-													</td>
-													<td>
-														<button type="button" class="btn btn-sm preset-tonal-error"
-															onclick={() => deleteWalkPointConfirmed(c.idB, new Date(c.recordedAtB).toLocaleDateString())}
-															title="Aufnahme B löschen">{c.idB}</button>
-													</td>
-												{/if}
+												<td class="text-xs">
+													{#if c.singleNodeOnly}
+														<span class="text-surface-600-400">
+															„{c.maxDeltaNode}" stillgelegt — übrige Messungen unberührt
+														</span>
+													{:else}
+														<span class="text-warning-600-400">
+															nicht entscheidbar → {c.idA} oder {c.idB} neu aufnehmen
+														</span>
+													{/if}
+												</td>
 											</tr>
 										{/each}
 									</tbody>
@@ -1680,11 +1657,18 @@
 								Dezibel als weit weg. „Rest max" nennt den auffälligsten Knoten als Hinweistext.
 							</p>
 							<p class="text-xs text-surface-600-400 mb-3">
-								Zwei Wege, je nachdem woran es liegt: fällt <strong>nur ein einzelner Knoten</strong>
-								aus der Reihe und der Median ist in Ordnung, reicht es, dessen Messung
-								stillzulegen — beide Aufnahmen bleiben sonst vollständig erhalten. Weicht dagegen
-								der <strong>Median</strong> ab, ist eine der beiden Aufnahmen als Ganzes fragwürdig,
-								und dann hilft nur, sie zu löschen.
+								Fällt <strong>nur ein einzelner Knoten</strong> aus der Reihe, legt der Assistent
+								dessen Messung in beiden Aufnahmen von selbst still — welche der beiden falsch
+								liegt, ist nicht bestimmbar, und der Widerspruch verschwindet nur, wenn beide
+								Seiten schweigen. Alles Übrige bleibt erhalten und steht rücknehmbar in der
+								Tabelle darunter.
+							</p>
+							<p class="text-xs text-surface-600-400 mb-3">
+								Weicht dagegen der <strong>Median</strong> ab, ist eine der beiden Aufnahmen als
+								Ganzes fragwürdig — und aus den Daten <em>nicht</em> zu erkennen, welche. Hier wird
+								dir bewusst nichts zur Auswahl gestellt: eine Entscheidung ohne Grundlage wäre ein
+								Münzwurf mit deiner Unterschrift. Was hilft, ist die Stelle noch einmal
+								abzugehen — die dritte Aufnahme entscheidet die Sache von allein.
 							</p>
 						{/if}
 					{/if}
@@ -1696,9 +1680,9 @@
 							Prüfstand ein. Die zugehörigen Walk-Punkte sind vollständig erhalten — nur diese
 							Werte schweigen. Nichts davon ist gelöscht, jede Zeile lässt sich zurücknehmen.
 						</p>
-						<div class="overflow-x-auto mb-2">
+						<div class="overflow-auto mb-2 max-h-80">
 							<table class="table table-compact w-full text-sm">
-								<thead>
+								<thead class="sticky top-0 bg-surface-100-900">
 									<tr>
 										<th>Punkt</th><th>Knoten</th><th class="text-right">Messwerte</th>
 										<th class="text-right">Pegel</th><th class="text-right">Abstand</th>

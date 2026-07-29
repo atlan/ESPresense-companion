@@ -6,13 +6,19 @@ namespace ESPresense.Services;
 /// Legt einzelne Knotenmessungen von Walk-Punkten still, die aus sich heraus unbrauchbar
 /// sind — und ZWAR NUR SOLCHE.
 ///
-/// ★ Die Trennlinie, auf die es ankommt: hier stehen ausschliesslich Regeln, die OHNE das
-/// Modell auskommen, das mit denselben Daten kalibriert wird. Wer Messungen wegwirft, weil
-/// sie nicht zum Fit passen, loescht so lange Residuen, bis der Fit schoen aussieht — und
-/// bekommt am Ende eine praechtig kalibrierte Anlage, die schlechter ortet, ohne dass es
-/// auffaellt, weil der Massstab mitgeschrumpft ist. Solche Urteile (Mehrheitsentscheid
-/// unter Wiederholungsaufnahmen, widerspruechliche Doppel-Aufnahmen) bleiben deshalb
-/// VORSCHLAEGE in der Diagnose und werden nie automatisch vollzogen.
+/// ★ Die Trennlinie, auf die es ankommt: automatisch laeuft nur, was NICHT das Modell zum
+/// Massstab nimmt, das mit denselben Daten kalibriert wird. Wer Messungen wegwirft, weil sie
+/// nicht zum Fit passen, loescht so lange Residuen, bis der Fit schoen aussieht — und bekommt
+/// eine praechtig kalibrierte Anlage, die schlechter ortet, ohne dass es auffaellt, weil der
+/// Massstab mitgeschrumpft ist.
+///
+/// Erlaubt sind damit: Regeln aus der Messung selbst (zu wenige Werte, physikalisch unmoeglicher
+/// Pegel) UND der Vergleich von WIEDERHOLUNGSMESSUNGEN am selben Ort gegeneinander — das ist
+/// Ausreissererkennung unter Wiederholungen, keine Selbstbestaetigung des Fits.
+///
+/// ⚠ Nicht erlaubt: eine ganze Aufnahme verwerfen, weil ihr MEDIAN abweicht. Dann ist nicht
+/// bestimmbar, welche Seite recht hat; die Diagnose sagt dort, was sie nicht weiss, statt zu
+/// raten. Eine Ruecktrage an den Benutzer waere dasselbe Raten, nur mit fremder Unterschrift.
 ///
 /// ⚠ Stillgelegt wird je MESSUNG, nie je Punkt: ein einzelner unbrauchbarer Knotenwert
 /// macht die zehn anderen Messungen desselben Punkts nicht falsch, und der Bestand ist zu
@@ -68,6 +74,36 @@ public class WalkPointHygiene(WalkTestService walkTest)
     public const int MinActiveNodesPerPoint = 3;
 
     public record Befund(string PointId, string NodeId, string Rule, string Reason);
+
+    /// <summary>
+    /// Legt die Messung eines Knotens still, der in ZWEI Aufnahmen am selben Ort als einziger
+    /// aus der Reihe faellt. Welche der beiden falsch liegt, ist nicht bestimmbar - der
+    /// Widerspruch verschwindet nur, wenn beide Seiten schweigen.
+    ///
+    /// ⚠ Warum das trotz der Trennlinie oben automatisch laufen darf, obwohl das Kriterium
+    /// aus der Diagnose stammt: verglichen werden WIEDERHOLUNGSMESSUNGEN am selben Ort
+    /// gegeneinander, nicht Messungen gegen das Modell. Das ist Ausreissererkennung unter
+    /// Wiederholungen, keine Selbstbestaetigung des Fits. Und es ist umkehrbar, protokolliert
+    /// und gedeckelt - es gibt keinen Grund, davor stehenzubleiben und den Benutzer eine
+    /// Muenze werfen zu lassen.
+    ///
+    /// ⚠ NUR der Einzelknoten-Fall. Weicht der MEDIAN ab, ist eine ganze Aufnahme fragwuerdig
+    /// - dann sagt die Diagnose, was sie nicht weiss, statt zu raten.
+    /// </summary>
+    public List<Befund> ResolveSingleNodeConflicts(IEnumerable<(string IdA, string IdB, string NodeId, double MaxDb, double ExplainableDb)> faelle)
+    {
+        var getan = new List<Befund>();
+        foreach (var f in faelle)
+        {
+            var grund = $"Einzelner Knoten weicht um {f.MaxDb:0.0} dB ab, erklaerbar waeren {f.ExplainableDb:0.0} dB " +
+                        $"(Doppel-Aufnahme {f.IdA}/{f.IdB} am selben Ort). Welche der beiden falsch liegt, ist nicht " +
+                        "bestimmbar - deshalb schweigen beide.";
+            foreach (var pid in new[] { f.IdA, f.IdB })
+                if (SetDisabled(pid, f.NodeId, true, grund, "conflict-single-node"))
+                    getan.Add(new Befund(pid, f.NodeId, "conflict-single-node", grund));
+        }
+        return getan;
+    }
 
     /// <summary>
     /// Wendet die Regeln an. Gibt zurueck, was stillgelegt wurde — leer, wenn nichts.
@@ -148,15 +184,16 @@ public class WalkPointHygiene(WalkTestService walkTest)
         return getan;
     }
 
-    /// <summary>Eine Messung von Hand stilllegen oder wieder aufnehmen.</summary>
-    public bool SetDisabled(string pointId, string nodeId, bool disabled, string? reason)
+    /// <summary>Eine Messung stilllegen oder wieder aufnehmen.</summary>
+    public bool SetDisabled(string pointId, string nodeId, bool disabled, string? reason, string rule = "manual")
     {
         var p = walkTest.GetPoints().FirstOrDefault(x => string.Equals(x.Id, pointId, StringComparison.OrdinalIgnoreCase));
         var a = p?.Nodes.FirstOrDefault(x => string.Equals(x.NodeId, nodeId, StringComparison.OrdinalIgnoreCase));
         if (a == null) return false;
+        if (a.Disabled == disabled) return false;   // nichts zu tun, und nichts zu melden
 
         a.Disabled = disabled;
-        a.DisabledRule = disabled ? "manual" : null;
+        a.DisabledRule = disabled ? rule : null;
         a.DisabledReason = disabled ? reason ?? "Von Hand stillgelegt." : null;
         a.DisabledAt = disabled ? DateTime.UtcNow : null;
         walkTest.PersistPoints();
