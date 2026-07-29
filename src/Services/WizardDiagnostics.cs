@@ -343,12 +343,13 @@ public class WizardDiagnostics(
                 Category = "coverage",
                 FloorId = einzig?.FloorId,
                 RoomId = einzig?.RoomId,
-                Message = $"{duenn.Count} of {result.RoomCoverage.Count} rooms have less than half their area within " +
-                          $"{GoodCoverageM:0.0} m of a node, the thinnest being {string.Join(", ", schlimmste)}. " +
-                          "Measured on this installation, spots with a node inside that radius averaged 1.1 m error " +
-                          "and spots beyond it 2.5 m. One additional node in those rooms helps more than any " +
-                          "calibration change. This reflects where the nodes hang - it does not change between runs " +
-                          "and is not something calibration can fix. Full list in the room coverage table."
+                Message = $"In {duenn.Count} von {result.RoomCoverage.Count} Räumen liegt weniger als die halbe Fläche im " +
+                          $"Umkreis von {GoodCoverageM:0.0} m um einen Knoten, am dünnsten {string.Join(", ", schlimmste)}. " +
+                          "An dieser Anlage gemessen: Stellen mit einem Knoten in Reichweite hatten 1,1 m Fehler, " +
+                          "Stellen ohne 2,5 m. Ein zusätzlicher Knoten in diesen Räumen bewirkt mehr als jede " +
+                          "Kalibrierung. Das hängt daran, wo die Knoten hängen — es ändert sich zwischen zwei " +
+                          "Läufen nicht und lässt sich durch Kalibrieren nicht beheben. Vollständige Liste in der " +
+                          "Tabelle zur Raum-Abdeckung."
             });
         }
     }
@@ -438,13 +439,14 @@ public class WizardDiagnostics(
                 Severity = ValidationSeverity.Warning,
                 Category = "clamped",
                 NodeId = einzigerKnoten,
-                Message = $"{result.ClampedParameters.Count} node parameters sit on a configured limit: " +
-                          $"{string.Join(" · ", jeParameter)}. Those nodes are capped rather than fitted - the limit " +
-                          "is shaping their calibration instead of the measurements - widen the matching " +
-                          "optimization.limits entry and re-run, or exclude a node that is genuinely atypical. " +
-                          "Full list in the clamped-parameters table." +
+                Message = $"{result.ClampedParameters.Count} Knoten-Parameter stehen auf einer eingestellten Grenze: " +
+                          $"{string.Join(" · ", jeParameter)}. Diese Knoten sind gedeckelt statt gefittet — nicht " +
+                          "die Messungen bestimmen ihre Kalibrierung, sondern die Grenze. Erweitere den passenden " +
+                          "Eintrag unter optimization.limits und lass neu rechnen, oder nimm einen Knoten heraus, " +
+                          "der wirklich aus der Reihe fällt. Vollständige Liste in der Tabelle der gedeckelten " +
+                          "Parameter." +
                           (nahAmAnschlag.Count > 0
-                              ? $" A further {nahAmAnschlag.Count} are close to a limit without touching it: " +
+                              ? $" Weitere {nahAmAnschlag.Count} stehen dicht an einer Grenze, ohne sie zu berühren: " +
                                 $"{string.Join(", ", nahAmAnschlag)}."
                               : "")
             });
@@ -455,8 +457,8 @@ public class WizardDiagnostics(
             {
                 Severity = ValidationSeverity.Info,
                 Category = "near-limit",
-                Message = $"{nahAmAnschlag.Count} node parameters are close to a limit without touching it: " +
-                          $"{string.Join(", ", nahAmAnschlag)}. Nothing is capped yet, but the fit is pushing that way."
+                Message = $"{nahAmAnschlag.Count} Knoten-Parameter stehen dicht an einer Grenze, ohne sie zu berühren: " +
+                          $"{string.Join(", ", nahAmAnschlag)}. Noch ist nichts gedeckelt, aber der Fit drängt dorthin."
             });
         }
     }
@@ -590,11 +592,11 @@ public class WizardDiagnostics(
         {
             Severity = ValidationSeverity.Warning,
             Category = "conflicting-walkpoints",
-            Message = $"{unvereinbar} pairs of walk points sit within {SamePlaceRadiusM} m of each other yet " +
-                      $"disagree by more than measurement noise can explain. They enter the optimiser as extra " +
-                      $"reference transmitters, so no calibration can satisfy both - every change that helps one " +
-                      $"side hurts the other and gets rejected. That looks like \"nothing to improve\" but is " +
-                      $"\"impossible target\". Delete the recording you trust less before optimising further."
+            Message = $"{unvereinbar} Paare von Walk-Punkten liegen keinen Meter auseinander und widersprechen sich " +
+                      $"trotzdem stärker, als die Messstreuung erklären kann. Sie gehen als zusätzliche " +
+                      $"Referenzsender in den Optimierer ein, also kann keine Kalibrierung beide erfüllen — jede " +
+                      $"Änderung, die der einen Seite hilft, schadet der anderen und wird verworfen. Das sieht aus " +
+                      $"wie „nichts zu verbessern“ und ist in Wahrheit „unerfüllbares Ziel“."
         });
     }
 
@@ -699,9 +701,10 @@ public class WizardDiagnostics(
         {
             Severity = ValidationSeverity.Info,
             Category = "stale-walkpoints",
-            Message = $"{stale.Count} of {total} walk points carry no recorded signal levels, so they cannot score " +
-                      $"calibration changes - only the locator. Any benchmark run with overrides silently blends " +
-                      $"them in and dilutes the result. Re-record them one walk at a time - the list below shrinks as you go."
+            Message = $"{stale.Count} von {total} Walk-Punkten tragen keine aufgezeichneten Pegel. Sie können damit den " +
+                      $"Locator prüfen, aber keine Kalibrierung bewerten — auf eine geänderte Kalibrierung " +
+                      $"reagieren sie gar nicht. Der Prüfstand nennt beide Zahlen getrennt, damit die eine nicht " +
+                      $"für die andere gehalten wird. Es ist nichts zu tun; die Punkte sind in Ordnung."
         });
     }
 
@@ -744,10 +747,11 @@ public class WizardDiagnostics(
                 Severity = ValidationSeverity.Warning,
                 Category = "geometry-drift",
                 NodeId = nodeId,
-                Message = $"Node '{name}' has moved since {points} walk point(s) were recorded - up to {maxM:0.00} m. " +
-                          $"Those points still describe where it used to be. Distances are therefore taken from the " +
-                          $"recording, not from today's map, so the fit stays correct - but anything scored against " +
-                          $"the CURRENT layout is only as good as those points are recent. Re-record them when convenient."
+                Message = $"Knoten „{name}“ wurde versetzt, seit {points} Walk-Punkte aufgezeichnet wurden — um bis zu " +
+                          $"{maxM:0.00} m. Diese Punkte beschreiben ihn noch am alten Platz. Die Entfernungen " +
+                          $"stammen deshalb aus der Aufzeichnung und nicht aus der heutigen Karte, der Fit bleibt " +
+                          $"also richtig. Nur alles, was gegen den HEUTIGEN Aufbau bewertet wird, ist nur so " +
+                          $"aktuell wie diese Punkte."
             });
         }
     }
@@ -831,9 +835,9 @@ public class WizardDiagnostics(
                 Severity = ValidationSeverity.Warning,
                 Category = "model-limit",
                 NodeId = ausserhalb.Count == 1 ? ausserhalbIds[0] : null,
-                Message = $"{ausserhalb.Count} nodes need an absorption outside the allowed " +
-                          $"{opt.AbsorptionMin:0.0}..{opt.AbsorptionMax:0.0} to explain their levels at the distances " +
-                          $"they actually stood at" +
+                Message = $"{ausserhalb.Count} Knoten bräuchten eine Absorption außerhalb der erlaubten " +
+                          $"{opt.AbsorptionMin:0.0}..{opt.AbsorptionMax:0.0}, damit ihre Pegel zu den Entfernungen " +
+                          $"passen, in denen tatsächlich gemessen wurde" +
                           (drunter.Count > 0 ? $" - {drunter.Count} below the minimum ({Liste(drunter)})" : "") +
                           (drueber.Count > 0 ? $"{(drunter.Count > 0 ? " and" : " -")} {drueber.Count} above the maximum ({Liste(drueber)})" : "") +
                           ". No optimizer run can reach those values, so this is not a calibration that has not " +
@@ -898,10 +902,11 @@ public class WizardDiagnostics(
                 {
                     Severity = ValidationSeverity.Warning,
                     Category = "spread",
-                    Message = $"Per-node absorption spans only {fittedSpread:0.00} across {absorption.Count} nodes, " +
-                              $"while the walk points demand a span of {requiredSpread:0.00}. The per-node optimizer " +
-                              $"is delivering what a global one would, at {absorption.Count} times the free " +
-                              $"parameters - weights.absorption_penalty is the knob that flattens this."
+                    Message = $"Die Absorption spannt über {absorption.Count} Knoten nur {fittedSpread:0.00}, während die " +
+                              $"Walk-Punkte eine Spanne von {requiredSpread:0.00} verlangen. Der Optimierer mit " +
+                              $"Freiheit je Knoten liefert damit, was ein globaler auch liefern würde — bei " +
+                              $"{absorption.Count}-facher Zahl freier Parameter. Der Hebel dagegen heißt " +
+                              $"weights.absorption_penalty."
                 });
         }
 
@@ -963,10 +968,11 @@ public class WizardDiagnostics(
                 Severity = ValidationSeverity.Warning,
                 Category = "noisy",
                 NodeId = nodeId,
-                Message = $"Node '{name}': level variance {med:0.0}, about {med / fleetMedian:0}x the fleet median " +
-                          $"of {fleetMedian:0.0}. Its readings scatter far more than everyone else's, which no " +
-                          $"calibration parameter can absorb - that is a path problem (metal, a case, something in " +
-                          $"the way), and it hurts most when this node is the closest one to the device."
+                Message = $"Knoten „{name}“: Pegelstreuung {med:0.0}, rund das {med / fleetMedian:0}-fache des " +
+                          $"Flottenmedians von {fleetMedian:0.0}. Seine Messwerte streuen weit stärker als die " +
+                          $"aller anderen, und das kann kein Kalibrierparameter auffangen — es liegt am Weg " +
+                          $"(Metall, ein Gehäuse, etwas dazwischen). Am meisten schadet es, wenn ausgerechnet " +
+                          $"dieser Knoten dem Gerät am nächsten ist."
             });
         }
     }
@@ -1090,14 +1096,15 @@ public class WizardDiagnostics(
                 Severity = ValidationSeverity.Warning,
                 Category = "signal",
                 NodeId = widersprueche.Count == 1 ? widersprueche[0].RxId : null,
-                Message = $"{widersprueche.Count} node pairs measure a level that no path-loss setting explains, " +
-                          $"the largest being {string.Join(", ", schlimmste)}. " +
+                Message = $"{widersprueche.Count} Knotenpaare messen einen Pegel, den kein Pfadverlust erklärt — " +
+                          $"am stärksten {string.Join(", ", schlimmste)}. " +
                           (haeufigster.Count() >= 3
-                              ? $"'{haeufigster.Key}' appears in {haeufigster.Count()} of them - check that node " +
-                                "first (mapped position, antenna, what stands around it). "
+                              ? $"„{haeufigster.Key}“ steckt in {haeufigster.Count()} davon — sieh dir zuerst diesen Knoten an: " +
+                                "eingetragene Position, Antenne, was um ihn herum steht. "
                               : "") +
-                          "These are contradictions, not calibration error: no optimizer run can absorb them. " +
-                          "Check the mapped positions or exclude the pair. Full list in the signal outlier table."
+                          "Das sind Widersprüche, kein Kalibrierfehler — kein Optimierungslauf kann sie auffangen. " +
+                          "Prüfe die eingetragenen Positionen oder nimm das Paar heraus. Vollständige Liste in der " +
+                          "Tabelle der Ausreißer."
             });
         }
 
@@ -1108,10 +1115,11 @@ public class WizardDiagnostics(
             {
                 Severity = ValidationSeverity.Warning,
                 Category = "range",
-                Message = $"The fit holds up close and falls apart with range: median error {nearErr:0.0} dB below " +
-                          $"{NearFarSplitM:0} m versus {farErr:0.0} dB above it. That is the signature of an " +
-                          "absorption fitted to near pairs and extrapolated too steeply - distant nodes then report " +
-                          "far too short a distance and pull the position towards themselves."
+                Message = $"Der Fit trägt in der Nähe und bricht mit der Entfernung zusammen: Median-Fehler {nearErr:0.0} dB " +
+                          $"unterhalb von {NearFarSplitM:0} m gegen {farErr:0.0} dB darüber. Das ist die Handschrift " +
+                          "einer Absorption, die an nahen Paaren gefittet und dann zu steil hochgerechnet wurde — " +
+                          "ferne Knoten melden daraufhin eine viel zu kurze Entfernung und ziehen die Position zu " +
+                          "sich heran."
             });
     }
 

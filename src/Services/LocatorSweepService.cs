@@ -139,24 +139,27 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
         var reason = decidedBy switch
         {
             "room" =>
-                $"'{pick.Label}' puts the device in the right room {pick.RoomHitRate:P0} of the time, more than any " +
-                $"other combination by more than the measurement's own scatter. Right-room rate is what presence " +
-                $"automations consume, and a wrong floor or a badly wrong position both already show up in it.",
+                $"„{pick.Label}“ setzt das Gerät in {pick.RoomHitRate:P0} der Fälle in den richtigen Raum — mehr als " +
+                $"jede andere Kombination, und zwar um mehr als die Streuung der Messung selbst. Die " +
+                $"Raumtrefferquote ist das, was Anwesenheits-Automationen verbrauchen; eine falsche Etage und " +
+                $"eine grob falsche Position schlagen beide bereits darin durch.",
             "floor" =>
-                $"Every combination lands in the right room about equally often ({pick.RoomHitRate:P0} here, and the " +
-                $"spread across all of them is inside the ±{roomMargin:P0} uncertainty across {pick.PointsUsed} walk " +
-                $"points), so that figure cannot choose. The floor does separate them: '{pick.Label}' gets the storey " +
-                $"right {pick.FloorHitRate:P0} of the time, and being on the wrong floor is the error you actually notice.",
+                $"Alle Kombinationen treffen den Raum ungefähr gleich oft ({pick.RoomHitRate:P0} hier, und die Spanne " +
+                $"über alle liegt innerhalb der Unsicherheit von ±{roomMargin:P0} über {pick.PointsUsed} " +
+                $"Walk-Punkte) — diese Zahl kann also nicht entscheiden. Die Etage trennt sie sehr wohl: " +
+                $"„{pick.Label}“ trifft das Stockwerk in {pick.FloorHitRate:P0} der Fälle, und die falsche Etage " +
+                $"ist der Fehler, den man wirklich bemerkt.",
             "position" =>
-                $"Right-room rates tie (within ±{roomMargin:P0} across {pick.PointsUsed} walk points) and so do the " +
-                $"floor rates, so neither can choose. The distances do: '{pick.Label}' lands a median " +
-                $"{pick.MedianErrorM:0.00} m from the truth, further than the scatter of the measurement itself from " +
-                $"any other candidate. Same room, but closer to the right spot inside it.",
+                $"Die Raumtrefferquoten liegen gleichauf (innerhalb ±{roomMargin:P0} über {pick.PointsUsed} " +
+                $"Walk-Punkte), die Etagenquoten ebenso — keine von beiden kann entscheiden. Die Entfernungen " +
+                $"können es: „{pick.Label}“ landet im Median {pick.MedianErrorM:0.00} m von der Wahrheit entfernt, " +
+                $"und der Abstand zu jedem anderen Kandidaten ist größer als die Streuung der Messung. Derselbe " +
+                $"Raum, aber näher an der richtigen Stelle darin.",
             _ =>
-                $"Nothing measurable separates the candidates - right-room rates all sit within ±{roomMargin:P0} of " +
-                $"each other across {pick.PointsUsed} walk points, the floor rates agree too, and so do the median " +
-                $"position errors. '{pick.Label}' is recommended because it achieves that with the fewest estimators, " +
-                $"which costs the least computation and leaves less to go wrong."
+                $"Nichts Messbares trennt die Kandidaten — die Raumtrefferquoten liegen über {pick.PointsUsed} " +
+                $"Walk-Punkte alle innerhalb von ±{roomMargin:P0} beieinander, die Etagenquoten ebenso und die " +
+                $"Median-Positionsfehler auch. Empfohlen wird „{pick.Label}“, weil es dasselbe mit den wenigsten " +
+                $"Schätzern erreicht: weniger Rechenaufwand und weniger, was schiefgehen kann."
         };
 
         // ★ Den Handel benennen statt ihn stillschweigend einzugehen. Entscheidet die Etage, zahlt man
@@ -165,9 +168,9 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
         var bestMedian = usable.Where(r => r.MedianErrorM.HasValue).MinBy(r => r.MedianErrorM);
         if (bestMedian != null && pick.MedianErrorM is { } pickMedian && bestMedian.MedianErrorM is { } bestM
             && !bestMedian.Locators.ToHashSet().SetEquals(pick.Locators) && pickMedian - bestM >= 0.1)
-            reason += $" The trade: '{bestMedian.Label}' is {pickMedian - bestM:0.00} m better on median position " +
-                      $"error ({bestM:0.00} m against {pickMedian:0.00} m), but gets the storey right " +
-                      $"{bestMedian.FloorHitRate:P0} of the time instead of {pick.FloorHitRate:P0}.";
+            reason += $" Der Handel dabei: „{bestMedian.Label}“ ist im Median-Positionsfehler um " +
+                      $"{pickMedian - bestM:0.00} m besser ({bestM:0.00} m gegen {pickMedian:0.00} m), trifft die " +
+                      $"Etage dafür aber nur in {bestMedian.FloorHitRate:P0} statt {pick.FloorHitRate:P0} der Fälle.";
 
         var current = usable.FirstOrDefault(r => r.IsCurrentConfiguration);
         if (current != null && !current.Locators.ToHashSet().SetEquals(pick.Locators))
@@ -175,10 +178,10 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             var dropped = current.Locators.Except(pick.Locators).ToList();
             var added = pick.Locators.Except(current.Locators).ToList();
             if (dropped.Count > 0)
-                reason += $" Against the current configuration this drops {string.Join(" and ", dropped)}";
+                reason += $" Gegenüber der laufenden Einstellung fällt damit {string.Join(" und ", dropped)} weg";
             if (added.Count > 0)
-                reason += (dropped.Count > 0 ? " and adds " : " Against the current configuration this adds ")
-                          + string.Join(" and ", added);
+                reason += (dropped.Count > 0 ? " und hinzu kommt " : " Gegenüber der laufenden Einstellung kommt hinzu: ")
+                          + string.Join(" und ", added);
             if (dropped.Count > 0 || added.Count > 0) reason += ".";
         }
 

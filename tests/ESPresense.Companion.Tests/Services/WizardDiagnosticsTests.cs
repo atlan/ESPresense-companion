@@ -170,8 +170,10 @@ floors:
         var issue = _sut.Analyze().Issues.Single(i => i.Category == "coverage");
 
         Assert.That(issue.RoomId, Is.EqualTo("hall"));
-        Assert.That(issue.Message, Does.Contain("2.5 m"), "the measured expectation, not a vague warning");
-        Assert.That(issue.Message, Does.Contain("One additional node"));
+        // Die Meldung ist seit dem 29.07.2026 deutsch (Dezimalkomma!). Geprueft wird weiterhin
+        // dasselbe: nennt sie die GEMESSENE Erwartung und die Handlung - statt vage zu warnen.
+        Assert.That(issue.Message, Does.Contain("2,5 m"), "die gemessene Erwartung, keine vage Warnung");
+        Assert.That(issue.Message, Does.Contain("zusätzlicher Knoten"));
     }
 
     [Test]
@@ -202,7 +204,8 @@ floors:
 
         Assert.That(issue.NodeId, Is.EqualTo("pantry"));
         Assert.That(issue.Message, Does.Contain("max"));
-        Assert.That(issue.Message, Does.Contain("widen"));
+        // Sagt sie, WAS zu tun ist? (deutsch seit dem 29.07.2026)
+        Assert.That(issue.Message, Does.Contain("Erweitere"));
     }
 
     [Test]

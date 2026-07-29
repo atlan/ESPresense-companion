@@ -55,7 +55,7 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
                     Severity = ValidationSeverity.Error,
                     Category = "bounds_missing",
                     FloorId = floorId,
-                    Message = $"Floor '{cf.Name ?? floorId}' has no usable bounds (needs two [x,y,z] corner points)."
+                    Message = $"Etage „{cf.Name ?? floorId}“ hat keine brauchbaren Grenzen — es fehlen zwei Eckpunkte [x,y,z]."
                 });
                 continue;
             }
@@ -76,7 +76,7 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
                         Category = "bounds_swapped",
                         FloorId = floorId,
                         Message = $"Floor '{cf.Name ?? floorId}': bounds {axisName} is larger in the first corner ({a[axis]}) than the second ({b[axis]}). " +
-                                  "The backend silently swaps these, but this usually indicates a data-entry mistake (e.g. ceiling height entered instead of an absolute coordinate)."
+                                  "Der Dienst dreht das stillschweigend um, aber meist steckt ein Eingabefehler dahinter — etwa eine Deckenhöhe statt einer absoluten Koordinate."
                     });
                 }
             }
@@ -106,7 +106,7 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
                     Category = "room_degenerate",
                     FloorId = floorId,
                     RoomId = roomId,
-                    Message = $"Room '{room.Name ?? roomId}' has fewer than 3 distinct polygon points."
+                    Message = $"Raum „{room.Name ?? roomId}“ hat weniger als 3 verschiedene Eckpunkte."
                 });
                 continue;
             }
@@ -120,7 +120,7 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
                     Category = "room_too_small",
                     FloorId = floorId,
                     RoomId = roomId,
-                    Message = $"Room '{room.Name ?? roomId}' is only {area:0.0} m2 - typical multilateration noise (0.5-2m) will often place devices outside such a small polygon."
+                    Message = $"Raum „{room.Name ?? roomId}“ ist nur {area:0.0} m² groß. Die übliche Ortungsstreuung von 0,5 bis 2 m setzt Geräte dann regelmäßig außerhalb eines so kleinen Umrisses ab."
                 });
             }
 
@@ -138,7 +138,7 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
                     Category = "room_overlap",
                     FloorId = floorId,
                     RoomId = polys[i].roomId,
-                    Message = $"Rooms '{polys[i].name}' and '{polys[j].name}' overlap by more than a shared edge - room assignment will be ambiguous in the overlapping area."
+                    Message = $"Die Räume „{polys[i].name}“ und „{polys[j].name}“ überlappen sich mehr als nur an einer gemeinsamen Kante — in dem Bereich ist die Raumzuordnung nicht eindeutig."
                 });
             }
         }
@@ -163,7 +163,7 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
                         Category = "node_outside_bounds",
                         NodeId = id,
                         FloorId = floor.Id,
-                        Message = $"Node '{node.Name ?? id}' at ({loc.X:0.0}, {loc.Y:0.0}, {loc.Z:0.0}) lies outside floor '{floor.Name ?? floor.Id}' bounds " +
+                        Message = $"Knoten „{node.Name ?? id}“ steht bei ({loc.X:0.0}, {loc.Y:0.0}, {loc.Z:0.0}) außerhalb der Grenzen von Etage „{floor.Name ?? floor.Id}“ " +
                                   $"({min.X:0.0}-{max.X:0.0}, {min.Y:0.0}-{max.Y:0.0}, {min.Z:0.0}-{max.Z:0.0})."
                     });
                 }
@@ -240,17 +240,19 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
             // Nur bei genau einem Knoten zeigt die Meldung auf ihn - sonst gibt es keinen einen.
             NodeId = auffaellig.Count == 1 ? auffaellig[0].Id : null,
             Message = systemisch
-                ? $"{auffaellig.Count} of {geprueft} nodes measure distances to their same-floor neighbours that " +
-                  $"disagree with the map, the largest being {schlimmste}. " +
-                  "⚠ With this many at once, entered coordinates are NOT the likely cause - nobody mistypes two " +
-                  "thirds of their nodes. The shared explanation is that the path-loss model does not describe " +
-                  "this building: walls, floors and furniture attenuate more than any single absorption value can " +
-                  "represent, so measured distances come out systematically too long. Do not go checking X/Y/Z " +
-                  "unless a node also stands out in the signal-outlier table. This number tells you how far the " +
-                  "model is from the building, not where the nodes hang."
-                : $"{auffaellig.Count} node(s) measure distances to their same-floor neighbours that disagree with " +
-                  $"the map: {schlimmste}. With only a few affected, a wrong entry is the likely cause - check the " +
-                  "entered X/Y/Z, a wrong height or transposed coordinates typically looks exactly like this."
+                ? $"{auffaellig.Count} von {geprueft} Knoten messen zu ihren Nachbarn auf derselben Etage Entfernungen, " +
+                  $"die nicht zur Karte passen — am stärksten {schlimmste}. " +
+                  "⚠ Bei so vielen auf einmal sind die eingetragenen Koordinaten NICHT die wahrscheinliche " +
+                  "Ursache: niemand vertippt sich bei zwei Dritteln seiner Knoten. Die gemeinsame Erklärung ist, " +
+                  "dass das Pfadverlustmodell dieses Gebäude nicht abbildet — Wände, Decken und Möbel dämpfen " +
+                  "mehr, als ein einzelner Absorptionswert darstellen kann, also fallen gemessene Entfernungen " +
+                  "systematisch zu lang aus. Geh die X/Y/Z NICHT durch, außer ein Knoten fällt zusätzlich in der " +
+                  "Ausreißer-Tabelle auf. Diese Zahl sagt, wie weit das Modell vom Gebäude entfernt ist, nicht " +
+                  "wo die Knoten hängen."
+                : $"{auffaellig.Count} Knoten messen zu ihren Nachbarn auf derselben Etage Entfernungen, die nicht zur " +
+                  $"Karte passen: {schlimmste}. Bei nur wenigen Betroffenen ist ein Eingabefehler die " +
+                  "wahrscheinliche Ursache — prüfe die eingetragenen X/Y/Z. Eine falsche Höhe oder vertauschte " +
+                  "Koordinaten sehen genau so aus."
         });
     }
 

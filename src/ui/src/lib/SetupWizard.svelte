@@ -560,7 +560,7 @@
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
 			}
-			toastStore.trigger({ message: 'Walk test started - keep the device in place', background: 'preset-filled-success-500' });
+			toastStore.trigger({ message: 'Walk-Test läuft — das Gerät jetzt nicht bewegen', background: 'preset-filled-success-500' });
 			await fetchWalkStatus();
 		} catch (error) {
 			toastStore.trigger({
@@ -668,8 +668,8 @@
 	// Ungeduldige, verschwindet aber, wo die Messung die Kandidaten nicht trennt.
 	async function applyLocatorCandidate(r: LocatorTuneResult) {
 		const confirmed = await showConfirm({
-			title: 'Apply locator configuration',
-			body: `Set nadaraya_watson to "${r.candidate.label}" in the live config? Positioning behavior changes immediately.`
+			title: 'Ortungs-Feineinstellung übernehmen',
+			body: `Nadaraya-Watson auf „${r.candidate.label}“ umstellen? Das Ortungsverhalten ändert sich sofort. Der Assistent macht das beim nächsten Optimierungsdurchgang ohnehin selbst — dies nimmt es nur vorweg.`
 		});
 		if (!confirmed) return;
 		try {
@@ -682,7 +682,7 @@
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
 			}
-			toastStore.trigger({ message: `Applied: ${r.candidate.label}`, background: 'preset-filled-success-500' });
+			toastStore.trigger({ message: `Übernommen: ${r.candidate.label}`, background: 'preset-filled-success-500' });
 			await fetchSettings();
 		} catch (error) {
 			toastStore.trigger({
@@ -714,7 +714,7 @@
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
 			}
-			toastStore.trigger({ message: 'Settings saved to config', background: 'preset-filled-success-500' });
+			toastStore.trigger({ message: 'Einstellungen in die Konfiguration geschrieben', background: 'preset-filled-success-500' });
 		} catch (error) {
 			toastStore.trigger({
 				message: error instanceof Error ? error.message : 'Failed to save settings',
@@ -743,7 +743,7 @@
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
 			}
-			toastStore.trigger({ message: 'Auto-tune started - this can take a minute or two', background: 'preset-filled-success-500' });
+			toastStore.trigger({ message: 'Abgleich läuft — das dauert ein bis zwei Minuten', background: 'preset-filled-success-500' });
 			await fetchTuneStatus();
 		} catch (error) {
 			toastStore.trigger({
@@ -757,8 +757,8 @@
 
 	async function applyTuneCandidate(r: TuneResult) {
 		const confirmed = await showConfirm({
-			title: 'Apply optimizer configuration',
-			body: `Set optimizer to "${r.candidate.label}" in the live config? The next calibration cycles will use it.`
+			title: 'Optimierer-Einstellung übernehmen',
+			body: `Optimierer auf „${r.candidate.label}“ umstellen? Die nächsten Kalibrierdurchgänge benutzen ihn dann. ⚠ Engere Absorptionsgrenzen ziehen bestehende Kalibrierungen NICHT nachträglich in den erlaubten Bereich — Werte außerhalb bleiben stehen, während jeder Kandidat abgelehnt wird.`
 		});
 		if (!confirmed) return;
 		try {
@@ -771,7 +771,7 @@
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
 			}
-			toastStore.trigger({ message: `Applied: ${r.candidate.label}`, background: 'preset-filled-success-500' });
+			toastStore.trigger({ message: `Übernommen: ${r.candidate.label}`, background: 'preset-filled-success-500' });
 		} catch (error) {
 			toastStore.trigger({
 				message: error instanceof Error ? error.message : 'Failed to apply candidate',
@@ -790,7 +790,7 @@
 				throw new Error(err?.error ?? `HTTP ${response.status}`);
 			}
 			toastStore.trigger({
-				message: 'Calibration cycle triggered - watch Best R / Best RMSE update below',
+				message: 'Kalibrierdurchgang angestoßen — unten ändern sich gleich bestes R und bestes RMSE',
 				background: 'preset-filled-success-500'
 			});
 		} catch (error) {
@@ -805,8 +805,8 @@
 
 	async function excludePair(s: PairSuggestion) {
 		const confirmed = await showConfirm({
-			title: 'Exclude pair from calibration',
-			body: `Exclude "${s.nodeAName ?? s.nodeA}" ↔ "${s.nodeBName ?? s.nodeB}" from calibration fitting? Its persistent ${(s.avgAbsPercentError * 100).toFixed(0)}% distance error suggests an RF obstruction between them that would otherwise distort both nodes' calibration.`
+			title: 'Knotenpaar von der Kalibrierung ausnehmen',
+			body: `„${s.nodeAName ?? s.nodeA}" ↔ „${s.nodeBName ?? s.nodeB}" vom Fit ausnehmen? Der dauerhafte Entfernungsfehler von ${(s.avgAbsPercentError * 100).toFixed(0)} % deutet auf ein Hindernis zwischen beiden hin, das sonst die Kalibrierung BEIDER Knoten verzieht.`
 		});
 		if (!confirmed) return;
 
@@ -822,7 +822,7 @@
 				throw new Error(err?.error ?? `HTTP ${response.status}`);
 			}
 			toastStore.trigger({
-				message: `Pair ${s.pairId} excluded from calibration`,
+				message: `Paar ${s.pairId} von der Kalibrierung ausgenommen`,
 				background: 'preset-filled-success-500'
 			});
 			await fetchAll();
@@ -963,7 +963,7 @@
 <div class="h-full overflow-y-auto">
 	<div class="w-full px-4 py-2 space-y-6">
 		{#if loading}
-			<p class="text-surface-600-400">Loading setup checks...</p>
+			<p class="text-surface-600-400">Prüfungen werden geladen …</p>
 		{:else}
 			<!-- ══ Statuszeile: EINE Zahl, ohne dass jemand einen Knopf druecken muss ══ -->
 			{#if todo?.status?.medianErrorM != null}
@@ -1111,16 +1111,16 @@
 			{#if zeigeDetails}
 			<section class="space-y-6">
 				<header class="flex items-baseline gap-3 pt-2">
-					<h2 class="text-xl font-bold">Pruefen</h2>
+					<h2 class="text-xl font-bold">Prüfen</h2>
 				</header>
 				<p class="text-sm text-surface-600-400 -mt-4">Stimmen Knoten und Konfiguration? Alles Weitere misst sonst nur den Defekt.</p>
 			<!-- 1. Health gate -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Node Health</h2>
+					<h2 class="text-lg font-semibold">Zustand der Knoten</h2>
 					{#if health}
 						<span class="badge {health.passed ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
-							{health.passed ? 'All good' : 'Attention needed'}
+							{health.passed ? 'alles in Ordnung' : 'da stimmt etwas nicht'}
 						</span>
 					{/if}
 				</header>
@@ -1140,7 +1140,7 @@
 						<div class="overflow-x-auto mt-2">
 							<table class="table table-compact">
 								<thead>
-									<tr><th>Node</th><th>Online</th><th>Telemetry</th><th>Version</th></tr>
+									<tr><th>Knoten</th><th>erreichbar</th><th>Telemetrie</th><th>Version</th></tr>
 								</thead>
 								<tbody>
 									{#each health.nodes.filter((n) => !n.online || n.stale) as n (n.id)}
@@ -1160,7 +1160,7 @@
 			<!-- 2. Validation issues -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Configuration Checks</h2>
+					<h2 class="text-lg font-semibold">Prüfung der Konfiguration</h2>
 					{#if validation}
 						<span class="badge {validation.issues.length === 0 ? 'preset-filled-success-500' : validation.hasErrors ? 'preset-filled-error-500' : 'preset-filled-warning-500'}">
 							{validation.issues.length === 0 ? 'No issues' : `${validation.issues.length} issue${validation.issues.length === 1 ? '' : 's'}`}
@@ -1169,7 +1169,7 @@
 				</header>
 				{#if validation}
 					{#if validation.issues.length === 0}
-						<p class="text-sm text-surface-600-400">Floor bounds, room polygons and node placements all look consistent.</p>
+						<p class="text-sm text-surface-600-400">Etagen-Grenzen, Raum-Umrisse und Knoten-Positionen sind in sich stimmig.</p>
 					{:else}
 						<ul class="space-y-2">
 							{#each validation.issues as issue}
@@ -1192,9 +1192,9 @@
 			<!-- 5. Walk test -->
 			<div class="card p-4" bind:this={walkCardEl}>
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Walk Test</h2>
+					<h2 class="text-lg font-semibold">Walk-Test</h2>
 					{#if walkStatus?.active}
-						<span class="badge preset-filled-primary-500">Running</span>
+						<span class="badge preset-filled-primary-500">läuft</span>
 					{/if}
 				</header>
 				<p class="text-sm text-surface-600-400 mb-3">
@@ -1211,7 +1211,7 @@
 						<div class="overflow-x-auto mb-3">
 							<table class="table table-compact">
 								<thead>
-									<tr><th>Node</th><th>Samples</th><th>Measured</th><th>Map</th><th>Error</th></tr>
+									<tr><th>Knoten</th><th>Messwerte</th><th>gemessen</th><th>Map</th><th>Fehler</th></tr>
 								</thead>
 								<tbody>
 									{#each a.nodes as n (n.nodeId)}
@@ -1227,14 +1227,14 @@
 							</table>
 						</div>
 						<div class="flex gap-2">
-							<button class="btn preset-filled-success-500" onclick={() => stopWalkTest(false)} disabled={wtBusy}>Finish now</button>
-							<button class="btn preset-filled-surface-500" onclick={() => stopWalkTest(true)} disabled={wtBusy}>Cancel</button>
+							<button class="btn preset-filled-success-500" onclick={() => stopWalkTest(false)} disabled={wtBusy}>jetzt beenden</button>
+							<button class="btn preset-filled-surface-500" onclick={() => stopWalkTest(true)} disabled={wtBusy}>abbrechen</button>
 						</div>
 					</div>
 				{:else}
 					{#if walkSuggestions.length > 0}
 						<div class="mb-3">
-							<p class="text-sm font-semibold mb-1">Where to measure next</p>
+							<p class="text-sm font-semibold mb-1">Wo als Nächstes messen</p>
 							<p class="text-xs text-surface-600-400 mb-2">
 								Rooms nobody has measured come first - accuracy where no one has stood is not
 								probably-fine, it is unknown. Then floors whose storey detection is weakest, then rooms
@@ -1256,7 +1256,7 @@
 					{/if}
 					<div class="flex flex-wrap items-end gap-3 mb-3">
 						<label class="label text-sm">
-							<span>Device</span>
+							<span>Gerät</span>
 							<select class="select" bind:value={wtDevice}>
 								{#each walkStatus?.devices ?? [] as d (d.id)}
 									<option value={d.id}>{d.name ?? d.id}</option>
@@ -1276,22 +1276,22 @@
 							<input class="input" type="number" step="0.1" bind:value={wtZ} />
 						</label>
 						<label class="label text-sm w-28">
-							<span>Duration (s)</span>
+							<span>Dauer (s)</span>
 							<input class="input" type="number" min="30" max="900" bind:value={wtDuration} />
 						</label>
 						<button class="btn preset-filled-primary-500" onclick={startWalkTest} disabled={wtBusy || !wtDevice || wtX == null || wtY == null || wtZ == null}>
 							Start
 						</button>
 					</div>
-					<p class="text-xs text-surface-600-400 mb-3">Place the device FIRST, then press Start. Coordinates are in map meters (same as node positions); Z is the absolute height including the floor offset.</p>
+					<p class="text-xs text-surface-600-400 mb-3">Erst das Gerät ablegen, dann Start drücken. Die Koordinaten sind Kartenmeter wie bei den Knoten; Z ist die absolute Höhe einschließlich des Etagen-Versatzes, nicht die Höhe über dieser Etage.</p>
 				{/if}
 
 				{#if (walkStatus?.points ?? []).length > 0}
-					<p class="text-sm font-semibold mb-1">Recorded points (feeding the optimizer):</p>
+					<p class="text-sm font-semibold mb-1">Aufgezeichnete Punkte (gehen in den Optimierer):</p>
 					<div class="overflow-x-auto overflow-y-auto max-h-64">
 						<table class="table table-compact">
 							<thead class="sticky top-0 bg-surface-100-900">
-								<tr><th>Point</th><th>Device</th><th>Position</th><th>Nodes</th><th>Recorded</th><th></th></tr>
+								<tr><th>Punkt</th><th>Gerät</th><th>Position</th><th>Knoten</th><th>aufgezeichnet</th><th></th></tr>
 							</thead>
 							<tbody>
 								{#each walkStatus?.points ?? [] as p (p.id)}
@@ -1302,14 +1302,14 @@
 										<td>{p.nodes.length}</td>
 										<td>{new Date(p.recordedAt).toLocaleTimeString()}</td>
 										<td>
-											<button class="btn btn-sm preset-filled-surface-500" onclick={() => deleteWalkPoint(p.id)}>Delete</button>
+											<button class="btn btn-sm preset-filled-surface-500" onclick={() => deleteWalkPoint(p.id)}>löschen</button>
 										</td>
 									</tr>
 								{/each}
 							</tbody>
 						</table>
 					</div>
-					<p class="text-xs text-surface-600-400 mt-2">Points persist across restarts. Points whose receiving node was moved afterwards are ignored automatically.</p>
+					<p class="text-xs text-surface-600-400 mt-2">Die Punkte überleben einen Neustart. Messungen, deren empfangender Knoten seither versetzt wurde, werden von selbst übergangen.</p>
 				{/if}
 			</div>
 			</section>
@@ -1322,12 +1322,12 @@
 			<!-- 3. Calibrate now -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Calibration</h2>
+					<h2 class="text-lg font-semibold">Kalibrierung</h2>
 					<button class="btn preset-filled-primary-500" onclick={calibrateNow} disabled={calibrateBusy}>
-						{calibrateBusy ? 'Triggering...' : 'Calibrate now'}
+						{calibrateBusy ? 'wird angestoßen …' : 'jetzt kalibrieren'}
 					</button>
 				</header>
-				<p class="text-sm text-surface-600-400 mb-3">Runs a fit cycle immediately instead of waiting for the next scheduled interval. Useful right after moving a node or changing its coordinates.</p>
+				<p class="text-sm text-surface-600-400 mb-3">Stößt einen Kalibrierdurchgang sofort an, statt auf das nächste Intervall zu warten. Sinnvoll direkt nach dem Versetzen eines Knotens oder einer Änderung seiner Koordinaten.</p>
 				{#if $calibration?.optimizerState}
 					<!-- Same metric order as the Nodes calibration page: RMSE, R, Best RMSE, Best R -->
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1341,11 +1341,11 @@
 						</div>
 						<div class="card p-3 preset-tonal">
 							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestRMSE?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">Best RMSE</div>
+							<div class="text-xs text-surface-600-400">bestes RMSE</div>
 						</div>
 						<div class="card p-3 preset-tonal">
 							<div class="text-xl font-bold text-success-500">{$calibration?.optimizerState?.bestR?.toFixed(3) ?? 'n/a'}</div>
-							<div class="text-xs text-surface-600-400">Best R</div>
+							<div class="text-xs text-surface-600-400">bestes R</div>
 						</div>
 					</div>
 				{/if}
@@ -1353,9 +1353,9 @@
 			<!-- 2e. Calibration sweep -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Calibration Sweep</h2>
+					<h2 class="text-lg font-semibold">Kalibrier-Durchlauf</h2>
 					<button class="btn preset-filled-primary-500" onclick={runCalibrationSweep} disabled={sweepBusy}>
-						{sweepBusy ? 'Fitting...' : 'Run'}
+						{sweepBusy ? 'rechnet …' : 'starten'}
 					</button>
 				</header>
 				<p class="text-sm text-surface-600-400 mb-3">
@@ -1386,14 +1386,14 @@
 						<table class="table table-compact">
 							<thead>
 								<tr>
-									<th>Candidate</th>
-									<th>Responding</th>
-									<th>All points</th>
-									<th>90th pct</th>
-									<th>Room</th>
-									<th>Floor</th>
-									<th>Absorption fitted</th>
-									<th>Pulled to</th>
+									<th>Kandidat</th>
+									<th>reagierend</th>
+									<th>alle Punkte</th>
+									<th>90. Perzentil</th>
+									<th>Raum</th>
+									<th>Etage</th>
+									<th>Absorption gefittet</th>
+									<th>gezogen auf</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -1405,7 +1405,7 @@
 										<td>{sweep.baseline.p90ErrorM?.toFixed(2)} m</td>
 										<td>{Math.round((sweep.baseline.roomHitRate ?? 0) * 100)}%</td>
 										<td>{Math.round((sweep.baseline.floorHitRate ?? 0) * 100)}%</td>
-										<td colspan="2">no fit performed</td>
+										<td colspan="2">kein Fit durchgeführt</td>
 									</tr>
 								{/if}
 								{#each sweep.runs as r, i (r.label)}
@@ -1437,17 +1437,17 @@
 						<code>weights.absorption_target</code> says otherwise.
 					</p>
 				{:else}
-					<p class="text-sm text-surface-600-400">Not run yet. Needs recorded walk points and nodes that currently hear each other.</p>
+					<p class="text-sm text-surface-600-400">Noch nicht gelaufen — dafür braucht es aufgezeichnete Walk-Punkte und Knoten, die sich gerade gegenseitig hören.</p>
 				{/if}
 			</div>
 			<!-- 6. Optimizer auto-tune -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Optimizer Tuning</h2>
+					<h2 class="text-lg font-semibold">Optimierer-Abgleich</h2>
 					{#if tuneState?.running}
-						<span class="badge preset-filled-primary-500">Running</span>
+						<span class="badge preset-filled-primary-500">läuft</span>
 					{:else}
-						<button class="btn preset-filled-primary-500" onclick={startAutoTune} disabled={tuneBusy}>Run auto-tune</button>
+						<button class="btn preset-filled-primary-500" onclick={startAutoTune} disabled={tuneBusy}>Abgleich starten</button>
 					{/if}
 				</header>
 				<p class="text-sm text-surface-600-400 mb-3">
@@ -1469,7 +1469,7 @@
 					<div class="overflow-x-auto">
 						<table class="table table-compact">
 							<thead>
-								<tr><th>Candidate</th><th>Holdout</th><th>Train</th><th>R</th><th>RMSE</th><th></th></tr>
+								<tr><th>Kandidat</th><th>Rückhalt</th><th>Training</th><th>R</th><th>RMSE</th><th></th></tr>
 							</thead>
 							<tbody>
 								{#if tuneState.baseline}
@@ -1479,7 +1479,7 @@
 										<td>-</td>
 										<td>{tuneState.baseline.meanHoldoutR.toFixed(3)}</td>
 										<td>{tuneState.baseline.meanHoldoutRmse.toFixed(3)}</td>
-										<td><span class="badge preset-filled-surface-500">current</span></td>
+										<td><span class="badge preset-filled-surface-500">aktuell</span></td>
 									</tr>
 								{/if}
 								{#each tuneState.results as r, i (r.candidate.key)}
@@ -1491,7 +1491,7 @@
 										<td>{r.meanHoldoutRmse.toFixed(3)}</td>
 										<td>
 											{#if !r.isCurrent}
-												<button class="btn btn-sm preset-filled-warning-500" onclick={() => applyTuneCandidate(r)}>Apply</button>
+												<button class="btn btn-sm preset-filled-warning-500" onclick={() => applyTuneCandidate(r)}>übernehmen</button>
 											{/if}
 										</td>
 									</tr>
@@ -1499,13 +1499,13 @@
 							</tbody>
 						</table>
 					</div>
-					<p class="text-xs text-surface-600-400 mt-2">Holdout = mean composite score on pairs excluded from fitting (higher is better). A big train-vs-holdout gap indicates overfitting.</p>
+					<p class="text-xs text-surface-600-400 mt-2">Rückhalt = mittlere Gesamtpunktzahl auf den Paaren, die vom Fit ausgenommen waren (höher ist besser). Klafft Training und Rückhalt weit auseinander, passt sich der Fit an Zufälligkeiten an statt an die Anlage.</p>
 				{/if}
 			</div>
 			<!-- 4. Excluded pair suggestions -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Problem Pair Suggestions</h2>
+					<h2 class="text-lg font-semibold">Auffällige Knotenpaare</h2>
 					<span class="badge {suggestions.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
 						{suggestions.length === 0 ? 'None' : suggestions.length}
 					</span>
@@ -1514,12 +1514,12 @@
 					Same-floor node pairs whose distance error stays persistently high - usually an RF obstruction (wall, appliance) between them. Pairs only appear after at least 2 hours of observation with the error above threshold most of that time, so post-move calibration transients don't trigger false suggestions; moving a node resets its pairs' statistics.
 				</p>
 				{#if suggestions.length === 0}
-					<p class="text-sm text-surface-600-400">No persistently bad pairs detected (pairs need 2h+ of consistently high error to appear here).</p>
+					<p class="text-sm text-surface-600-400">Keine dauerhaft auffälligen Paare. Ein Paar erscheint hier erst, wenn es über mehr als zwei Stunden gleichbleibend stark danebenliegt — ein einzelner Ausrutscher genügt nicht.</p>
 				{:else}
 					<div class="overflow-x-auto">
 						<table class="table table-compact">
 							<thead>
-								<tr><th>Pair</th><th>Avg error</th><th>Bad</th><th>Observed</th><th></th></tr>
+								<tr><th>Paar</th><th>mittl. Fehler</th><th>Bad</th><th>beobachtet</th><th></th></tr>
 							</thead>
 							<tbody>
 								{#each suggestions as s (s.pairId)}
@@ -1553,9 +1553,9 @@
 			<!-- 2d2. Which locators should be enabled -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Locator Selection</h2>
+					<h2 class="text-lg font-semibold">Wahl der Ortungsverfahren</h2>
 					<button class="btn preset-filled-primary-500" onclick={runLocatorSweep} disabled={locatorBusy}>
-						{locatorBusy ? 'Measuring...' : 'Measure'}
+						{locatorBusy ? 'misst …' : 'messen'}
 					</button>
 				</header>
 				<p class="text-sm text-surface-600-400 mb-3">
@@ -1582,7 +1582,7 @@
 									<p class="text-xs text-surface-600-400 mt-1">{rec.reason}</p>
 								</div>
 								{#if rec.alreadyConfigured}
-									<span class="badge preset-filled-success-500 shrink-0">already set</span>
+									<span class="badge preset-filled-success-500 shrink-0">bereits eingestellt</span>
 								{:else if rec.decidedBy === 'simplicity'}
 									<span class="badge preset-tonal shrink-0" title="Der Vorsprung ist kleiner als die Streuung der Messung selbst — umstellen wäre Unruhe ohne Gewinn">
 										nicht messbar besser
@@ -1606,7 +1606,7 @@
 					<div class="overflow-x-auto">
 						<table class="table table-compact">
 							<thead>
-								<tr><th>Combination</th><th>Right room</th><th>Right floor</th><th>Median</th><th>Points</th></tr>
+								<tr><th>Kombination</th><th>richtiger Raum</th><th>richtige Etage</th><th>Median</th><th>Punkte</th></tr>
 							</thead>
 							<tbody>
 								{#each locatorSweep.runs as r (r.label)}
@@ -1633,15 +1633,15 @@
 						since the ticks within one point are the same device standing in the same place.
 					</p>
 				{:else}
-					<p class="text-sm text-surface-600-400">Not measured yet. Needs recorded walk points.</p>
+					<p class="text-sm text-surface-600-400">Noch nicht gemessen — dafür braucht es aufgezeichnete Walk-Punkte.</p>
 				{/if}
 			</div>
 			<!-- 7. Locator tuning via walk-test replay -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Locator Tuning</h2>
+					<h2 class="text-lg font-semibold">Feinabgleich der Ortung</h2>
 					<button class="btn preset-filled-primary-500" onclick={runLocatorTune} disabled={locatorTuneBusy}>
-						{locatorTuneBusy ? 'Running...' : 'Run replay'}
+						{locatorTuneBusy ? 'läuft …' : 'Wiedergabe starten'}
 					</button>
 				</header>
 				<p class="text-sm text-surface-600-400 mb-3">
@@ -1649,7 +1649,7 @@
 				</p>
 				{#if locatorTune?.error}
 					{#if (walkStatus?.points?.filter((p) => (p.rawTicks ?? 0) > 0).length ?? 0) > 0}
-						<p class="text-sm text-surface-600-400">Walk points with raw data are available - press "Run replay".</p>
+						<p class="text-sm text-surface-600-400">Es liegen Walk-Punkte mit Rohdaten vor — auf „Wiedergabe starten“ drücken.</p>
 					{:else}
 						<p class="text-sm text-error-500">{locatorTune.error}</p>
 					{/if}
@@ -1661,7 +1661,7 @@
 					<div class="overflow-x-auto">
 						<table class="table table-compact">
 							<thead>
-								<tr><th>Candidate</th><th>Mean error</th><th>Jitter</th><th>Score</th><th>Ticks</th><th></th></tr>
+								<tr><th>Kandidat</th><th>mittlerer Fehler</th><th>Streuung</th><th>Punktzahl</th><th>Messungen</th><th></th></tr>
 							</thead>
 							<tbody>
 								{#each locatorTune.results as r, i (r.candidate.key)}
@@ -1700,7 +1700,7 @@
 			<!-- 2d. Accuracy benchmark -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Accuracy Benchmark</h2>
+					<h2 class="text-lg font-semibold">Genauigkeits-Prüfstand</h2>
 					<button class="btn btn-sm preset-tonal" onclick={runBenchmark} disabled={benchBusy}
 						title="Läuft nach jedem Optimierungsdurchgang ohnehin von selbst — dieser Knopf misst nur sofort">
 						{benchBusy ? 'misst …' : 'jetzt neu messen'}
@@ -1718,10 +1718,10 @@
 						<p class="text-sm mb-2">{b.verdict}</p>
 						<div class="flex flex-wrap gap-6 text-sm mb-3">
 							<span>Median <strong>{b.medianErrorM?.toFixed(2)} m</strong></span>
-							<span>90th pct <strong>{b.p90ErrorM?.toFixed(2)} m</strong></span>
-							<span>Right room <strong>{Math.round((b.roomHitRate ?? 0) * 100)}%</strong></span>
+							<span>90. Perzentil <strong>{b.p90ErrorM?.toFixed(2)} m</strong></span>
+							<span>richtiger Raum <strong>{Math.round((b.roomHitRate ?? 0) * 100)}%</strong></span>
 							{#if b.floorHitRate != null}
-								<span>Right floor <strong class={b.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>{Math.round(b.floorHitRate * 100)}%</strong></span>
+								<span>richtige Etage <strong class={b.floorHitRate < 0.95 ? 'text-warning-600-400' : ''}>{Math.round(b.floorHitRate * 100)}%</strong></span>
 							{/if}
 							<span class="text-surface-600-400">{b.pointsUsed} points, {b.pointsWithLevels} with signal levels</span>
 							{#if b.pointsSkipped > 0}
@@ -1731,7 +1731,7 @@
 						{#if b.floors.length > 0}
 							<div class="overflow-x-auto">
 								<table class="table table-compact">
-									<thead><tr><th>Floor</th><th>Median</th><th>Found</th><th>Ticks</th></tr></thead>
+									<thead><tr><th>Etage</th><th>Median</th><th>gefunden</th><th>Messungen</th></tr></thead>
 									<tbody>
 										{#each b.floors as f}
 											<tr>
@@ -1749,7 +1749,7 @@
 						{/if}
 						{#if (b.skipped ?? []).length > 0}
 							<div class="mt-3 p-3 rounded preset-tonal-warning">
-								<p class="text-sm font-semibold mb-1">Walk points not scored</p>
+								<p class="text-sm font-semibold mb-1">Walk-Punkte nicht bewertet</p>
 								<p class="text-xs text-surface-600-400 mb-2">
 									These were recorded but could not be measured against. Worth reading rather than
 									skipping: a point that no node on its own floor can hear is not missing data, it is
@@ -1777,13 +1777,13 @@
 						</p>
 					{/if}
 				{:else}
-					<p class="text-sm text-surface-600-400">Not run yet. Needs at least one walk test point.</p>
+					<p class="text-sm text-surface-600-400">Noch nicht gelaufen — dafür braucht es mindestens einen Walk-Punkt.</p>
 				{/if}
 			</div>
 			<!-- 2b. Measurement diagnostics: does the radio data agree with the map? -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Measurement Diagnostics</h2>
+					<h2 class="text-lg font-semibold">Diagnose der Messungen</h2>
 					{#if diagnostics}
 						<span class="badge {diagnostics.issues.length === 0 ? 'preset-filled-success-500' : 'preset-filled-warning-500'}">
 							{diagnostics.issues.length === 0 ? 'Nothing flagged' : `${diagnostics.issues.length} finding${diagnostics.issues.length === 1 ? '' : 's'}`}
@@ -1800,7 +1800,7 @@
 					{#if diagnostics.near.pairs > 0 || diagnostics.far.pairs > 0}
 						<div class="flex gap-6 text-sm mb-3">
 							<span>Under {diagnostics.nearFarSplitM} m: <strong>{diagnostics.near.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.near.pairs} pairs)</span>
-							<span>Beyond: <strong>{diagnostics.far.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.far.pairs} pairs)</span>
+							<span>darüber hinaus: <strong>{diagnostics.far.medianAbsRssiErrorDb ?? '-'} dB</strong> ({diagnostics.far.pairs} pairs)</span>
 						</div>
 					{/if}
 
@@ -1965,7 +1965,7 @@
 						<div class="overflow-x-auto mb-3">
 							<table class="table table-compact w-full text-sm">
 								<thead>
-									<tr><th>Punkt</th><th>Etage</th><th>Raum</th><th>Position</th><th class="text-right">Ticks</th><th>aufgenommen</th><th></th></tr>
+									<tr><th>Punkt</th><th>Etage</th><th>Raum</th><th>Position</th><th class="text-right">Messungen</th><th>aufgenommen</th><th></th></tr>
 								</thead>
 								<tbody>
 									{#each diagnostics.staleWalkPoints as p}
@@ -1995,14 +1995,14 @@
 					{/if}
 
 					{#if diagnostics.roomCoverage.length > 0}
-						<h3 class="font-semibold text-sm mb-2">Node coverage per room</h3>
+						<h3 class="font-semibold text-sm mb-2">Knoten-Abdeckung je Raum</h3>
 						<p class="text-xs text-surface-600-400 mb-2">
 							Measured here: spots with a node within 1.5 m averaged 1.1 m position error, spots beyond it
 							2.5 m. Distance to the third-nearest node made no difference - one node close enough is what counts.
 						</p>
 						<div class="overflow-x-auto overflow-y-auto max-h-80">
 							<table class="table table-compact">
-								<thead><tr><th>Room</th><th>Floor</th><th>Nearest node</th><th>Worst corner</th><th>In range</th></tr></thead>
+								<thead><tr><th>Raum</th><th>Etage</th><th>nächster Knoten</th><th>schlechteste Ecke</th><th>in Reichweite</th></tr></thead>
 								<tbody>
 									{#each diagnostics.roomCoverage as r}
 										<tr>
@@ -2038,25 +2038,25 @@
 			<!-- 8. Settings -->
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold">Settings</h2>
+					<h2 class="text-lg font-semibold">Einstellungen</h2>
 					<div class="flex gap-2">
-						<button class="btn preset-tonal" onclick={() => (settingsOpen = !settingsOpen)}>{settingsOpen ? 'Hide' : 'Show'}</button>
+						<button class="btn preset-tonal" onclick={() => (settingsOpen = !settingsOpen)}>{settingsOpen ? 'ausblenden' : 'anzeigen'}</button>
 						{#if settingsOpen}
-							<button class="btn preset-filled-primary-500" onclick={saveSettings} disabled={settingsBusy || !settings}>Save</button>
+							<button class="btn preset-filled-primary-500" onclick={saveSettings} disabled={settingsBusy || !settings}>speichern</button>
 						{/if}
 					</div>
 				</header>
 				{#if settingsOpen && settings}
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 						<div>
-							<h3 class="font-semibold text-sm mb-2">Optimization</h3>
+							<h3 class="font-semibold text-sm mb-2">Optimierung</h3>
 							<div class="grid grid-cols-2 gap-3">
 								<label class="label text-sm">
-									<span>Interval (s)</span>
+									<span>Intervall (s)</span>
 									<input class="input" type="number" min="15" bind:value={settings.intervalSecs} />
 								</label>
 								<label class="label text-sm">
-									<span>Snapshot window (min)</span>
+									<span>Aufnahmefenster (min)</span>
 									<input class="input" type="number" min="1" max="120" bind:value={settings.keepSnapshotMins} />
 								</label>
 								<label class="label text-sm">
@@ -2068,25 +2068,25 @@
 									<input class="input" type="number" step="0.1" bind:value={settings.limits.absorption_max} />
 								</label>
 								<label class="label text-sm">
-									<span>Absorption penalty</span>
+									<span>Absorptions-Strafterm</span>
 									<input class="input" type="number" step="0.5" bind:value={settings.weights.absorption_penalty} />
 								</label>
 								<label class="label text-sm">
-									<span>Optimizer</span>
+									<span>Optimierer</span>
 									<select class="select" bind:value={settings.optimizer}>
 										<option value="per_node_absorption">per_node_absorption</option>
 										<option value="global_absorption">global_absorption</option>
 										<option value="legacy">legacy</option>
 									</select>
 								</label>
-								<label class="label text-sm"><span>Tx ref min</span><input class="input" type="number" step="1" bind:value={settings.limits.tx_ref_rssi_min} /></label>
-								<label class="label text-sm"><span>Tx ref max</span><input class="input" type="number" step="1" bind:value={settings.limits.tx_ref_rssi_max} /></label>
-								<label class="label text-sm"><span>Rx adj min</span><input class="input" type="number" step="1" bind:value={settings.limits.rx_adj_rssi_min} /></label>
-								<label class="label text-sm"><span>Rx adj max</span><input class="input" type="number" step="1" bind:value={settings.limits.rx_adj_rssi_max} /></label>
+								<label class="label text-sm"><span>Tx-Referenz min</span><input class="input" type="number" step="1" bind:value={settings.limits.tx_ref_rssi_min} /></label>
+								<label class="label text-sm"><span>Tx-Referenz max</span><input class="input" type="number" step="1" bind:value={settings.limits.tx_ref_rssi_max} /></label>
+								<label class="label text-sm"><span>Rx-Korrektur min</span><input class="input" type="number" step="1" bind:value={settings.limits.rx_adj_rssi_min} /></label>
+								<label class="label text-sm"><span>Rx-Korrektur max</span><input class="input" type="number" step="1" bind:value={settings.limits.rx_adj_rssi_max} /></label>
 							</div>
 						</div>
 						<div>
-							<h3 class="font-semibold text-sm mb-2">Locators</h3>
+							<h3 class="font-semibold text-sm mb-2">Ortungsverfahren</h3>
 							<div class="space-y-2">
 								<div class="flex items-center gap-3">
 									<input type="checkbox" class="checkbox" bind:checked={settings.nadarayaWatsonEnabled} id="nw-en" />
@@ -2125,28 +2125,28 @@
 					</div>
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
 						<div>
-							<h3 class="font-semibold text-sm mb-2">General</h3>
+							<h3 class="font-semibold text-sm mb-2">Allgemein</h3>
 							<div class="grid grid-cols-2 gap-3">
-								<label class="label text-sm"><span>Timeout (s)</span><input class="input" type="number" min="5" bind:value={settings.timeout} /></label>
-								<label class="label text-sm"><span>Away timeout (s)</span><input class="input" type="number" min="10" bind:value={settings.awayTimeout} /></label>
-								<label class="label text-sm"><span>Device retention</span><input class="input" placeholder="30d" bind:value={settings.deviceRetention} /></label>
+								<label class="label text-sm"><span>Zeitgrenze (s)</span><input class="input" type="number" min="5" bind:value={settings.timeout} /></label>
+								<label class="label text-sm"><span>Abwesenheits-Zeitgrenze (s)</span><input class="input" type="number" min="10" bind:value={settings.awayTimeout} /></label>
+								<label class="label text-sm"><span>Geräte-Aufbewahrung</span><input class="input" placeholder="30d" bind:value={settings.deviceRetention} /></label>
 							</div>
-							<h3 class="font-semibold text-sm mb-2 mt-4">Filtering (Kalman)</h3>
+							<h3 class="font-semibold text-sm mb-2 mt-4">Filterung (Kalman)</h3>
 							<div class="grid grid-cols-2 gap-3">
-								<label class="label text-sm"><span>Process noise</span><input class="input" type="number" step="0.001" bind:value={settings.filteringProcessNoise} /></label>
-								<label class="label text-sm"><span>Measurement noise</span><input class="input" type="number" step="0.01" bind:value={settings.filteringMeasurementNoise} /></label>
-								<label class="label text-sm"><span>Max velocity (m/s)</span><input class="input" type="number" step="0.1" bind:value={settings.filteringMaxVelocity} /></label>
-								<label class="label text-sm"><span>Smoothing weight</span><input class="input" type="number" step="0.05" min="0" max="1" bind:value={settings.filteringSmoothingWeight} /></label>
-								<label class="label text-sm"><span>Motion sigma</span><input class="input" type="number" step="0.1" bind:value={settings.filteringMotionSigma} /></label>
+								<label class="label text-sm"><span>Prozessrauschen</span><input class="input" type="number" step="0.001" bind:value={settings.filteringProcessNoise} /></label>
+								<label class="label text-sm"><span>Messrauschen</span><input class="input" type="number" step="0.01" bind:value={settings.filteringMeasurementNoise} /></label>
+								<label class="label text-sm"><span>Höchstgeschwindigkeit (m/s)</span><input class="input" type="number" step="0.1" bind:value={settings.filteringMaxVelocity} /></label>
+								<label class="label text-sm"><span>Glättungsgewicht</span><input class="input" type="number" step="0.05" min="0" max="1" bind:value={settings.filteringSmoothingWeight} /></label>
+								<label class="label text-sm"><span>Bewegungs-Sigma</span><input class="input" type="number" step="0.1" bind:value={settings.filteringMotionSigma} /></label>
 							</div>
-							<h3 class="font-semibold text-sm mb-2 mt-4">History</h3>
+							<h3 class="font-semibold text-sm mb-2 mt-4">Verlauf</h3>
 							<div class="space-y-2">
 								<div class="flex items-center gap-3">
 									<input type="checkbox" class="checkbox" bind:checked={settings.historyEnabled} id="hist-en" />
-									<label for="hist-en" class="text-sm">enabled</label>
+									<label for="hist-en" class="text-sm">eingeschaltet</label>
 								</div>
 								<label class="label text-sm"><span>DB</span><input class="input" bind:value={settings.historyDb} /></label>
-								<label class="label text-sm"><span>Expire after</span><input class="input" placeholder="24h" bind:value={settings.historyExpireAfter} /></label>
+								<label class="label text-sm"><span>verfällt nach</span><input class="input" placeholder="24h" bind:value={settings.historyExpireAfter} /></label>
 							</div>
 						</div>
 						<div>
@@ -2157,29 +2157,29 @@
 									<span class="flex items-center gap-2"><input type="checkbox" class="checkbox" bind:checked={settings.mapFlipY} id="map-fy" /><label for="map-fy" class="text-sm">flip_y</label></span>
 								</div>
 								<div class="grid grid-cols-3 gap-3">
-									<label class="label text-sm"><span>Wall thickness</span><input class="input" type="number" step="0.05" bind:value={settings.mapWallThickness} /></label>
-									<label class="label text-sm"><span>Wall color</span><input class="input" placeholder="#888888" bind:value={settings.mapWallColor} /></label>
-									<label class="label text-sm"><span>Wall opacity</span><input class="input" type="number" step="0.05" min="0" max="1" bind:value={settings.mapWallOpacity} /></label>
+									<label class="label text-sm"><span>Wandstärke</span><input class="input" type="number" step="0.05" bind:value={settings.mapWallThickness} /></label>
+									<label class="label text-sm"><span>Wandfarbe</span><input class="input" placeholder="#888888" bind:value={settings.mapWallColor} /></label>
+									<label class="label text-sm"><span>Wand-Deckkraft</span><input class="input" type="number" step="0.05" min="0" max="1" bind:value={settings.mapWallOpacity} /></label>
 								</div>
 							</div>
 							<h3 class="font-semibold text-sm mb-2 mt-4">GPS</h3>
 							<div class="grid grid-cols-2 gap-3">
-								<label class="label text-sm"><span>Latitude</span><input class="input" type="number" step="0.000001" bind:value={settings.gpsLatitude} /></label>
-								<label class="label text-sm"><span>Longitude</span><input class="input" type="number" step="0.000001" bind:value={settings.gpsLongitude} /></label>
-								<label class="label text-sm"><span>Elevation (m)</span><input class="input" type="number" step="0.1" bind:value={settings.gpsElevation} /></label>
-								<label class="label text-sm"><span>Rotation (°)</span><input class="input" type="number" step="0.1" bind:value={settings.gpsRotation} /></label>
+								<label class="label text-sm"><span>Breitengrad</span><input class="input" type="number" step="0.000001" bind:value={settings.gpsLatitude} /></label>
+								<label class="label text-sm"><span>Längengrad</span><input class="input" type="number" step="0.000001" bind:value={settings.gpsLongitude} /></label>
+								<label class="label text-sm"><span>Höhe (m)</span><input class="input" type="number" step="0.1" bind:value={settings.gpsElevation} /></label>
+								<label class="label text-sm"><span>Drehung (°)</span><input class="input" type="number" step="0.1" bind:value={settings.gpsRotation} /></label>
 							</div>
 							<div class="flex items-center gap-3 mt-2">
 								<input type="checkbox" class="checkbox" bind:checked={settings.gpsReport} id="gps-rep" />
-								<label for="gps-rep" class="text-sm">report GPS position</label>
+								<label for="gps-rep" class="text-sm">GPS-Position melden</label>
 							</div>
 							<h3 class="font-semibold text-sm mb-2 mt-4">MQTT</h3>
-							<p class="text-xs text-surface-600-400 mb-1">Leave host empty to use the Supervisor-provided broker (HA add-on default).</p>
+							<p class="text-xs text-surface-600-400 mb-1">Host leer lassen, um den vom Supervisor bereitgestellten Broker zu benutzen — die Vorgabe für HA-Apps.</p>
 							<div class="grid grid-cols-2 gap-3">
 								<label class="label text-sm"><span>Host</span><input class="input" bind:value={settings.mqttHost} /></label>
 								<label class="label text-sm"><span>Port</span><input class="input" type="number" bind:value={settings.mqttPort} /></label>
-								<label class="label text-sm"><span>Username</span><input class="input" bind:value={settings.mqttUsername} /></label>
-								<label class="label text-sm"><span>Password</span><input class="input" type="password" bind:value={settings.mqttPassword} /></label>
+								<label class="label text-sm"><span>Benutzer</span><input class="input" bind:value={settings.mqttUsername} /></label>
+								<label class="label text-sm"><span>Passwort</span><input class="input" type="password" bind:value={settings.mqttPassword} /></label>
 							</div>
 							<div class="flex items-center gap-3 mt-2">
 								<input type="checkbox" class="checkbox" bind:checked={settings.mqttSsl} id="mqtt-ssl" />
@@ -2187,7 +2187,7 @@
 							</div>
 						</div>
 					</div>
-					<p class="text-xs text-surface-600-400 mt-3">Writes these config.yaml sections directly - changes apply within a few seconds (config is polled), no restart needed. Changing MQTT to a wrong broker disconnects the companion from the fleet - the Supervisor default is usually right. correlation/rmse weights and floor assignments are deliberately not exposed here.</p>
+					<p class="text-xs text-surface-600-400 mt-3">Schreibt unmittelbar in die genannten Abschnitte der config.yaml. Änderungen greifen nach wenigen Sekunden, ein Neustart ist nicht nötig. ⚠ Ein falscher MQTT-Broker trennt den Companion von der gesamten Flotte — die Supervisor-Vorgabe stimmt fast immer. Die Gewichte für Korrelation und RMSE sowie die Etagen-Zuordnung stehen hier bewusst nicht: dort richtet ein Zahlendreher mehr Schaden an, als die Bequemlichkeit wert wäre.</p>
 				{/if}
 			</div>
 			</section>

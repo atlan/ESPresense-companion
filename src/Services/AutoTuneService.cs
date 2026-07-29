@@ -320,20 +320,20 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
                 var se = best.CompositeStandardError;
 
                 if (best.IsCurrent)
-                    recommendation = "The currently configured optimizer/penalty is already the best candidate - no change needed.";
+                    recommendation = "Der eingestellte Optimierer samt Strafterm ist bereits der beste Kandidat — nichts zu ändern.";
                 else if (double.IsNaN(baselineScore))
-                    recommendation = $"Best on held-out data: {best.Candidate.Label} (composite {best.MeanHoldoutComposite:0.000}) - " +
-                                     "no baseline to compare against.";
+                    recommendation = $"Bester Wert auf zurückgehaltenen Daten: {best.Candidate.Label} (Gesamtpunktzahl " +
+                                     $"{best.MeanHoldoutComposite:0.000}) — es gibt keinen Ausgangswert zum Vergleichen.";
                 else if (!PointUncertainty.BeatsMeasurably(best.MeanHoldoutComposite, baselineScore, se))
                     // ★ Vorher entschied hier die feste Zahl 0,005, die aus nichts folgte. Jetzt
                     // die Streuung, die der Hold-out selbst zeigt.
-                    recommendation = $"Nothing measurably better. '{best.Candidate.Label}' reaches composite " +
-                                     $"{best.MeanHoldoutComposite:0.000} against {baselineScore:0.000} today, and the scatter " +
-                                     $"across the {best.Folds} hold-out folds is ±{se:0.000} - that gap could be noise.";
+                    recommendation = $"Nichts messbar Besseres. „{best.Candidate.Label}“ erreicht {best.MeanHoldoutComposite:0.000} " +
+                                     $"gegen heute {baselineScore:0.000}, und die Streuung über die {best.Folds} " +
+                                     $"zurückgehaltenen Faltungen beträgt ±{se:0.000} — dieser Abstand kann Rauschen sein.";
                 else
-                    recommendation = $"'{best.Candidate.Label}' beats the running settings by more than the hold-out's own scatter: " +
-                                     $"composite {best.MeanHoldoutComposite:0.000} against {baselineScore:0.000} (±{se:0.000} across " +
-                                     $"{best.Folds} folds). " +
+                    recommendation = $"„{best.Candidate.Label}“ schlägt die laufende Einstellung um mehr als die Streuung des Rückhalts: " +
+                                     $"{best.MeanHoldoutComposite:0.000} gegen {baselineScore:0.000} (±{se:0.000} über " +
+                                     $"{best.Folds} Faltungen). " +
                                      // ⚠ NICHT automatisch anwenden, und zwar aus einem gemessenen Grund:
                                      // engere Absorptionsgrenzen ziehen bestehende Kalibrierungen NICHT
                                      // nachtraeglich in den erlaubten Bereich. Am 27.07.2026 live
@@ -342,9 +342,10 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
                                      // der neuen Grenzen. Eine automatische Umstellung koennte die Anlage
                                      // so in einen Zustand bringen, aus dem sie sich nicht selbst
                                      // herausoptimiert.
-                                     "Applying this stays manual: changing absorption limits does not pull existing " +
-                                     "calibrations back inside them - measured on 2026-07-27, values stayed at 4.4 outside " +
-                                     "new limits of 2.0..3.0 while every candidate got rejected.";
+                                     "Das Übernehmen bleibt trotzdem Handarbeit: geänderte Absorptionsgrenzen ziehen bestehende " +
+                                     "Kalibrierungen NICHT nachträglich in den erlaubten Bereich. Am 27.07.2026 gemessen — " +
+                                     "die Werte blieben bei 4,4 außerhalb neuer Grenzen von 2,0..3,0, während jeder Kandidat " +
+                                     "abgelehnt wurde.";
             }
 
             Finish(recommendation: recommendation);

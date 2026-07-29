@@ -224,7 +224,7 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
 
             if (results.Count == 0)
             {
-                result.Error = "No candidate produced estimates - are the walk points on floors with at least 3 nodes hearing the device?";
+                result.Error = "Kein Kandidat lieferte eine Schätzung. Liegen die Walk-Punkte auf Etagen, auf denen mindestens drei Knoten das Gerät hören?";
                 _last = result;
                 return result;
             }
@@ -247,17 +247,17 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
             result.ScoreStandardError = se;
 
             if (current == null)
-                result.Recommendation = $"Best on walk-test replay: {best.Candidate.Label} - mean error {best.MeanErrorM:0.00}m, " +
-                                        $"jitter {best.MeanJitterM:0.00}m. The running setting is not among the candidates.";
+                result.Recommendation = $"Bester Wert in der Wiedergabe: {best.Candidate.Label} — mittlerer Fehler {best.MeanErrorM:0.00} m, " +
+                                        $"Streuung {best.MeanJitterM:0.00} m. Die laufende Einstellung ist nicht unter den Kandidaten.";
             else if (!result.BeatsCurrentMeasurably)
-                result.Recommendation = $"Nothing measurably better than the running setting. '{best.Candidate.Label}' scores " +
-                                        $"{best.Score:0.000} against {current.Score:0.000}, and the scatter of the measurement " +
-                                        $"itself across {best.Points} walk points is ±{se:0.000} - so that gap could be noise. " +
-                                        "Changing on this evidence would be churn, not progress.";
+                result.Recommendation = $"Nichts messbar Besseres als die laufende Einstellung. „{best.Candidate.Label}“ kommt auf " +
+                                        $"{best.Score:0.000} gegen {current.Score:0.000}, und die Streuung der Messung selbst " +
+                                        $"über {best.Points} Walk-Punkte beträgt ±{se:0.000} — dieser Abstand kann also Rauschen " +
+                                        "sein. Auf diese Grundlage hin umzustellen wäre Unruhe, kein Fortschritt.";
             else
-                result.Recommendation = $"'{best.Candidate.Label}' beats the running setting by more than the measurement's own " +
-                                        $"scatter: score {best.Score:0.000} against {current.Score:0.000} (±{se:0.000} across " +
-                                        $"{best.Points} walk points), mean error {best.MeanErrorM:0.00} m against " +
+                result.Recommendation = $"„{best.Candidate.Label}“ schlägt die laufende Einstellung um mehr als die Streuung der Messung: " +
+                                        $"{best.Score:0.000} gegen {current.Score:0.000} (±{se:0.000} über {best.Points} " +
+                                        $"Walk-Punkte), mittlerer Fehler {best.MeanErrorM:0.00} m gegen " +
                                         $"{current.MeanErrorM:0.00} m.";
 
             Log.Information("Locator tune: {Count} candidates over {Points} points, best={Best}",
