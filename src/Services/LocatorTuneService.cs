@@ -126,7 +126,17 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                     var truthRoom = SpatialUtils.FindRoomContaining(truth, truthFloor);
                     var estimates = new List<Point3D>();
 
-                    var stillgelegt = point.DisabledNodeIds();
+                    // ⚠ Stillgelegte Messungen werden hier BEWUSST NICHT gefiltert.
+                    //
+                    // Stilllegen heisst "taugt nicht zum KALIBRIEREN" - nicht "gibt es nicht".
+                    // Live hoert der Knoten das Geraet trotzdem, und der Locator bekommt den Wert.
+                    // Wer ihn im Pruefstand wegnimmt, misst ein System mit weniger Knoten als das
+                    // echte und meldet eine Genauigkeit, die es so nie geben wird - dieselbe Falle
+                    // wie der Benchmark ohne Overrides am 27.07., der den Mitschnitt statt der
+                    // Anlage mass.
+                    //
+                    // Der Fit (GetExtraMeasures, WalkPointAbsorptionOptimizer, die Melder) filtert
+                    // sehr wohl: dort ist die Frage, welche Messung die Kalibrierung bestimmen darf.
                     foreach (var tickGroup in point.Raw.GroupBy(r => r.T))
                     {
                         // KEIN Etagen-Vorfilter mehr: live kennt das System die Etage nicht, sie ist
@@ -134,7 +144,6 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                         var heard = new List<(Node node, double dist, double? var)>();
                         foreach (var entry in tickGroup)
                         {
-                            if (stillgelegt.Contains(entry.N)) continue;
                             if (!state.Nodes.TryGetValue(entry.N, out var node) || !node.HasLocation) continue;
                             if (entry.D <= 0) continue;
                             heard.Add((node, entry.D, entry.V));
