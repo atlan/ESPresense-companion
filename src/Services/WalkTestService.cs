@@ -283,7 +283,11 @@ public class WalkTestService
                 floorId = p.FloorId,
                 recordedAt = p.RecordedAt,
                 nodes = p.Nodes,
+                // Beides: was aufgezeichnet wurde und was heute daraus folgt. Weichen sie
+                // auseinander, ist die Aufnahme aelter als die aktuelle Kalibrierung - das
+                // soll man sehen koennen, statt es zu verstecken.
                 txRefRssiEstimate = p.TxRefRssiEstimate,
+                txRefRssiCurrent = CurrentTxRefEstimate(p),
                 rawTicks = p.Raw.Count
             }).ToList(),
             defaultDurationSecs = DefaultDurationSecs
@@ -480,6 +484,47 @@ public class WalkTestService
     /// <summary>All recorded points including raw tick data - for the locator replay.</summary>
     public List<WalkTestPoint> GetPoints() => _points.Values.ToList();
 
+    /// <summary>
+    /// Referenzpegel des Beacons fuer diesen Punkt, aus den HEUTIGEN Absorptionen gerechnet.
+    ///
+    /// ★★★ Warum nicht der gespeicherte Wert: TxRefRssiEstimate entsteht beim Aufzeichnen aus
+    /// der Kalibrierung, die DAMALS galt, und friert dann ein. Die Absorptionen wandern aber
+    /// weiter - und weil der Wert als rssiShift = -59 - Schaetzung in JEDE Auswertung eingeht,
+    /// verschiebt ein veralteter Wert die ganze Aufnahme.
+    ///
+    /// ⚠ Am Bestand gemessen (29.07.2026): die gespeicherten Schaetzungen von vier Aufnahmen
+    /// AM SELBEN ORT spannen 8,5 dB (wt3 -76,2 gegen wt16/23/24 rund -68). Neu gerechnet mit
+    /// einheitlicher Absorption sind es 1,6 dB. Roh gemessen liegt wt3 nur 2,0 dB neben den
+    /// anderen - erst die veraltete Schaetzung hebt es um 6,5 dB an und macht daraus einen
+    /// "unvereinbaren Widerspruch". Beinahe haette das zum Loeschen einer voellig intakten
+    /// Aufnahme gefuehrt. Derselbe Fehlertyp wie das eingefrorene Walk-Punkt-Gate vom 27.07.
+    ///
+    /// Rueckfall auf den gespeicherten Wert nur, wenn zu wenige Knoten fuer eine neue
+    /// Schaetzung taugen - ein alter Wert ist immer noch besser als gar keiner.
+    /// </summary>
+    public double? CurrentTxRefEstimate(WalkTestPoint p)
+    {
+        var schaetzungen = new List<double>();
+        foreach (var agg in p.Nodes)
+        {
+            if (agg.Disabled) continue;
+            if (agg.MapDistance < 0.5) continue;
+            if (!state.Nodes.TryGetValue(agg.NodeId, out var node)) continue;
+            if (p.FloorId != null && !(node.Floors?.Any(f => string.Equals(f.Id, p.FloorId, StringComparison.OrdinalIgnoreCase)) ?? false)) continue;
+            var absorption = nodeSettings.Get(agg.NodeId)?.Calibration?.Absorption ?? 2.7;
+            schaetzungen.Add(agg.MedianRssi + 10 * absorption * Math.Log10(agg.MapDistance));
+        }
+        return schaetzungen.Count >= 2 ? Median(schaetzungen) : p.TxRefRssiEstimate;
+    }
+
+    /// <summary>
+    /// Die Verschiebung, mit der die Pegel dieses Punkts auf den -59-Bezug gebracht werden,
+    /// den Evaluate()/der Fit fuer unbekannte Sender ansetzen. EINE Stelle, damit nicht der
+    /// eine Verbraucher die frische und der andere die eingefrorene Schaetzung benutzt.
+    /// </summary>
+    public double RssiShiftFor(WalkTestPoint p) =>
+        CurrentTxRefEstimate(p) is { } est ? DefaultTxRefRssi - est : 0;
+
     private readonly object _persistLock = new();
 
     /// <summary>Von aussen anstossbar, wenn jemand Aggregate veraendert hat (Stilllegen).</summary>
@@ -541,7 +586,7 @@ public class WalkTestService
             // default that Evaluate()/the fit use for unknown transmitters (the log-distance model
             // is linear in txRefRssi, so a constant RSSI shift is exactly equivalent). Without
             // this, baseline evaluation would apply a large constant error to every walk measure.
-            var rssiShift = point.TxRefRssiEstimate.HasValue ? DefaultTxRefRssi - point.TxRefRssiEstimate.Value : 0;
+            var rssiShift = RssiShiftFor(point);
             foreach (var agg in point.Nodes)
             {
                 if (agg.Disabled) continue;

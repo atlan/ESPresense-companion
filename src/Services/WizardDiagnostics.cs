@@ -463,8 +463,11 @@ public class WizardDiagnostics(
             var dist = Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2) + Math.Pow(a.Z - b.Z, 2));
             if (dist > SamePlaceRadiusM) continue;
 
-            var shiftA = a.TxRefRssiEstimate.HasValue ? WalkTestService.DefaultTxRefRssi - a.TxRefRssiEstimate.Value : 0;
-            var shiftB = b.TxRefRssiEstimate.HasValue ? WalkTestService.DefaultTxRefRssi - b.TxRefRssiEstimate.Value : 0;
+            // ⚠ Frisch gerechnet, NICHT die gespeicherte Schaetzung: die friert die Kalibrierung
+            // vom Aufnahmetag ein, und ein veralteter Wert verschiebt die ganze Aufnahme. Genau so
+            // erschien wt3 hier als "unvereinbar", obwohl es roh nur 2,0 dB neben den anderen lag.
+            var shiftA = walkTest.RssiShiftFor(a);
+            var shiftB = walkTest.RssiShiftFor(b);
 
             var deltas = new List<double>();
             var geoms = new List<double>();
