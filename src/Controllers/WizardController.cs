@@ -26,6 +26,7 @@ public class WizardController(
     WalkTestService walkTest,
     WalkPointHygiene hygiene,
     NextActions nextActions,
+    AutoApply autoApply,
     AutoTuneService autoTune,
     LocatorTuneService locatorTune) : ControllerBase
 {
@@ -51,6 +52,17 @@ public class WizardController(
     /// </summary>
     [HttpGet("api/wizard/next-actions")]
     public IActionResult GetNextActions() => Ok(nextActions.Compute());
+
+    /// <summary>
+    /// Was der Assistent von selbst umgestellt hat, mit Begruendung — und der Weg zurueck.
+    /// Er aendert damit, was das HAUS tut; das darf nicht unsichtbar geschehen.
+    /// </summary>
+    [HttpGet("api/wizard/auto-applied")]
+    public IActionResult AutoApplied() => Ok(autoApply.History);
+
+    [HttpPost("api/wizard/auto-applied/{id}/undo")]
+    public async Task<IActionResult> UndoAutoApplied(string id) =>
+        await autoApply.Undo(id) ? Ok(new { ok = true }) : NotFound(new { error = "Nicht gefunden oder schon zurueckgenommen" });
 
     [HttpGet("api/wizard/diagnostics")]
     public WizardDiagnosticsResult GetDiagnostics()

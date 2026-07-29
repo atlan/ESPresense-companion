@@ -22,6 +22,27 @@
 	}
 	let todo: { status?: SystemStatus | null; actions: NextAction[] } | null = null;
 
+	interface AppliedChange {
+		id: string; at: string; undoneAt?: string | null;
+		title: string; reason: string; before: string[]; after: string[];
+		roomHitRate?: number | null; medianErrorM?: number | null;
+	}
+	let selbstGetan: AppliedChange[] = [];
+
+	async function umstellungZuruecknehmen(id: string) {
+		const ok = await showConfirm({
+			title: 'Umstellung zurücknehmen',
+			body: 'Die vorherige Einstellung wieder herstellen? Das Ortungsverhalten ändert sich sofort.'
+		});
+		if (!ok) return;
+		const res = await fetch(apiPath(`/api/wizard/auto-applied/${encodeURIComponent(id)}/undo`), { method: 'POST' });
+		toastStore.trigger({
+			message: res.ok ? 'Zurückgenommen' : 'Fehlgeschlagen',
+			background: res.ok ? 'preset-filled-success-500' : 'preset-filled-error-500'
+		});
+		if (res.ok) await fetchAll();
+	}
+
 	// Der Rest der Seite ist eingeklappt. Wer die Werkzeuge sucht, findet sie — aber die Seite
 	// beantwortet zuerst die Frage, mit der man kommt: was muss ich tun.
 	let zeigeDetails = false;
@@ -244,6 +265,7 @@
 			medianErrorM?: number;
 			floorHitRate?: number;
 			alreadyConfigured: boolean;
+			decidedBy: string;
 		};
 		runs: LocatorRun[];
 	}
@@ -458,7 +480,7 @@
 
 	async function fetchAll() {
 		try {
-			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes, offRes, naRes] = await Promise.all([
+			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes, offRes, naRes, aaRes] = await Promise.all([
 				fetch(apiPath('/api/wizard/validation')),
 				fetch(apiPath('/api/wizard/health')),
 				fetch(apiPath('/api/wizard/excluded-pairs/suggestions')),
@@ -468,6 +490,7 @@
 				fetch(apiPath('/api/wizard/benchmark')),
 				fetch(apiPath('/api/wizard/walktest/disabled')),
 				fetch(apiPath('/api/wizard/next-actions')),
+				fetch(apiPath('/api/wizard/auto-applied')),
 			]);
 			if (vRes.ok) validation = await vRes.json();
 			if (hRes.ok) health = await hRes.json();
@@ -489,6 +512,7 @@
 			if (bRes.ok) benchmark = await bRes.json();
 			if (offRes.ok) stillgelegt = await offRes.json();
 			if (naRes.ok) todo = await naRes.json();
+			if (aaRes.ok) selbstGetan = await aaRes.json();
 		} catch (error) {
 			console.error('Error fetching wizard data:', error);
 		} finally {
@@ -1033,6 +1057,36 @@
 				{/if}
 			</div>
 
+			{#if selbstGetan.filter((c) => !c.undoneAt).length > 0}
+				<div class="card p-4">
+					<h2 class="text-lg font-semibold mb-1">Was der Assistent selbst umgestellt hat</h2>
+					<p class="text-xs text-surface-600-400 mb-3">
+						Diese Entscheidungen sind reine Messfragen — du könntest nur die oberste Zeile einer
+						Rangliste anklicken. Umgestellt wird nur, wenn der Vorsprung größer ist als die
+						Streuung der Messung selbst; wo nichts messbar trennt, bleibt alles wie es ist.
+						Jede Umstellung lässt sich zurücknehmen.
+					</p>
+					<ul class="space-y-3">
+						{#each selbstGetan.filter((c) => !c.undoneAt) as c}
+							<li class="border-l-4 border-success-500 pl-3">
+								<div class="flex items-start justify-between gap-3 flex-wrap">
+									<div>
+										<strong>{c.title}</strong>
+										<span class="text-xs text-surface-600-400">— {new Date(c.at).toLocaleString()}</span>
+									</div>
+									<button type="button" class="btn btn-sm preset-tonal"
+										onclick={() => umstellungZuruecknehmen(c.id)}>zurücknehmen</button>
+								</div>
+								<p class="text-sm mt-1">{c.reason}</p>
+								<p class="text-xs text-surface-600-400 mt-1">
+									vorher: {c.before.join(' + ') || '—'} → jetzt: {c.after.join(' + ')}
+								</p>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
+
 			<!-- ══ Alles Weitere: eingeklappt ══ -->
 			<button type="button" class="btn preset-tonal w-full justify-between"
 				onclick={() => (zeigeDetails = !zeigeDetails)}>
@@ -1507,6 +1561,11 @@
 					{#if locatorSweep.recommendation}
 						{@const rec = locatorSweep.recommendation}
 						<div class="p-3 rounded preset-tonal-primary mb-3">
+							<p class="text-xs text-surface-600-400 mb-2">
+								Diese Wahl trifft der Assistent selbst — nach jedem Optimierungsdurchgang, und nur
+								wenn der Vorsprung größer ist als die Streuung der Messung. Was er umgestellt hat,
+								steht oben auf der Seite und lässt sich dort zurücknehmen.
+							</p>
 							<div class="flex items-start justify-between gap-3">
 								<div>
 									<p class="text-sm font-semibold">Recommended: {rec.label}</p>
@@ -1514,10 +1573,15 @@
 								</div>
 								{#if rec.alreadyConfigured}
 									<span class="badge preset-filled-success-500 shrink-0">already set</span>
+								{:else if rec.decidedBy === 'simplicity'}
+									<span class="badge preset-tonal shrink-0" title="Der Vorsprung ist kleiner als die Streuung der Messung selbst — umstellen wäre Unruhe ohne Gewinn">
+										nicht messbar besser
+									</span>
 								{:else}
-									<button class="btn btn-sm preset-filled-primary-500 shrink-0"
-										onclick={() => applyLocatorChoice(rec.locators)} disabled={locatorBusy}>
-										Apply
+									<button class="btn btn-sm preset-tonal shrink-0"
+										onclick={() => applyLocatorChoice(rec.locators)} disabled={locatorBusy}
+										title="Der Assistent stellt das ohnehin beim nächsten Optimierungsdurchgang selbst um — dieser Knopf nimmt es nur vorweg">
+										jetzt schon umstellen
 									</button>
 								{/if}
 							</div>

@@ -22,6 +22,7 @@ public class OptimizationRunner : BackgroundService
     private readonly PairErrorTracker _pairErrorTracker;
     private readonly WalkTestService _walkTest;
     private readonly CalibrationBenchmark _benchmark;
+    private readonly AutoApply? _autoApply;
 
     // "Calibrate now" support: TriggerNow() completes the current TCS (waking whichever
     // InterruptibleDelay is pending) and opens a short skip window so ALL remaining delays in a
@@ -29,9 +30,10 @@ public class OptimizationRunner : BackgroundService
     private volatile TaskCompletionSource _triggerNow = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private DateTime _skipDelaysUntil = DateTime.MinValue;
 
-    public OptimizationRunner(State state, NodeSettingsStore nsd, ILogger<OptimizationRunner> logger, ConfigLoader cfg, ILeaseService leaseService, PairErrorTracker pairErrorTracker, WalkTestService walkTest, CalibrationBenchmark benchmark)
+    public OptimizationRunner(State state, NodeSettingsStore nsd, ILogger<OptimizationRunner> logger, ConfigLoader cfg, ILeaseService leaseService, PairErrorTracker pairErrorTracker, WalkTestService walkTest, CalibrationBenchmark benchmark, AutoApply? autoApply = null)
     {
         _benchmark = benchmark;
+        _autoApply = autoApply;
         _state = state;
         _nsd = nsd;
         _logger = logger;
@@ -176,6 +178,12 @@ public class OptimizationRunner : BackgroundService
                     try
                     {
                         _benchmark.Run(label: "auto", overrides: _benchmark.CurrentCalibrationOverrides());
+
+                        // Und pruefen, ob eine andere Locator-Kombination MESSBAR besser waere.
+                        // Umgestellt wird nur, wenn der Vorsprung groesser ist als die eigene
+                        // Streuung der Messung - siehe AutoApply. Alles protokolliert und
+                        // ruecknehmbar; der Benutzer soll keine Rangliste anklicken muessen.
+                        if (_autoApply != null) await _autoApply.RunLocatorChoice(DateTime.UtcNow);
                     }
                     catch (Exception ex)
                     {

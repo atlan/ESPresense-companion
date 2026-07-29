@@ -95,6 +95,10 @@ builder.Services.AddSingleton<DeviceIdentityTracker>();
 builder.Services.AddSingleton<WizardDiagnostics>();
 builder.Services.AddSingleton<WalkPointHygiene>();
 builder.Services.AddSingleton<NextActions>();
+builder.Services.AddSingleton(sp => new AutoApply(
+    sp.GetRequiredService<LocatorSweepService>(),
+    sp.GetRequiredService<ConfigLoader>(),
+    Path.Combine(storageDir, "auto-applied.json")));
 builder.Services.AddSingleton<WalkPointPlanner>();
 builder.Services.AddSingleton<CalibrationSweepService>();
 builder.Services.AddSingleton<LocatorSweepService>();
