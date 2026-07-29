@@ -42,11 +42,18 @@ export function gotoMap() {
  * Assistant neu und landet auf dessen Startseite statt auf der Karte. Genau das ist beim ersten
  * Versuch passiert.
  */
-export function gotoMapSpot(floorId: string | null | undefined, x: number, y: number) {
+// z ist OPTIONAL, aber wichtig: die Karte selbst ist zweidimensional, doch wer den
+// Punkt von dort in das Walk-Test-Formular uebernimmt, braucht die Hoehe. z ist die
+// ABSOLUTE Gebaeudehoehe und streut INNERHALB einer Etage um ~1,5 m - ein Vorgabewert
+// waere geraten, und man liefe den Punkt in der falschen Hoehe nach.
+export function gotoMapSpot(floorId: string | null | undefined, x: number, y: number, z?: number) {
 	const q = new URLSearchParams();
 	if (floorId) q.set('floor', floorId);
 	q.set('x', String(x));
 	q.set('y', String(y));
+	if (z !== undefined && z !== null) q.set('z', String(z));
+	// Kein rohes href: unter HA-Ingress liegt die App hinter einem Praefix, ein
+	// absoluter Pfad wuerde HA neu laden statt in der App zu bleiben.
 	goto(`${resolve('/')}?${q}`);
 }
 

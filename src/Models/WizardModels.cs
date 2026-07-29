@@ -100,6 +100,9 @@ public class WizardDiagnosticsResult
     /// </summary>
     public List<StaleWalkPoint> StaleWalkPoints { get; set; } = new();
 
+    /// <summary>Doppel-Aufnahmen, die sich widersprechen - siehe ConflictingWalkPair.</summary>
+    public List<ConflictingWalkPair> ConflictingWalkPairs { get; set; } = new();
+
     /// <summary>Device ids that belong to the same hardware address.</summary>
     public List<SplitIdentityInfo> SplitIdentities { get; set; } = new();
 
@@ -190,6 +193,54 @@ public class RoomCoverage
 }
 
 /// <summary>Ein Walk-Punkt, der keine Pegel traegt und deshalb keine Kalibrierung bewerten kann.</summary>
+/// <summary>
+/// Zwei Walk-Aufnahmen, die praktisch am selben Ort stehen und sich trotzdem
+/// widersprechen.
+///
+/// Warum das wichtiger ist als es klingt: Walk-Punkte gehen als zusaetzliche
+/// Referenzsender in dieselbe Zielfunktion ein wie die Knoten-Messungen
+/// (OptimizationRunner haengt GetExtraMeasures() an die Snapshots). Enthaelt die
+/// Menge zwei einander ausschliessende Aussagen ueber denselben Ort, kann KEINE
+/// Kalibrierung beide erfuellen - jede Aenderung, die der einen Seite hilft,
+/// verschlechtert die andere und wird verworfen. Das Ergebnis sieht dann aus wie
+/// "nichts zu verbessern", ist aber "unmoegliche Vorgabe".
+///
+/// Gemessen am 28.07.2026: 14 Paare unter 1 m Abstand, eines davon mit 24,2 dB
+/// Unterschied auf 95 cm. Zwei Aufnahmen desselben Punktes (Abstand 0,00 m)
+/// wichen nach der Normierung noch um bis zu 11,6 dB voneinander ab - und zwar
+/// je Knoten in ENTGEGENGESETZTE Richtungen.
+/// </summary>
+public class ConflictingWalkPair
+{
+    public string IdA { get; set; } = "";
+    public string IdB { get; set; } = "";
+    public DateTime RecordedAtA { get; set; }
+    public DateTime RecordedAtB { get; set; }
+    public string? FloorId { get; set; }
+    public string? FloorName { get; set; }
+    public string? RoomName { get; set; }
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double Z { get; set; }
+
+    /// <summary>Abstand der beiden Aufnahmen in Metern (echte 3D-Distanz).</summary>
+    public double DistanceM { get; set; }
+    /// <summary>Knoten, die in BEIDEN Aufnahmen vorkommen - nur die sind vergleichbar.</summary>
+    public int SharedNodes { get; set; }
+    /// <summary>Median der Betraege der Pegeldifferenzen (dB), nach Normierung.</summary>
+    public double MedianDeltaDb { get; set; }
+    /// <summary>Groesste Einzeldifferenz (dB) und der Knoten, an dem sie auftritt.</summary>
+    public double MaxDeltaDb { get; set; }
+    public string? MaxDeltaNode { get; set; }
+    /// <summary>
+    /// True, wenn die Differenzen groesser sind, als die Messstreuung erklaeren kann -
+    /// dann MUSS mindestens eine der beiden Aufnahmen falsch sein.
+    /// </summary>
+    public bool Irreconcilable { get; set; }
+    /// <summary>Was die Streuung an Unterschied hergeben wuerde (dB), zum Vergleich.</summary>
+    public double ExplainableDb { get; set; }
+}
+
 public class StaleWalkPoint
 {
     public string Id { get; set; } = "";

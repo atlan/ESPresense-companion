@@ -8,6 +8,16 @@
 
 	const toastStore = getToastStore();
 
+	interface ConflictingWalkPair {
+		idA: string; idB: string;
+		recordedAtA: string; recordedAtB: string;
+		floorId?: string | null; floorName?: string | null; roomName?: string | null;
+		x: number; y: number; z: number;
+		distanceM: number; sharedNodes: number;
+		medianDeltaDb: number; maxDeltaDb: number; maxDeltaNode?: string | null;
+		irreconcilable: boolean; explainableDb: number;
+	}
+
 	interface ValidationIssue {
 		severity: 'Info' | 'Warning' | 'Error';
 		category: string;
@@ -139,6 +149,7 @@
 			ticks: number;
 			recordedAt: string;
 		}[];
+		conflictingWalkPairs?: ConflictingWalkPair[];
 	}
 
 	interface LocatorRun {
@@ -486,6 +497,20 @@
 		} finally {
 			wtBusy = false;
 		}
+	}
+
+	// Loeschen ist nicht rueckgaengig zu machen - deshalb immer mit Rueckfrage,
+	// und danach die Diagnose neu holen: sowohl die Nachhol-Liste als auch die
+	// Widerspruchs-Paare aendern sich dadurch, und eine veraltete Tabelle waere
+	// schlimmer als gar keine.
+	async function deleteWalkPointConfirmed(id: string, was: string) {
+		const ok = await showConfirm({
+			title: 'Walk-Punkt löschen',
+			body: `${id} (${was}) endgültig entfernen? Das lässt sich nicht rückgängig machen.`
+		});
+		if (!ok) return;
+		await deleteWalkPoint(id);
+		await fetchAll();
 	}
 
 	async function deleteWalkPoint(id: string) {
@@ -1526,12 +1551,80 @@
 						</ul>
 					{/if}
 
+					{#if (diagnostics.conflictingWalkPairs?.length ?? 0) > 0 && diagnostics.conflictingWalkPairs}
+						{@const unvereinbar = diagnostics.conflictingWalkPairs.filter((p) => p.irreconcilable)}
+						{#if unvereinbar.length > 0}
+							<h3 class="font-semibold text-sm mb-2">
+								Widersprüchliche Doppel-Aufnahmen ({unvereinbar.length})
+							</h3>
+							<p class="text-xs text-surface-600-400 mb-2">
+								Diese Punkte liegen praktisch am selben Ort, widersprechen sich aber stärker,
+								als die Messstreuung erklären kann. Sie gehen als zusätzliche Referenzsender in
+								dieselbe Zielfunktion ein wie die Knoten-Messungen — <strong>keine Kalibrierung
+								kann beide erfüllen</strong>. Jede Änderung, die einer Seite hilft, verschlechtert
+								die andere und wird verworfen. Das sieht aus wie „nichts zu verbessern", ist aber
+								„unmögliche Vorgabe". Die unglaubwürdigere Aufnahme löschen, bevor weiter
+								optimiert wird.
+							</p>
+							<div class="overflow-x-auto mb-3">
+								<table class="table table-compact w-full text-sm">
+									<thead>
+										<tr>
+											<th>Etage / Raum</th><th>Position</th><th class="text-right">Abstand</th>
+											<th class="text-right">Knoten</th><th class="text-right">Δ Median</th>
+											<th class="text-right">erklärbar</th><th class="text-right">Δ max</th>
+											<th>A</th><th>B</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each unvereinbar as c}
+											<tr>
+												<td>{c.floorName ?? c.floorId ?? '—'} / {c.roomName ?? '—'}</td>
+												<td>
+													<button type="button" class="anchor font-mono"
+														onclick={() => gotoMapSpot(c.floorId, c.x, c.y, c.z)}
+														title="Auf der Karte zeigen">{c.x} / {c.y} / {c.z}</button>
+												</td>
+												<td class="text-right">{c.distanceM} m</td>
+												<td class="text-right">{c.sharedNodes}</td>
+												<td class="text-right font-semibold">{c.medianDeltaDb} dB</td>
+												<td class="text-right text-surface-600-400">{c.explainableDb} dB</td>
+												<td class="text-right" title={c.maxDeltaNode ?? ''}>{c.maxDeltaDb} dB</td>
+												<td>
+													<button type="button" class="btn btn-sm preset-tonal-error"
+														onclick={() => deleteWalkPointConfirmed(c.idA, new Date(c.recordedAtA).toLocaleDateString())}
+														title="Aufnahme A löschen">{c.idA}</button>
+												</td>
+												<td>
+													<button type="button" class="btn btn-sm preset-tonal-error"
+														onclick={() => deleteWalkPointConfirmed(c.idB, new Date(c.recordedAtB).toLocaleDateString())}
+														title="Aufnahme B löschen">{c.idB}</button>
+												</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+							<p class="text-xs text-surface-600-400 mb-3">
+								„erklärbar" ist keine feste Grenze, sondern aus der aufgezeichneten
+								Entfernungs-Streuung beider Aufnahmen gerechnet und über das Pfadverlustmodell in
+								Dezibel umgesetzt — dieselbe Meter-Streuung bedeutet nah am Knoten deutlich mehr
+								Dezibel als weit weg. Der Knoten mit der größten Einzeldifferenz steht als
+								Hinweistext an „Δ max".
+							</p>
+						{/if}
+					{/if}
+
 					{#if (diagnostics.staleWalkPoints?.length ?? 0) > 0 && diagnostics.staleWalkPoints}
 						<h3 class="font-semibold text-sm mb-2">Walk-Punkte ohne Pegel — nachzuholen ({diagnostics.staleWalkPoints.length})</h3>
+						<p class="text-xs text-surface-600-400 mb-2">
+							Ein neuer Spaziergang legt einen <em>zusätzlichen</em> Punkt an — der alte bleibt
+							stehen. Die Liste wird also nur kürzer, wenn du den alten hier löschst.
+						</p>
 						<div class="overflow-x-auto mb-3">
 							<table class="table table-compact w-full text-sm">
 								<thead>
-									<tr><th>Punkt</th><th>Etage</th><th>Raum</th><th>Position</th><th class="text-right">Ticks</th><th>aufgenommen</th></tr>
+									<tr><th>Punkt</th><th>Etage</th><th>Raum</th><th>Position</th><th class="text-right">Ticks</th><th>aufgenommen</th><th></th></tr>
 								</thead>
 								<tbody>
 									{#each diagnostics.staleWalkPoints as p}
@@ -1543,11 +1636,16 @@
 												<!-- Kein rohes href: im HA-Ingress liegt die App unter einem Praefix, ein
 												     absoluter Pfad wuerde HA neu laden. goto()+resolve() bleibt in der App. -->
 												<button type="button" class="anchor font-mono"
-													onclick={() => gotoMapSpot(p.floorId, p.x, p.y)}
+													onclick={() => gotoMapSpot(p.floorId, p.x, p.y, p.z)}
 													title="Auf der Karte zeigen">{p.x} / {p.y} / {p.z}</button>
 											</td>
 											<td class="text-right">{p.ticks}</td>
 											<td class="text-surface-600-400">{new Date(p.recordedAt).toLocaleDateString()}</td>
+											<td class="text-right">
+												<button type="button" class="btn btn-sm preset-tonal-error"
+													onclick={() => deleteWalkPointConfirmed(p.id, 'ohne Pegel')}
+													title="Diesen Punkt entfernen">Löschen</button>
+											</td>
 										</tr>
 									{/each}
 								</tbody>

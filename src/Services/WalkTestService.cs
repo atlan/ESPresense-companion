@@ -39,7 +39,10 @@ public class WalkTestService
     /// settings. Walk test measures are RSSI-shifted at synthesis time so the beacon's effective
     /// reference matches this default - see RecordPoint's self-calibration.
     /// </summary>
-    private const double DefaultTxRefRssi = -59;
+    // internal statt private: die Wizard-Diagnose vergleicht Doppel-Aufnahmen auf
+    // NORMIERTEN Pegeln und muss dafuer denselben Bezugswert benutzen. Zwei Kopien
+    // derselben Zahl waeren die sicherste Art, sie auseinanderlaufen zu lassen.
+    internal const double DefaultTxRefRssi = -59;
 
     public class RawSample
     {

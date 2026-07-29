@@ -26,6 +26,19 @@ public class WizardDiagnostics(
 {
     /// <summary>Pairs closer than this count as "near". Chosen because measured error stays within a
     /// couple of dB below it and diverges sharply above - see the field data in the roadmap.</summary>
+    // ── Doppel-Aufnahmen ────────────────────────────────────────────────────
+    // Ab wann gelten zwei Aufnahmen als "derselbe Ort". 1 m ist grosszuegig: die
+    // Position wird von Hand auf der Karte gesetzt, ein halber Meter Ungenauigkeit
+    // ist normal - und ein Widerspruch ueber diese Distanz bleibt einer.
+    private const double SamePlaceRadiusM = 1.0;
+    // Unter so wenigen gemeinsamen Knoten ist der Median nicht aussagekraeftig.
+    private const int MinSharedNodes = 4;
+    // Untergrenze fuer "erklaerbar". Die aus der Entfernungs-Streuung gerechneten
+    // Werte liegen bei diesem Datenbestand meist unter 1 dB - ohne Boden wuerde
+    // schon normale Funkschwankung als Widerspruch gelten. 3 dB ist die Groessen-
+    // ordnung, die Koerper, Tueren und Geraete-Orientierung ohnehin ausmachen.
+    private const double MinExplainableDb = 3.0;
+
     private const double NearFarSplitM = 4.0;
 
     /// <summary>Above this the measurement contradicts the map rather than merely disagreeing with it.</summary>
@@ -107,6 +120,7 @@ public class WizardDiagnostics(
         CheckParameterSpread(config, required, result);
         CheckNoisyNodes(result);
         CheckWalkPointsWithoutLevels(result);
+        CheckConflictingWalkPairs(result);
         CheckWalkPointGeometryDrift(result);
         AnalyzeSignals(config, result);
 
@@ -396,6 +410,133 @@ public class WizardDiagnostics(
                           $"fitted - widen {key}_{bound} and re-run, or exclude the node if it is genuinely atypical."
             });
         }
+    }
+
+    /// <summary>
+    /// Doppel-Aufnahmen, die sich widersprechen.
+    ///
+    /// Die Frage ist NICHT "welcher Punkt ist besser" - das laesst sich aus den Daten
+    /// nicht entscheiden, die Kriterien widersprechen sich (der eine ruhiger, der
+    /// andere breiter aufgestellt). Die Frage ist: liegen zwei Aufnahmen so weit
+    /// auseinander, dass mindestens eine falsch sein MUSS?
+    ///
+    /// Warum das zaehlt: Walk-Punkte gehen als zusaetzliche Referenzsender in
+    /// dieselbe Zielfunktion ein wie die Knoten-Messungen. Enthaelt die Menge zwei
+    /// einander ausschliessende Aussagen ueber denselben Ort, kann KEINE Kalibrierung
+    /// beide erfuellen - jede Aenderung, die einer Seite hilft, wird verworfen. Das
+    /// sieht aus wie "nichts zu verbessern", ist aber "unmoegliche Vorgabe".
+    ///
+    /// Verglichen wird auf NORMIERTEN Pegeln, genau wie die Punkte in die
+    /// Zielfunktion eingehen (GetExtraMeasures verschiebt jede Aufnahme auf
+    /// DefaultTxRefRssi). Der konstante Anteil faellt damit heraus; uebrig bleibt der
+    /// knotenweise Widerspruch.
+    /// </summary>
+    private void CheckConflictingWalkPairs(WizardDiagnosticsResult result)
+    {
+        var pts = walkTest.GetPoints().Where(p => p.Nodes is { Count: > 0 }).ToList();
+        for (var i = 0; i < pts.Count; i++)
+        for (var j = i + 1; j < pts.Count; j++)
+        {
+            var a = pts[i];
+            var b = pts[j];
+            if (!string.Equals(a.FloorId, b.FloorId, StringComparison.OrdinalIgnoreCase)) continue;
+
+            // Echte 3D-Distanz. NICHT auf x/y runden und die Etage als dritte
+            // Koordinate missbrauchen: z ist die absolute Gebaeudehoehe und streut
+            // INNERHALB einer Etage um ~1,5 m - zwei Punkte uebereinander waeren
+            // sonst "derselbe Ort".
+            var dist = Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2) + Math.Pow(a.Z - b.Z, 2));
+            if (dist > SamePlaceRadiusM) continue;
+
+            var shiftA = a.TxRefRssiEstimate.HasValue ? WalkTestService.DefaultTxRefRssi - a.TxRefRssiEstimate.Value : 0;
+            var shiftB = b.TxRefRssiEstimate.HasValue ? WalkTestService.DefaultTxRefRssi - b.TxRefRssiEstimate.Value : 0;
+
+            var deltas = new List<double>();
+            var explain = new List<double>();
+            double maxDelta = 0;
+            string? maxNode = null;
+            foreach (var na in a.Nodes)
+            {
+                var nb = b.Nodes.FirstOrDefault(x => string.Equals(x.NodeId, na.NodeId, StringComparison.OrdinalIgnoreCase));
+                if (nb == null) continue;
+                var d = Math.Abs((na.MedianRssi + shiftA) - (nb.MedianRssi + shiftB));
+                deltas.Add(d);
+                if (d > maxDelta) { maxDelta = d; maxNode = na.NodeId; }
+                explain.Add(2.0 * Math.Sqrt(Math.Pow(RssiSigmaDb(na), 2) + Math.Pow(RssiSigmaDb(nb), 2)));
+            }
+            if (deltas.Count < MinSharedNodes) continue;
+
+            var median = Median(deltas);
+            var explainable = Math.Max(Median(explain), MinExplainableDb);
+            var floor = state.Floors.Values.FirstOrDefault(f => string.Equals(f.Id, a.FloorId, StringComparison.OrdinalIgnoreCase));
+            var room = SpatialUtils.FindRoomContaining(new Point3D(a.X, a.Y, a.Z), floor);
+
+            result.ConflictingWalkPairs.Add(new ConflictingWalkPair
+            {
+                IdA = a.Id, IdB = b.Id,
+                RecordedAtA = a.RecordedAt, RecordedAtB = b.RecordedAt,
+                FloorId = a.FloorId, FloorName = floor?.Name, RoomName = room?.Name,
+                X = Math.Round(a.X, 2), Y = Math.Round(a.Y, 2), Z = Math.Round(a.Z, 2),
+                DistanceM = Math.Round(dist, 2),
+                SharedNodes = deltas.Count,
+                MedianDeltaDb = Math.Round(median, 1),
+                MaxDeltaDb = Math.Round(maxDelta, 1),
+                MaxDeltaNode = maxNode,
+                ExplainableDb = Math.Round(explainable, 1),
+                Irreconcilable = median > explainable
+            });
+        }
+
+        // Nach Schwere sortieren, damit oben steht, was am dringendsten weg muss.
+        result.ConflictingWalkPairs = result.ConflictingWalkPairs
+            .OrderByDescending(p => p.Irreconcilable)
+            .ThenByDescending(p => p.MedianDeltaDb)
+            .ToList();
+
+        var unvereinbar = result.ConflictingWalkPairs.Count(p => p.Irreconcilable);
+        if (unvereinbar == 0) return;
+
+        result.Issues.Add(new ValidationIssue
+        {
+            Severity = ValidationSeverity.Warning,
+            Category = "conflicting-walkpoints",
+            Message = $"{unvereinbar} pairs of walk points sit within {SamePlaceRadiusM} m of each other yet " +
+                      $"disagree by more than measurement noise can explain. They enter the optimiser as extra " +
+                      $"reference transmitters, so no calibration can satisfy both - every change that helps one " +
+                      $"side hurts the other and gets rejected. That looks like \"nothing to improve\" but is " +
+                      $"\"impossible target\". Delete the recording you trust less before optimising further."
+        });
+    }
+
+    /// <summary>
+    /// Entfernungs-Streuung (m) in Pegel-Streuung (dB) umrechnen.
+    ///
+    /// ⚠ DistVar ist die Varianz der ENTFERNUNG in Metern, nicht des Pegels - eine
+    /// RSSI-Varianz wird je Aggregat gar nicht aufgezeichnet (RssiVar bleibt null).
+    /// Wer sqrt(DistVar) direkt als dB nimmt, mischt Meter und Dezibel. Die
+    /// Umrechnung liefert das Pfadverlustmodell selbst:
+    ///     rssi = ref - 10*n*log10(d)   =>   |drssi/dd| = 10*n / (d*ln10)
+    /// Dieselbe Meter-Streuung bedeutet nahe am Knoten VIEL mehr Dezibel als weit
+    /// weg: bei sigma_d = 0,25 m sind es auf 1 m rund 2,9 dB, auf 10 m nur 0,3 dB.
+    /// Genau deshalb taugt eine feste dB-Schwelle nicht.
+    /// </summary>
+    private double RssiSigmaDb(WalkTestService.NodeAggregate n)
+    {
+        var d = n.MedianDistance;
+        // DistVar ist nullable: aeltere Aufnahmen haben gar keine Varianz. Dann
+        // traegt der Knoten nichts zur Schwelle bei und der Mindestwert greift -
+        // besser als eine erfundene Streuung.
+        var varianz = n.DistVar ?? 0;
+        if (d <= 0.1 || varianz <= 0) return 0;
+        var absorption = nodeSettings.Get(n.NodeId)?.Calibration?.Absorption ?? 2.7;
+        return 10.0 * absorption * Math.Sqrt(varianz) / (d * Math.Log(10));
+    }
+
+    private static double Median(List<double> xs)
+    {
+        if (xs.Count == 0) return 0;
+        var s = xs.OrderBy(x => x).ToList();
+        return s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2.0;
     }
 
     /// <summary>

@@ -16,6 +16,13 @@
 	 * Adresszeile stammt. Die Kalibrieransicht laesst ihn weiterhin ziehen.
 	 */
 	export let interactive = true;
+	/**
+	 * Klick auf den Marker. Bewusst UNABHAENGIG von `interactive`: auf der
+	 * Kartenseite soll er sich nicht verschieben lassen (die Position kommt aus der
+	 * Adresszeile), anklickbar sein soll er trotzdem - sonst hebelt das eine das
+	 * andere aus.
+	 */
+	export let onclick: (() => void) | null = null;
 	// The calibration spot's logical (data) position.
 	export let position = { x: 0, y: 0 };
 	// Data-space bounds.
@@ -135,6 +142,13 @@
 		<!-- Invisible circle for easier interaction -->
 		{#if interactive}
 			<circle class="no-zoom" r="15" role="button" tabindex="0" fill="transparent" onmousedowncapture={handlePointerDown} ontouchstartcapture={handlePointerDown} style="cursor: move" />
+		{:else if onclick}
+			<!-- Nicht verschiebbar, aber anklickbar. Eigener Kreis statt eines Handlers
+			     auf dem Ziehbereich, damit sich Klicken und Ziehen nie ins Gehege kommen. -->
+			<circle class="no-zoom" r="15" role="button" tabindex="0" fill="transparent"
+				style="cursor: pointer"
+				onclick={() => onclick?.()}
+				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onclick?.(); } }} />
 		{/if}
 	</g>
 </g>
