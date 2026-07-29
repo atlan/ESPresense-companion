@@ -24,7 +24,7 @@ namespace ESPresense.Services;
 /// eine stillgelegte Messung, die nur intern wirkt. Der Benutzer muss erfahren, dass sich
 /// das Verhalten geaendert hat, und es mit einem Klick zurueckdrehen koennen.
 /// </summary>
-public class AutoApply(LocatorSweepService sweep, ConfigLoader configLoader, string? persistPath = null)
+public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune, ConfigLoader configLoader, string? persistPath = null)
 {
     /// <summary>
     /// Was „messbar" heisst: alles ausser „simplicity". Die drei anderen Werte bedeuten, dass
@@ -92,14 +92,66 @@ public class AutoApply(LocatorSweepService sweep, ConfigLoader configLoader, str
         return change;
     }
 
+    /// <summary>
+    /// Bandbreite und Kernel von Nadaraya-Watson: dieselbe Frage eine Ebene tiefer. Auch hier
+    /// gilt, dass nur umgestellt wird, was den Ist-Zustand um MEHR als die Streuung der Messung
+    /// schlaegt - `LocatorTuneService.BeatsCurrentMeasurably` rechnet sie seit dem 29.07. ueber
+    /// die Walk-PUNKTE statt gegen eine feste Schwelle 0,02, die aus nichts folgte.
+    /// </summary>
+    public async Task<AppliedChange?> RunLocatorTuning(DateTime now)
+    {
+        var res = locatorTune.Run();
+        if (res?.Error != null || res?.Results is not { Count: > 0 }) return null;
+        if (!res.BeatsCurrentMeasurably) return null;
+
+        var best = res.Results[0];
+        var current = res.Results.FirstOrDefault(r => r.IsCurrent);
+        var (ok, error) = await locatorTune.Apply(best.Candidate.Key);
+        if (!ok)
+        {
+            Log.Warning("Locator-Feineinstellung nicht uebernommen: {Error}", error);
+            return null;
+        }
+
+        var change = new AppliedChange
+        {
+            At = now,
+            Kind = "locator-tuning",
+            Title = $"Ortungs-Feineinstellung auf „{best.Candidate.Label}“ umgestellt",
+            Reason = res.Recommendation ?? "",
+            Before = current != null ? [current.Candidate.Label] : [],
+            After = [best.Candidate.Label],
+            MedianErrorM = best.MedianErrorM
+        };
+        lock (_lock)
+        {
+            _history.Insert(0, change);
+            if (_history.Count > 20) _history = _history.Take(20).ToList();
+            Save();
+        }
+        Log.Information("Automatisch umgestellt: {Title}. {Reason}", change.Title, change.Reason);
+        return change;
+    }
+
     /// <summary>Eine automatische Umstellung zuruecknehmen.</summary>
     public async Task<bool> Undo(string id)
     {
         AppliedChange? change;
         lock (_lock) change = _history.FirstOrDefault(h => h.Id == id && !h.UndoneAt.HasValue);
-        if (change == null || change.Kind != "locators" || change.Before.Count == 0) return false;
+        if (change == null || change.Before.Count == 0) return false;
 
-        await Setzen(change.Before);
+        if (change.Kind == "locators") await Setzen(change.Before);
+        else if (change.Kind == "locator-tuning")
+        {
+            // Die Feineinstellung wird ueber ihren Kandidaten-Schluessel zurueckgesetzt; steckt der
+            // alte Zustand nicht mehr in der Kandidatenliste, ist keine saubere Rueckkehr moeglich.
+            var zurueck = locatorTune.Run()?.Results
+                .FirstOrDefault(r => r.Candidate.Label == change.Before[0]);
+            if (zurueck == null) return false;
+            var (ok, _) = await locatorTune.Apply(zurueck.Candidate.Key);
+            if (!ok) return false;
+        }
+        else return false;
         lock (_lock)
         {
             change.UndoneAt = DateTime.UtcNow;

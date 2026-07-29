@@ -42,6 +42,12 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
         public double MeanErrorM { get; set; }
         public double MeanJitterM { get; set; }
         public double Score { get; set; }
+        /// <summary>
+        /// Streuung des Score ueber die Walk-PUNKTE. Kleiner heisst: der Unterschied zu einem
+        /// anderen Kandidaten ist eher echt. Null bei zu wenigen Punkten - dann darf gar nicht
+        /// automatisch umgestellt werden.
+        /// </summary>
+        public double? ScoreStandardError { get; set; }
         public int Ticks { get; set; }
         public int Points { get; set; }
         public bool IsCurrent { get; set; }
@@ -59,6 +65,13 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
         public string? Error { get; set; }
         public List<CandidateResult> Results { get; set; } = new();
         public string? Recommendation { get; set; }
+        /// <summary>
+        /// Schlaegt der beste Kandidat den Ist-Zustand um mehr als die Messunsicherheit?
+        /// Nur dann darf automatisch umgestellt werden.
+        /// </summary>
+        public bool BeatsCurrentMeasurably { get; set; }
+        /// <summary>Streuung des Score ueber die Walk-Punkte, zur Einordnung.</summary>
+        public double? ScoreStandardError { get; set; }
         public int PointsUsed { get; set; }
         public int TicksUsed { get; set; }
         public DateTime? RanAt { get; set; }
@@ -115,6 +128,9 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
             {
                 var perTickErrors = new List<double>();
                 var perPointJitters = new List<double>();
+                // ⚠ Die Stichprobe sind die PUNKTE, nicht die Ticks. Ohne punktweise Werte laesst
+                // sich keine ehrliche Unsicherheit rechnen - siehe PointUncertainty.
+                var perPointScores = new List<double>();
                 var pointsUsed = 0;
                 var roomHits = 0; var roomChecked = 0;
                 var floorHits = 0; var floorChecked = 0;
@@ -177,6 +193,10 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                     var cy = estimates.Average(e => e.Y);
                     var jitter = Math.Sqrt(estimates.Average(e => Math.Pow(e.X - cx, 2) + Math.Pow(e.Y - cy, 2)));
                     perPointJitters.Add(jitter);
+                    // Derselbe Ausdruck wie Score, nur fuer DIESEN Punkt - sonst misst der
+                    // Standardfehler etwas anderes als das, worueber entschieden wird.
+                    var punktFehler = estimates.Select(e => ScenarioReplay.Error2D(e, truth)).Average();
+                    perPointScores.Add(punktFehler + JitterWeight * jitter);
                 }
 
                 if (perTickErrors.Count == 0) continue;
@@ -194,6 +214,7 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                     RoomHitRate = roomChecked > 0 ? Math.Round((double)roomHits / roomChecked, 3) : null,
                     FloorHitRate = floorChecked > 0 ? Math.Round((double)floorHits / floorChecked, 3) : null,
                     Score = meanError + JitterWeight * meanJitter,
+                    ScoreStandardError = PointUncertainty.StandardError(perPointScores),
                     Ticks = perTickErrors.Count,
                     Points = pointsUsed,
                     IsCurrent = candidate.Kernel == currentKernel &&
@@ -214,11 +235,30 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
 
             var best = result.Results[0];
             var current = result.Results.FirstOrDefault(r => r.IsCurrent);
-            if (current != null && best.Score >= current.Score - 0.02)
-                result.Recommendation = "Current locator settings already perform best (or within noise of the best) on the recorded walk points.";
+
+            // ★ Frueher stand hier eine feste Schwelle von 0,02 - eine Zahl ohne Herkunft, die
+            // bei einer ruhigen Anlage viel zu gross und bei einer unruhigen viel zu klein ist.
+            // Jetzt entscheidet die Streuung, die die Messung selbst zeigt: schlaegt der Beste
+            // den Ist-Zustand um MEHR als deren Standardfehler ueber die Walk-Punkte?
+            // Score ist ein FEHLER (kleiner ist besser), deshalb negiert.
+            var se = best.ScoreStandardError ?? current?.ScoreStandardError;
+            result.BeatsCurrentMeasurably = current != null && best != current &&
+                PointUncertainty.BeatsMeasurably(-best.Score, -current.Score, se);
+            result.ScoreStandardError = se;
+
+            if (current == null)
+                result.Recommendation = $"Best on walk-test replay: {best.Candidate.Label} - mean error {best.MeanErrorM:0.00}m, " +
+                                        $"jitter {best.MeanJitterM:0.00}m. The running setting is not among the candidates.";
+            else if (!result.BeatsCurrentMeasurably)
+                result.Recommendation = $"Nothing measurably better than the running setting. '{best.Candidate.Label}' scores " +
+                                        $"{best.Score:0.000} against {current.Score:0.000}, and the scatter of the measurement " +
+                                        $"itself across {best.Points} walk points is ±{se:0.000} - so that gap could be noise. " +
+                                        "Changing on this evidence would be churn, not progress.";
             else
-                result.Recommendation = $"Best on walk-test replay: {best.Candidate.Label} - mean error {best.MeanErrorM:0.00}m, jitter {best.MeanJitterM:0.00}m" +
-                                        (current != null ? $" (current: {current.MeanErrorM:0.00}m / {current.MeanJitterM:0.00}m)" : "") + ".";
+                result.Recommendation = $"'{best.Candidate.Label}' beats the running setting by more than the measurement's own " +
+                                        $"scatter: score {best.Score:0.000} against {current.Score:0.000} (±{se:0.000} across " +
+                                        $"{best.Points} walk points), mean error {best.MeanErrorM:0.00} m against " +
+                                        $"{current.MeanErrorM:0.00} m.";
 
             Log.Information("Locator tune: {Count} candidates over {Points} points, best={Best}",
                 results.Count, points.Count, best.Candidate.Label);

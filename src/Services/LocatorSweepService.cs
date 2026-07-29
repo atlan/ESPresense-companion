@@ -69,14 +69,8 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
         return result;
     }
 
-    /// <summary>Standard error across walk points, or null when there are too few to say.</summary>
-    private static double? StandardError(List<double> perPoint)
-    {
-        if (perPoint.Count < 2) return null;
-        var mean = perPoint.Average();
-        var variance = perPoint.Sum(v => (v - mean) * (v - mean)) / (perPoint.Count - 1);
-        return Math.Round(Math.Sqrt(variance / perPoint.Count), 3);
-    }
+    /// <summary>Siehe PointUncertainty - die Rechnung steht dort, damit es sie nur einmal gibt.</summary>
+    private static double? StandardError(List<double> perPoint) => PointUncertainty.StandardError(perPoint);
 
     /// <summary>
     /// Picks a combination and says why, instead of handing the user a table and a shrug.
@@ -116,27 +110,19 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
         var usable = result.Runs.Where(r => r.Error == null && r.RoomHitRate.HasValue).ToList();
         if (usable.Count == 0) return null;
 
-        static List<LocatorSweepRun> WithinNoise(List<LocatorSweepRun> runs, Func<LocatorSweepRun, double> value,
-            Func<LocatorSweepRun, double?> error)
-        {
-            var leader = runs.MaxBy(value)!;
-            var margin = error(leader) ?? 0;
-            return runs.Where(r => value(leader) - value(r) <= margin).ToList();
-        }
-
-        var roomTied = WithinNoise(usable, r => r.RoomHitRate ?? 0, r => r.RoomHitStandardErrorPoints);
+        var roomTied = PointUncertainty.WithinNoise(usable, r => r.RoomHitRate ?? 0, r => r.RoomHitStandardErrorPoints);
         var decidedBy = "room";
         var field = roomTied;
 
         if (roomTied.Count > 1)
         {
-            var floorTied = WithinNoise(roomTied, r => r.FloorHitRate ?? 0, r => r.FloorHitStandardErrorPoints);
+            var floorTied = PointUncertainty.WithinNoise(roomTied, r => r.FloorHitRate ?? 0, r => r.FloorHitStandardErrorPoints);
             if (floorTied.Count < roomTied.Count) { field = floorTied; decidedBy = "floor"; }
             else
             {
                 // Raum und Etage trennen beide nicht - dann entscheiden die Meter. Negiert, weil
                 // WithinNoise "groesser ist besser" erwartet und beim Fehler das Gegenteil gilt.
-                var medianTied = WithinNoise(floorTied, r => -(r.MedianErrorM ?? 0), r => r.MedianErrorStandardErrorM);
+                var medianTied = PointUncertainty.WithinNoise(floorTied, r => -(r.MedianErrorM ?? 0), r => r.MedianErrorStandardErrorM);
                 if (medianTied.Count < floorTied.Count) { field = medianTied; decidedBy = "position"; }
                 else { field = medianTied; decidedBy = "simplicity"; }
             }

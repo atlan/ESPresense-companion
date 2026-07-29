@@ -388,6 +388,8 @@
 		error?: string;
 		results: LocatorTuneResult[];
 		recommendation?: string;
+		beatsCurrentMeasurably?: boolean;
+		scoreStandardError?: number | null;
 		pointsUsed: number;
 		ticksUsed: number;
 		ranAt?: string;
@@ -662,6 +664,8 @@
 		}
 	}
 
+	// Der Assistent stellt das inzwischen selbst um (AutoApply). Der Knopf bleibt fuer
+	// Ungeduldige, verschwindet aber, wo die Messung die Kandidaten nicht trennt.
 	async function applyLocatorCandidate(r: LocatorTuneResult) {
 		const confirmed = await showConfirm({
 			title: 'Apply locator configuration',
@@ -1662,8 +1666,14 @@
 										<td>{r.score.toFixed(2)}</td>
 										<td>{r.ticks}</td>
 										<td>
-											{#if !r.isCurrent}
-												<button class="btn btn-sm preset-filled-warning-500" onclick={() => applyLocatorCandidate(r)}>Apply</button>
+											{#if !r.isCurrent && i === 0 && locatorTune?.beatsCurrentMeasurably}
+												<button class="btn btn-sm preset-tonal" onclick={() => applyLocatorCandidate(r)}
+													title="Der Assistent stellt das beim nächsten Optimierungsdurchgang ohnehin selbst um">
+													jetzt schon umstellen</button>
+											{:else if !r.isCurrent && i === 0}
+												<span class="text-xs text-surface-600-400"
+													title="Der Vorsprung ist kleiner als die Streuung der Messung über die Walk-Punkte">
+													nicht messbar besser</span>
 											{/if}
 										</td>
 									</tr>

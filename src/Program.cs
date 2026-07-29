@@ -97,6 +97,7 @@ builder.Services.AddSingleton<WalkPointHygiene>();
 builder.Services.AddSingleton<NextActions>();
 builder.Services.AddSingleton(sp => new AutoApply(
     sp.GetRequiredService<LocatorSweepService>(),
+    sp.GetRequiredService<LocatorTuneService>(),
     sp.GetRequiredService<ConfigLoader>(),
     Path.Combine(storageDir, "auto-applied.json")));
 builder.Services.AddSingleton<WalkPointPlanner>();

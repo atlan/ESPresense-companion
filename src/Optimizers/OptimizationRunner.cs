@@ -183,7 +183,15 @@ public class OptimizationRunner : BackgroundService
                         // Umgestellt wird nur, wenn der Vorsprung groesser ist als die eigene
                         // Streuung der Messung - siehe AutoApply. Alles protokolliert und
                         // ruecknehmbar; der Benutzer soll keine Rangliste anklicken muessen.
-                        if (_autoApply != null) await _autoApply.RunLocatorChoice(DateTime.UtcNow);
+                        if (_autoApply != null)
+                        {
+                            var jetzt = DateTime.UtcNow;
+                            // Erst die Kombination, dann deren Feineinstellung. Die Reihenfolge
+                            // zaehlt: eine Bandbreite fuer nadaraya_watson zu waehlen ist sinnlos,
+                            // solange noch offen ist, ob nadaraya_watson ueberhaupt laeuft.
+                            await _autoApply.RunLocatorChoice(jetzt);
+                            await _autoApply.RunLocatorTuning(jetzt);
+                        }
                     }
                     catch (Exception ex)
                     {

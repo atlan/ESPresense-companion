@@ -35,6 +35,8 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
         public double MeanTrainComposite { get; set; }
         public double MeanHoldoutR { get; set; }
         public double MeanHoldoutRmse { get; set; }
+        /// <summary>Streuung des Komposits ueber die Hold-out-Faltungen. Siehe Kommentar bei der Zuweisung.</summary>
+        public double? CompositeStandardError { get; set; }
         public int Folds { get; set; }
         public bool IsCurrent { get; set; }
     }
@@ -288,6 +290,12 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
                         MeanTrainComposite = trainComposites.Count > 0 ? trainComposites.Average() : double.NaN,
                         MeanHoldoutR = holdRs.Average(),
                         MeanHoldoutRmse = holdRmses.Average(),
+                        // ⚠ Streuung ueber die FALTUNGEN, nicht ueber Walk-Punkte. Das ist
+                        // schwaecher als beim Locator-Sweep: Faltungen sind Aufteilungen
+                        // desselben Datensatzes, keine unabhaengigen Stichproben der Anlage.
+                        // Als Groessenordnung taugt es trotzdem - und allemal besser als die
+                        // feste Schwelle 0,005, die vorher hier stand und aus nichts folgte.
+                        CompositeStandardError = PointUncertainty.StandardError(holdComposites),
                         Folds = holdComposites.Count,
                         IsCurrent = candidate.Optimizer == currentOptimizer &&
                                     (candidate.AbsorptionPenalty == null || Math.Abs(candidate.AbsorptionPenalty.Value - currentPenalty) < 0.001) &&
@@ -309,12 +317,34 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
             if (best != null)
             {
                 var baselineScore = snapshot.Baseline?.MeanHoldoutComposite ?? double.NaN;
-                if (!double.IsNaN(baselineScore) && best.MeanHoldoutComposite <= baselineScore + 0.005)
-                    recommendation = "Current settings already perform as well as the best candidate on held-out data - no change recommended.";
-                else if (best.IsCurrent)
+                var se = best.CompositeStandardError;
+
+                if (best.IsCurrent)
                     recommendation = "The currently configured optimizer/penalty is already the best candidate - no change needed.";
+                else if (double.IsNaN(baselineScore))
+                    recommendation = $"Best on held-out data: {best.Candidate.Label} (composite {best.MeanHoldoutComposite:0.000}) - " +
+                                     "no baseline to compare against.";
+                else if (!PointUncertainty.BeatsMeasurably(best.MeanHoldoutComposite, baselineScore, se))
+                    // ★ Vorher entschied hier die feste Zahl 0,005, die aus nichts folgte. Jetzt
+                    // die Streuung, die der Hold-out selbst zeigt.
+                    recommendation = $"Nothing measurably better. '{best.Candidate.Label}' reaches composite " +
+                                     $"{best.MeanHoldoutComposite:0.000} against {baselineScore:0.000} today, and the scatter " +
+                                     $"across the {best.Folds} hold-out folds is ±{se:0.000} - that gap could be noise.";
                 else
-                    recommendation = $"Best on held-out data: {best.Candidate.Label} (composite {best.MeanHoldoutComposite:0.000}).";
+                    recommendation = $"'{best.Candidate.Label}' beats the running settings by more than the hold-out's own scatter: " +
+                                     $"composite {best.MeanHoldoutComposite:0.000} against {baselineScore:0.000} (±{se:0.000} across " +
+                                     $"{best.Folds} folds). " +
+                                     // ⚠ NICHT automatisch anwenden, und zwar aus einem gemessenen Grund:
+                                     // engere Absorptionsgrenzen ziehen bestehende Kalibrierungen NICHT
+                                     // nachtraeglich in den erlaubten Bereich. Am 27.07.2026 live
+                                     // ausprobiert - der Kandidat wurde vom Komposit-Gate abgelehnt und
+                                     // die gespeicherten Absorptionen blieben bei 4,4, also AUSSERHALB
+                                     // der neuen Grenzen. Eine automatische Umstellung koennte die Anlage
+                                     // so in einen Zustand bringen, aus dem sie sich nicht selbst
+                                     // herausoptimiert.
+                                     "Applying this stays manual: changing absorption limits does not pull existing " +
+                                     "calibrations back inside them - measured on 2026-07-27, values stayed at 4.4 outside " +
+                                     "new limits of 2.0..3.0 while every candidate got rejected.";
             }
 
             Finish(recommendation: recommendation);
