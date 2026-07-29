@@ -227,14 +227,30 @@ public class ConflictingWalkPair
     public double DistanceM { get; set; }
     /// <summary>Knoten, die in BEIDEN Aufnahmen vorkommen - nur die sind vergleichbar.</summary>
     public int SharedNodes { get; set; }
-    /// <summary>Median der Betraege der Pegeldifferenzen (dB), nach Normierung.</summary>
+    /// <summary>Median der Betraege der GEMESSENEN Pegeldifferenzen (dB), nach Normierung.</summary>
     public double MedianDeltaDb { get; set; }
-    /// <summary>Groesste Einzeldifferenz (dB) und der Knoten, an dem sie auftritt.</summary>
+    /// <summary>
+    /// Median dessen, was der blosse Ortsunterschied schon erklaert (dB).
+    /// Zwei Aufnahmen im selben Meter stehen zu einem NAHEN Knoten trotzdem
+    /// deutlich verschieden weit weg - bei 0,9 m sind 0,95 m Versatz rund 5,6 dB.
+    /// </summary>
+    public double MedianGeometryDb { get; set; }
+    /// <summary>
+    /// Median dessen, was nach Abzug der Geometrie UEBRIG bleibt (dB) - die
+    /// Groesse, ueber die entschieden wird.
+    /// </summary>
+    public double MedianResidualDb { get; set; }
+    /// <summary>
+    /// Groesster verbleibender Widerspruch (dB) und der Knoten, an dem er auftritt -
+    /// ebenfalls NACH Abzug der Geometrie, damit der genannte Knoten wirklich der
+    /// auffaellige ist und nicht bloss der naechstgelegene.
+    /// </summary>
     public double MaxDeltaDb { get; set; }
     public string? MaxDeltaNode { get; set; }
     /// <summary>
-    /// True, wenn die Differenzen groesser sind, als die Messstreuung erklaeren kann -
-    /// dann MUSS mindestens eine der beiden Aufnahmen falsch sein.
+    /// True, wenn der Rest nach Abzug der Geometrie groesser ist, als die
+    /// Messstreuung erklaeren kann - dann MUSS mindestens eine der beiden
+    /// Aufnahmen falsch sein.
     /// </summary>
     public bool Irreconcilable { get; set; }
     /// <summary>Was die Streuung an Unterschied hergeben wuerde (dB), zum Vergleich.</summary>

@@ -14,7 +14,8 @@
 		floorId?: string | null; floorName?: string | null; roomName?: string | null;
 		x: number; y: number; z: number;
 		distanceM: number; sharedNodes: number;
-		medianDeltaDb: number; maxDeltaDb: number; maxDeltaNode?: string | null;
+		medianDeltaDb: number; medianGeometryDb: number; medianResidualDb: number;
+		maxDeltaDb: number; maxDeltaNode?: string | null;
 		irreconcilable: boolean; explainableDb: number;
 	}
 
@@ -1571,8 +1572,9 @@
 									<thead>
 										<tr>
 											<th>Etage / Raum</th><th>Position</th><th class="text-right">Abstand</th>
-											<th class="text-right">Knoten</th><th class="text-right">Δ Median</th>
-											<th class="text-right">erklärbar</th><th class="text-right">Δ max</th>
+											<th class="text-right">Knoten</th><th class="text-right">Δ gemessen</th>
+											<th class="text-right">− Geometrie</th><th class="text-right">= Rest</th>
+											<th class="text-right">erklärbar</th><th class="text-right">Rest max</th>
 											<th>A</th><th>B</th>
 										</tr>
 									</thead>
@@ -1587,7 +1589,11 @@
 												</td>
 												<td class="text-right">{c.distanceM} m</td>
 												<td class="text-right">{c.sharedNodes}</td>
-												<td class="text-right font-semibold">{c.medianDeltaDb} dB</td>
+												<td class="text-right">{c.medianDeltaDb} dB</td>
+												<td class="text-right text-surface-600-400"
+													title="Was der blosse Ortsunterschied schon erklärt — bei einem nahen Knoten viel, bei einem fernen fast nichts">
+													{c.medianGeometryDb} dB</td>
+												<td class="text-right font-semibold">{c.medianResidualDb} dB</td>
 												<td class="text-right text-surface-600-400">{c.explainableDb} dB</td>
 												<td class="text-right" title={c.maxDeltaNode ?? ''}>{c.maxDeltaDb} dB</td>
 												<td>

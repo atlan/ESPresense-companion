@@ -38,6 +38,13 @@ public class WizardDiagnostics(
     // schon normale Funkschwankung als Widerspruch gelten. 3 dB ist die Groessen-
     // ordnung, die Koerper, Tueren und Geraete-Orientierung ohnehin ausmachen.
     private const double MinExplainableDb = 3.0;
+    // Rueckfall, wenn ein Knoten noch gar nicht kalibriert ist. Der Bibliothekswert
+    // des Pfadverlustmodells. ⚠ In einer eingelaufenen Anlage liegt die echte
+    // Absorption deutlich hoeher (hier ~3,7) - und weil sie sowohl in die erklaerbare
+    // Streuung als auch in den Geometrie-Term linear eingeht, aendert der Unterschied
+    // die Urteile: mit 2,7 statt der kalibrierten Werte kamen bei derselben Anlage
+    // 9 statt 5 unvereinbare Paare heraus. Deshalb NUR als Rueckfall verwenden.
+    private const double DefaultAbsorption = 2.7;
 
     private const double NearFarSplitM = 4.0;
 
@@ -452,21 +459,36 @@ public class WizardDiagnostics(
             var shiftB = b.TxRefRssiEstimate.HasValue ? WalkTestService.DefaultTxRefRssi - b.TxRefRssiEstimate.Value : 0;
 
             var deltas = new List<double>();
+            var geoms = new List<double>();
+            var residuen = new List<double>();
             var explain = new List<double>();
-            double maxDelta = 0;
+            double maxRest = 0;
             string? maxNode = null;
             foreach (var na in a.Nodes)
             {
                 var nb = b.Nodes.FirstOrDefault(x => string.Equals(x.NodeId, na.NodeId, StringComparison.OrdinalIgnoreCase));
                 if (nb == null) continue;
-                var d = Math.Abs((na.MedianRssi + shiftA) - (nb.MedianRssi + shiftB));
-                deltas.Add(d);
-                if (d > maxDelta) { maxDelta = d; maxNode = na.NodeId; }
+
+                var gemessen = (na.MedianRssi + shiftA) - (nb.MedianRssi + shiftB);
+                var erwartet = GeometrieDb(na, nb);
+                // Der Ortsunterschied hat ein VORZEICHEN, also wird er abgezogen und
+                // nicht bloss auf die Schwelle addiert. Wer weiter weg steht, MUSS
+                // schwaecher messen; geht der gemessene Unterschied in die andere
+                // Richtung, ist der Widerspruch groesser als der Rohwert - genau das
+                // faellt bei einer blossen Schwellenanhebung unter den Tisch.
+                var rest = Math.Abs(gemessen - erwartet);
+
+                deltas.Add(Math.Abs(gemessen));
+                geoms.Add(Math.Abs(erwartet));
+                residuen.Add(rest);
+                if (rest > maxRest) { maxRest = rest; maxNode = na.NodeId; }
                 explain.Add(2.0 * Math.Sqrt(Math.Pow(RssiSigmaDb(na), 2) + Math.Pow(RssiSigmaDb(nb), 2)));
             }
             if (deltas.Count < MinSharedNodes) continue;
 
             var median = Median(deltas);
+            var medianGeom = Median(geoms);
+            var medianRest = Median(residuen);
             var explainable = Math.Max(Median(explain), MinExplainableDb);
             var floor = state.Floors.Values.FirstOrDefault(f => string.Equals(f.Id, a.FloorId, StringComparison.OrdinalIgnoreCase));
             var room = SpatialUtils.FindRoomContaining(new Point3D(a.X, a.Y, a.Z), floor);
@@ -480,17 +502,19 @@ public class WizardDiagnostics(
                 DistanceM = Math.Round(dist, 2),
                 SharedNodes = deltas.Count,
                 MedianDeltaDb = Math.Round(median, 1),
-                MaxDeltaDb = Math.Round(maxDelta, 1),
+                MedianGeometryDb = Math.Round(medianGeom, 1),
+                MedianResidualDb = Math.Round(medianRest, 1),
+                MaxDeltaDb = Math.Round(maxRest, 1),
                 MaxDeltaNode = maxNode,
                 ExplainableDb = Math.Round(explainable, 1),
-                Irreconcilable = median > explainable
+                Irreconcilable = medianRest > explainable
             });
         }
 
         // Nach Schwere sortieren, damit oben steht, was am dringendsten weg muss.
         result.ConflictingWalkPairs = result.ConflictingWalkPairs
             .OrderByDescending(p => p.Irreconcilable)
-            .ThenByDescending(p => p.MedianDeltaDb)
+            .ThenByDescending(p => p.MedianResidualDb)
             .ToList();
 
         var unvereinbar = result.ConflictingWalkPairs.Count(p => p.Irreconcilable);
@@ -506,6 +530,33 @@ public class WizardDiagnostics(
                       $"side hurts the other and gets rejected. That looks like \"nothing to improve\" but is " +
                       $"\"impossible target\". Delete the recording you trust less before optimising further."
         });
+    }
+
+    /// <summary>
+    /// Wieviel Pegelunterschied allein daher kommt, dass die beiden Aufnahmen
+    /// verschieden weit von DIESEM Knoten entfernt sind (dB, mit Vorzeichen:
+    /// erwartetes rssiA - rssiB).
+    ///
+    /// ⚠ Ohne diesen Abzug meldet der Melder Widersprueche, wo keine sind. Das
+    /// Modell ist logarithmisch, also zaehlt das VERHAELTNIS der Entfernungen,
+    /// nicht ihre Differenz: zu einem Knoten in 10 m Entfernung sind 0,95 m
+    /// Versatz rund 0,6 dB, zu einem Knoten in 0,9 m dagegen 5,6 dB. Ein fester
+    /// Toleranzzuschlag kann das nicht abbilden - er waere fern zu grosszuegig
+    /// und nah zu streng.
+    ///
+    /// Genommen wird die AUFGEZEICHNETE Kartendistanz, nicht die heutige: wurde
+    /// der Knoten zwischen den Aufnahmen umgehaengt, beschreibt jede Aufnahme
+    /// zu Recht ihre eigene Geometrie (siehe CheckWalkPointGeometryDrift).
+    /// </summary>
+    private double GeometrieDb(WalkTestService.NodeAggregate na, WalkTestService.NodeAggregate nb)
+    {
+        var da = na.MapDistance;
+        var db = nb.MapDistance;
+        // Ohne brauchbare Kartendistanz lieber null zurueckgeben als raten - dann
+        // bleibt es beim reinen Messvergleich wie bisher.
+        if (da <= 0.1 || db <= 0.1) return 0;
+        var a = nodeSettings.Get(na.NodeId)?.Calibration?.Absorption ?? DefaultAbsorption;
+        return 10.0 * a * Math.Log10(db / da);
     }
 
     /// <summary>
@@ -528,7 +579,7 @@ public class WizardDiagnostics(
         // besser als eine erfundene Streuung.
         var varianz = n.DistVar ?? 0;
         if (d <= 0.1 || varianz <= 0) return 0;
-        var absorption = nodeSettings.Get(n.NodeId)?.Calibration?.Absorption ?? 2.7;
+        var absorption = nodeSettings.Get(n.NodeId)?.Calibration?.Absorption ?? DefaultAbsorption;
         return 10.0 * absorption * Math.Sqrt(varianz) / (d * Math.Log(10));
     }
 
