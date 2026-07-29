@@ -223,7 +223,7 @@ public class OptimizationRunner : BackgroundService
                     // nicht "heute" gegen "Kandidat" - jeder Unterschied konnte als Verbesserung
                     // durchgehen. Deshalb bekommt die Basis die HEUTIGEN Werte als Overrides.
                     var walkBaseline = optimization.WalkPointGate
-                        ? _benchmark.Run(label: "gate-baseline", overrides: CurrentCalibrationOverrides(), remember: false)
+                        ? _benchmark.Run(label: "gate-baseline", overrides: _benchmark.CurrentCalibrationOverrides(), remember: false)
                         : null;
 
                     IList<IOptimizer> currentOptimizers;
@@ -349,7 +349,7 @@ public class OptimizationRunner : BackgroundService
         // Kandidat = heutige Werte, ueberschrieben mit dem, was er vorschlaegt. So unterscheiden
         // sich Basis und Kandidat NUR in den vorgeschlagenen Groessen; Knoten, die er nicht
         // anfasst, wuerden sonst auf den Wert aus dem Mitschnitt zurueckfallen.
-        var ov = CurrentCalibrationOverrides();
+        var ov = _benchmark.CurrentCalibrationOverrides();
         var absorption = new Dictionary<string, double>(ov.AbsorptionByNode ?? new(), StringComparer.OrdinalIgnoreCase);
         var rxAdj = new Dictionary<string, double>(ov.RxAdjByNode ?? new(), StringComparer.OrdinalIgnoreCase);
         var changed = 0;
@@ -422,26 +422,5 @@ public class OptimizationRunner : BackgroundService
     }
 
 
-    /// <summary>
-    /// Die heute geltende Kalibrierung als Benchmark-Overrides. Noetig, damit ein Replay den
-    /// IST-Zustand misst statt den Zustand, der beim Aufzeichnen der Walk-Punkte galt - die
-    /// gespeicherten Distanzen sind bereits abgeleitete Werte und gegen spaetere Aenderungen blind.
-    /// </summary>
-    private BenchmarkOverrides CurrentCalibrationOverrides()
-    {
-        var absorption = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-        var rxAdj = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-        foreach (var id in _state.Nodes.Keys)
-        {
-            var cal = _nsd.Get(id)?.Calibration;
-            if (cal?.Absorption is { } a) absorption[id] = a;
-            if (cal?.RxAdjRssi is { } x) rxAdj[id] = x;
-        }
-        return new BenchmarkOverrides
-        {
-            AbsorptionByNode = absorption.Count > 0 ? absorption : null,
-            RxAdjByNode = rxAdj.Count > 0 ? rxAdj : null
-        };
-    }
 
 }

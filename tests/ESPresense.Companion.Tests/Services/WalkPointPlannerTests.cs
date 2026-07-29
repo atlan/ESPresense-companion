@@ -38,7 +38,10 @@ public class WalkPointPlannerTests
             new NodeSettingsStore(new Mock<IMqttCoordinator>().Object,
                 Mock.Of<Microsoft.Extensions.Logging.ILogger<NodeSettingsStore>>()),
             _pointsPath);
-        _benchmark = new CalibrationBenchmark(_state, _walkTest, _configLoader, new ScenarioReplay(_state, _configLoader), Path.Combine(_dir, "benchmark.json"));
+        _benchmark = new CalibrationBenchmark(_state, _walkTest, _configLoader, new ScenarioReplay(_state, _configLoader),
+            new NodeSettingsStore(new Mock<IMqttCoordinator>().Object,
+                Mock.Of<Microsoft.Extensions.Logging.ILogger<NodeSettingsStore>>()),
+            Path.Combine(_dir, "benchmark.json"));
     }
 
     [TearDown]

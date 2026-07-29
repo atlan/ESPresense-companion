@@ -84,6 +84,20 @@ public class WizardController(
                 FloorContrastWeight = req.FloorContrastWeight
             }
             : null;
+
+        // ★★★ Ohne ausdrueckliche Overrides wird die HEUTIGE Kalibrierung angelegt, nicht "gar
+        // keine". Die aufgezeichneten Distanzen sind bereits abgeleitete Werte - der Knoten hat
+        // sie mit der Kalibrierung gerechnet, die beim Spaziergang galt. Ein Lauf ohne Overrides
+        // misst also den MITSCHNITT und ist gegen jede spaetere Aenderung blind; er meldete
+        // monatelang eine Zahl, die niemandes Anlage beschreibt.
+        //
+        // Am 29.07.2026 gemessen, gleiche Daten, gleicher Moment:
+        //     ohne Overrides (Mitschnitt):  2,38 m · Raum 53,6 %
+        //     mit heutiger Kalibrierung:    1,98 m · Raum 57,6 %
+        //
+        // Wer den Mitschnitt SEHEN will, setzt useRecordedState - dafuer gibt es Gruende (was
+        // hat die Anlage damals geleistet), aber es ist nicht die Frage, die der Knopf stellt.
+        overrides ??= req?.UseRecordedState == true ? null : benchmark.CurrentCalibrationOverrides();
         return benchmark.Run(req?.Label, overrides);
     }
 
@@ -648,6 +662,12 @@ public class LocatorApplyRequest
 
 public class BenchmarkRunRequest
 {
+    /// <summary>
+    /// Den Zustand ZUR AUFNAHMEZEIT messen statt den heutigen. Vorgabe false: der Knopf fragt
+    /// "wie gut ist meine Anlage", nicht "wie gut war sie, als ich lief".
+    /// </summary>
+    public bool? UseRecordedState { get; set; }
+
     /// <summary>Free-text note so a run can be recognised later ("nach Absorptionsgrenze 2.0").</summary>
     public string? Label { get; set; }
     /// <summary>Replay with this device reference level instead of the recorded one.</summary>

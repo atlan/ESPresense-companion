@@ -104,7 +104,10 @@ public class CalibrationBenchmarkFloorTests
     }
 
     private CalibrationBenchmark MakeBenchmark() =>
-        new(_state, _walkTest, _configLoader, new ScenarioReplay(_state, _configLoader), Path.Combine(_dir, "benchmark.json"));
+        new(_state, _walkTest, _configLoader, new ScenarioReplay(_state, _configLoader),
+            new NodeSettingsStore(new Mock<IMqttCoordinator>().Object,
+                Mock.Of<Microsoft.Extensions.Logging.ILogger<NodeSettingsStore>>()),
+            Path.Combine(_dir, "benchmark.json"));
 
     [Test]
     public void Run_ScoresFloorDetectionOnAllAudibleNodes()

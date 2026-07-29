@@ -28,8 +28,41 @@ public class CalibrationBenchmark(
     WalkTestService walkTest,
     ConfigLoader configLoader,
     ScenarioReplay replay,
+    NodeSettingsStore nodeSettings,
     string? persistPath = null)
 {
+    /// <summary>
+    /// Die HEUTE geltende Kalibrierung als Overrides.
+    ///
+    /// ★★★ Warum das der Vorgabewert sein muss: die aufgezeichneten Distanzen sind bereits
+    /// ABGELEITETE Werte - der Knoten hat sie mit der Kalibrierung gerechnet, die beim
+    /// Spaziergang galt. Ein Replay ohne Overrides misst deshalb den MITSCHNITT, nicht die
+    /// Anlage, und ist gegen jede spaetere Kalibrieraenderung blind.
+    ///
+    /// ⚠ Am 27.07.2026 fiel das schon einmal auf und wurde im Optimierer-Gate behoben - der
+    /// Knopf in der Oberflaeche schickte weiterhin {label: null} und zeigte dem Benutzer
+    /// monatelang die falsche Zahl. Am 29.07. gemessen, gleiche Anlage, gleicher Moment:
+    ///     ohne Overrides (Mitschnitt):  2,38 m · Raum 53,6 %
+    ///     mit heutiger Kalibrierung:    1,98 m · Raum 57,6 %
+    /// Die zweite Zeile ist die Anlage. Die erste ist Vergangenheit.
+    /// </summary>
+    public BenchmarkOverrides CurrentCalibrationOverrides()
+    {
+        var absorption = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        var rxAdj = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in state.Nodes.Keys)
+        {
+            var cal = nodeSettings.Get(id)?.Calibration;
+            if (cal?.Absorption is { } a) absorption[id] = a;
+            if (cal?.RxAdjRssi is { } x) rxAdj[id] = x;
+        }
+        return new BenchmarkOverrides
+        {
+            AbsorptionByNode = absorption.Count > 0 ? absorption : null,
+            RxAdjByNode = rxAdj.Count > 0 ? rxAdj : null
+        };
+    }
+
     /// <summary>Fewer usable ticks than this and a point says more about luck than accuracy.</summary>
     private const int MinTicksPerPoint = 5;
 

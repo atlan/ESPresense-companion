@@ -103,6 +103,7 @@ builder.Services.AddSingleton(sp => new CalibrationBenchmark(
     sp.GetRequiredService<WalkTestService>(),
     sp.GetRequiredService<ConfigLoader>(),
     sp.GetRequiredService<ESPresense.Locators.ScenarioReplay>(),
+    sp.GetRequiredService<NodeSettingsStore>(),
     Path.Combine(storageDir, "benchmark-history.json")));
 builder.Services.AddSingleton(sp => new NodeMoveTracker(
     sp.GetRequiredService<State>(),
