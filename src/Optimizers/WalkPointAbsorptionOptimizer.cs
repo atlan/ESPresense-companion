@@ -221,6 +221,72 @@ public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest,
         return results;
     }
 
+    /// <summary>
+    /// Warum ein Knoten aus dem Fit faellt - fuer die Handlungsliste des Benutzers.
+    ///
+    /// ★ Bewusst HIER und nicht als eigene Rechnung anderswo: die Frage „welcher Knoten ist
+    /// nicht bestimmbar" hat genau eine richtige Antwort, naemlich die, nach der sich der Fit
+    /// tatsaechlich richtet. Eine zweite Nachbildung anderswo trifft sie NICHT - nachgemessen
+    /// am 29.07.2026: eine naheliegende Nachbildung ueber die blosse Entfernungsspanne kam auf
+    /// 5 Knoten, der Fit selbst auf 9 (weil er zusaetzlich je Faltung fitten muss und die
+    /// Teilmengen weniger Spannweite haben). Wer den Benutzer losschickt, muss ihm den echten
+    /// Grund nennen.
+    /// </summary>
+    public List<NodeFitStatus> Diagnose()
+    {
+        var aus = new List<NodeFitStatus>();
+        var opt = configLoader.Config?.Optimization;
+        var perPoint = Collect();
+        if (perPoint.Count < Folds) return aus;
+
+        var byNode = perPoint.SelectMany((s, i) => s.Select(x => (fold: i % Folds, sample: x)))
+                             .GroupBy(x => x.sample.NodeId, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in byNode)
+        {
+            var all = group.ToList();
+            var dists = all.Select(x => Math.Pow(10, x.sample.LogD)).ToList();
+            var status = new NodeFitStatus
+            {
+                NodeId = group.Key,
+                Samples = all.Count,
+                MinDistanceM = Math.Round(dists.Min(), 1),
+                MaxDistanceM = Math.Round(dists.Max(), 1)
+            };
+
+            if (all.Count < MinSamplesPerNode)
+            {
+                status.Reason = FitBlocker.TooFewSamples;
+                aus.Add(status);
+                continue;
+            }
+
+            if (Fit(all.Select(x => x.sample).ToList()) is not { } fit)
+            {
+                status.Reason = FitBlocker.NoDistanceSpan;
+                aus.Add(status);
+                continue;
+            }
+            status.Bins = fit.Bins;
+
+            // Auch der Hold-out muss je Faltung fitten koennen - sonst laesst sich der Kandidat
+            // nicht PRUEFEN, und ungeprueft wird nichts angewandt. Fuer den Benutzer ist das
+            // dieselbe Handlung: mehr Spannweite.
+            var folds = 0;
+            for (var f = 0; f < Folds; f++)
+            {
+                var train = all.Where(x => x.fold != f).Select(x => x.sample).ToList();
+                var test = all.Where(x => x.fold == f).Select(x => x.sample).ToList();
+                if (train.Count < MinSamplesPerNode / 2 || test.Count == 0) continue;
+                if (Fit(train) is not { }) continue;
+                folds++;
+            }
+            status.Reason = folds == 0 ? FitBlocker.NoDistanceSpanInFolds : FitBlocker.None;
+            aus.Add(status);
+        }
+        return aus;
+    }
+
     private readonly record struct FitResult(double Absorption, double RefRssi, int Bins);
 
     /// <summary>
@@ -271,4 +337,35 @@ public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest,
         var s = values.OrderBy(v => v).ToList();
         return s.Count == 0 ? 0 : s[s.Count / 2];
     }
+}
+
+
+public enum FitBlocker
+{
+    /// <summary>Der Knoten laesst sich fitten - nichts zu tun.</summary>
+    None,
+    /// <summary>Zu wenige Messungen ueberhaupt.</summary>
+    TooFewSamples,
+    /// <summary>
+    /// Alle Aufnahmen stehen ungefaehr gleich weit weg. rssi = ref − 10·A·log10(d) - ohne
+    /// Spannweite in d gibt es keine Steigung, und die Daempfung ist nicht vom Sendepegel
+    /// trennbar. MEHR Punkte helfen nicht, nur ANDERE Abstaende.
+    /// </summary>
+    NoDistanceSpan,
+    /// <summary>
+    /// Insgesamt reicht die Spannweite, aber nicht mehr, wenn zum Pruefen ein Teil
+    /// zurueckgehalten wird. Ungeprueft wird nichts angewandt - fuer den Benutzer dieselbe
+    /// Handlung: ein Punkt in deutlich anderer Entfernung.
+    /// </summary>
+    NoDistanceSpanInFolds
+}
+
+public class NodeFitStatus
+{
+    public string NodeId { get; set; } = "";
+    public int Samples { get; set; }
+    public int Bins { get; set; }
+    public double MinDistanceM { get; set; }
+    public double MaxDistanceM { get; set; }
+    public FitBlocker Reason { get; set; }
 }

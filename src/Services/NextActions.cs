@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Optimizers;
 
 namespace ESPresense.Services;
 
@@ -25,18 +26,9 @@ public class NextActions(
     WalkTestService walkTest,
     WizardDiagnostics diagnostics,
     WalkPointPlanner planner,
-    CalibrationBenchmark benchmark)
+    CalibrationBenchmark benchmark,
+    ConfigLoader configLoader)
 {
-    /// <summary>
-    /// Spiegel von WalkPointAbsorptionOptimizer: unterhalb dieser Spanne in log10(Entfernung)
-    /// hat die Gerade keine bestimmbare Steigung, und damit ist die Absorption des Knotens
-    /// nicht vom Referenzpegel trennbar. 0,3 entspricht Faktor 2 in der Entfernung.
-    /// </summary>
-    private const double MinLogSpan = 0.3;
-
-    /// <summary>Weniger Aufnahmen als das, und die Spanne ist ohnehin nicht bestimmbar.</summary>
-    private const int MinPointsPerNode = 3;
-
     /// <summary>Innerhalb dieses Radius mass diese Anlage 1,1 m Fehler, ausserhalb 2,5 m.</summary>
     private const double GoodCoverageM = 1.5;
 
@@ -44,7 +36,15 @@ public class NextActions(
     {
         var result = new NextActionsResult();
 
-        var letzte = benchmark.Last;
+        // ⚠ NICHT einfach benchmark.Last nehmen. Das ist der zuletzt GEMERKTE Lauf - und der
+        // kann von Hand mit anderen Einstellungen angestossen worden sein (etwa bewusst gegen
+        // den Mitschnitt). Genau so zeigte die Statuszeile 2,38 m statt der tatsaechlichen
+        // 1,98 m. Hier wird deshalb frisch gerechnet, mit der heutigen Kalibrierung; ein Lauf
+        // kostet unter einer Sekunde und wird nicht in den Verlauf geschrieben.
+        BenchmarkResult? letzte = null;
+        try { letzte = benchmark.Run(label: "status", overrides: benchmark.CurrentCalibrationOverrides(), remember: false); }
+        catch { /* ohne Walk-Punkte gibt es keinen Status - die Handlungen stehen trotzdem */ }
+
         if (letzte != null && letzte.Error == null)
             result.Status = new SystemStatus
             {
@@ -76,59 +76,55 @@ public class NextActions(
     /// rssi = ref − 10·A·log10(d); ohne Spannweite in d gibt es keine Steigung, und Absorption
     /// und Referenzpegel sind nicht voneinander trennbar. Mehr Punkte helfen nicht - andere
     /// Abstaende helfen.
+    ///
+    /// ⚠ Die Frage wird dem FIT gestellt, nicht nachgebildet. Eine naheliegende Nachbildung
+    /// ueber die blosse Entfernungsspanne kam am 29.07.2026 auf 5 Knoten, der Fit selbst auf 9 -
+    /// wer den Benutzer losschickt, muss ihm den echten Grund nennen.
     /// </summary>
     private void SpannweiteFehlt(NextActionsResult result)
     {
-        var punkte = walkTest.GetPoints();
-        var jeKnoten = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var p in punkte)
-        foreach (var a in p.Nodes)
-        {
-            if (a.Disabled || a.MapDistance <= 0.1) continue;
-            if (!jeKnoten.TryGetValue(a.NodeId, out var l)) jeKnoten[a.NodeId] = l = new List<double>();
-            l.Add(a.MapDistance);
-        }
-
-        var betroffen = new List<NodeSpan>();
-        foreach (var (id, dists) in jeKnoten)
-        {
-            if (dists.Count < MinPointsPerNode) continue;
-            var min = dists.Min();
-            var max = dists.Max();
-            if (Math.Log10(max / min) >= MinLogSpan) continue;
-
-            // Was fehlt: ein Punkt, der die Spanne auf Faktor 2 bringt. Lieber weiter weg als
-            // naeher - im Nahbereich wird der Fit von der Singularitaet bei 1 m gestoert.
-            var ziel = Math.Round(min * Math.Pow(10, MinLogSpan) * 1.2, 1);
-            betroffen.Add(new NodeSpan
+        var status = new WalkPointAbsorptionOptimizer(state, walkTest, configLoader).Diagnose();
+        var betroffen = status
+            .Where(s => s.Reason is FitBlocker.NoDistanceSpan or FitBlocker.NoDistanceSpanInFolds)
+            .OrderByDescending(s => s.Samples)
+            .Select(s => new NodeSpan
             {
-                NodeId = id,
-                NodeName = state.Nodes.TryGetValue(id, out var n) ? n.Name ?? id : id,
-                Points = dists.Count,
-                MinM = Math.Round(min, 1),
-                MaxM = Math.Round(max, 1),
-                SuggestedM = ziel
-            });
-        }
+                NodeId = s.NodeId,
+                NodeName = state.Nodes.TryGetValue(s.NodeId, out var n) ? n.Name ?? s.NodeId : s.NodeId,
+                Points = s.Samples,
+                MinM = s.MinDistanceM,
+                MaxM = s.MaxDistanceM,
+                // Ein Punkt, der die Spanne auf mindestens Faktor 2 bringt, mit Reserve. Lieber
+                // WEITER weg als naeher: bei 1 m faellt der Distanzterm weg, dort ist die
+                // Absorption prinzipiell nicht bestimmbar.
+                SuggestedM = Math.Round(Math.Max(s.MaxDistanceM * 1.6, s.MinDistanceM * 2.4), 1),
+                OnlyInFolds = s.Reason == FitBlocker.NoDistanceSpanInFolds
+            })
+            .ToList();
         if (betroffen.Count == 0) return;
 
-        betroffen = betroffen.OrderByDescending(b => b.Points).ToList();
+        var knapp = betroffen.Count(b => b.OnlyInFolds);
         result.Actions.Add(new NextAction
         {
             Id = "walk-span",
             Kind = ActionKind.Walk,
-            // Nutzen: das ist der einzige Befund, der die Kalibrierung ganzer Knoten BLOCKIERT.
-            // Alles andere macht sie schlechter, dieser macht sie unmoeglich.
+            // Der einzige Befund, der die Kalibrierung ganzer Knoten BLOCKIERT. Alles andere
+            // macht sie schlechter, dieser macht sie unmoeglich - deshalb immer obenauf.
             Value = 100 + betroffen.Count,
             Title = betroffen.Count == 1
                 ? $"Einen Walk-Punkt in anderer Entfernung zu {betroffen[0].NodeName} aufnehmen"
-                : $"Walk-Punkte in verschiedenen Entfernungen aufnehmen ({betroffen.Count} Knoten betroffen)",
-            Why = $"{betroffen.Count} Knoten lassen sich derzeit gar nicht kalibrieren: alle vorhandenen " +
-                  "Aufnahmen stehen ungefähr gleich weit von ihnen entfernt. Das Modell rechnet " +
+                : $"Walk-Punkte in verschiedenen Entfernungen aufnehmen — {betroffen.Count} Knoten betroffen",
+            Why = $"{betroffen.Count} Knoten lassen sich derzeit nicht kalibrieren: alle Aufnahmen, die " +
+                  "Pegel tragen, stehen ungefähr gleich weit von ihnen entfernt. Das Modell rechnet " +
                   "Pegel gegen den Logarithmus der Entfernung — ohne Spannweite gibt es keine Steigung, " +
                   "und die Dämpfung ist nicht vom Sendepegel zu trennen. Mehr Punkte helfen dabei " +
-                  "nicht, nur andere Abstände.",
-            Gain = "Schaltet die Kalibrierung dieser Knoten überhaupt erst frei.",
+                  "nicht, nur andere Abstände." +
+                  (knapp > 0
+                      ? $" Bei {knapp} davon reicht es knapp nicht mehr, sobald zum Prüfen ein Teil " +
+                        "zurückgehalten wird — ungeprüft wird nichts angewandt."
+                      : ""),
+            Gain = "Schaltet die Kalibrierung dieser Knoten überhaupt erst frei. Ein einziger Punkt " +
+                   "in der genannten Entfernung genügt je Knoten.",
             NodeSpans = betroffen.Take(8).ToList(),
             Suggestions = planner.Suggest(3)
         });
@@ -262,6 +258,8 @@ public class NodeSpan
     public double MaxM { get; set; }
     /// <summary>Entfernung, in der ein zusaetzlicher Punkt die Spanne ausreichend aufspannt.</summary>
     public double SuggestedM { get; set; }
+    /// <summary>Insgesamt reicht die Spanne, nur beim Zurueckhalten zum Pruefen nicht mehr.</summary>
+    public bool OnlyInFolds { get; set; }
 }
 
 public class SystemStatus
