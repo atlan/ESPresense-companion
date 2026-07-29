@@ -586,7 +586,15 @@ public class WalkTestService
             // default that Evaluate()/the fit use for unknown transmitters (the log-distance model
             // is linear in txRefRssi, so a constant RSSI shift is exactly equivalent). Without
             // this, baseline evaluation would apply a large constant error to every walk measure.
-            var rssiShift = RssiShiftFor(point);
+            // ⚠ BEWUSST die aufgezeichnete Schaetzung, nicht die frisch gerechnete. Die frische
+            // streut je nach Knotenauswahl des Punkts (am Bestand: im Badezimmer 4,1 -> 11,2 dB),
+            // und das hier ist die ZIELFUNKTION des Optimierers - die aendert man nicht nebenbei,
+            // sondern gemessen.
+            //
+            // → Offener naechster Schritt: alle Punkte dieser Anlage zeigen DENSELBEN Beacon. Sein
+            //   Referenzpegel ist EINE Zahl, nicht 33. Eine globale Schaetzung ueber alle Punkte
+            //   waere robuster als jede punktweise - erst messen, dann umstellen.
+            var rssiShift = point.TxRefRssiEstimate.HasValue ? DefaultTxRefRssi - point.TxRefRssiEstimate.Value : 0;
             foreach (var agg in point.Nodes)
             {
                 if (agg.Disabled) continue;

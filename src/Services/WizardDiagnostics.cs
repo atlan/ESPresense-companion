@@ -463,11 +463,27 @@ public class WizardDiagnostics(
             var dist = Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2) + Math.Pow(a.Z - b.Z, 2));
             if (dist > SamePlaceRadiusM) continue;
 
-            // ⚠ Frisch gerechnet, NICHT die gespeicherte Schaetzung: die friert die Kalibrierung
-            // vom Aufnahmetag ein, und ein veralteter Wert verschiebt die ganze Aufnahme. Genau so
-            // erschien wt3 hier als "unvereinbar", obwohl es roh nur 2,0 dB neben den anderen lag.
-            var shiftA = walkTest.RssiShiftFor(a);
-            var shiftB = walkTest.RssiShiftFor(b);
+            // ★★★ GAR KEINE Verschiebung, wenn beide Aufnahmen dasselbe Geraet zeigen - und das
+            // ist hier der Normalfall (alle 33 Punkte dieser Anlage: ein einziger Beacon).
+            //
+            // Der Referenzpegel ist eine Eigenschaft des SENDERS. Zwei Aufnahmen desselben Senders
+            // messen denselben Sendepegel, also kuerzt er sich beim Vergleich exakt weg. Jede
+            // punktweise SCHAETZUNG dieses Pegels traegt dagegen den Fehler ihrer eigenen
+            // Knotenauswahl und deren Absorptionen hinein - man vergleicht dann nicht mehr die
+            // Messungen, sondern zwei Schaetzfehler obendrauf.
+            //
+            // ⚠ Am Bestand durchgerechnet (29.07.2026), gleiche Daten, nur diese Zeile anders:
+            //     eingefrorene Schaetzung   3 unvereinbare Paare
+            //     frisch gerechnet          8   (schlechter! die Schaetzung streut je Punkt:
+            //                                    im Badezimmer 4,1 dB -> 11,2 dB Spanne)
+            //     gar keine Verschiebung    1
+            // Die Neuberechnung sah plausibel aus und war messbar schaedlich. Nachgemessen, nicht
+            // begruendet - eine Begruendung haette fuer alle drei Varianten gereicht.
+            //
+            // Bei VERSCHIEDENEN Geraeten kuerzt sich nichts, dann bleibt nur die Schaetzung.
+            var gleichesGeraet = string.Equals(a.DeviceId, b.DeviceId, StringComparison.OrdinalIgnoreCase);
+            var shiftA = gleichesGeraet ? 0 : walkTest.RssiShiftFor(a);
+            var shiftB = gleichesGeraet ? 0 : walkTest.RssiShiftFor(b);
 
             var deltas = new List<double>();
             var geoms = new List<double>();
