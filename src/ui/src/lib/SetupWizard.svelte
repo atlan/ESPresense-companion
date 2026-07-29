@@ -1028,8 +1028,8 @@
 								{#if a.nodeSpans?.length}
 									<div class="overflow-x-auto mt-2">
 										<table class="table table-compact text-xs">
-											<thead><tr><th>Knoten</th><th class="text-right">Aufnahmen</th>
-												<th class="text-right">bisher</th><th class="text-right">fehlt: ein Punkt bei</th></tr></thead>
+											<thead><tr><th>Knoten</th><th class="text-right!">Aufnahmen</th>
+												<th class="text-right!">bisher</th><th class="text-right!">fehlt: ein Punkt bei</th></tr></thead>
 											<tbody>
 												{#each a.nodeSpans as n}
 													<tr>
@@ -1834,10 +1834,10 @@
 								<table class="table table-compact w-full text-sm">
 									<thead>
 										<tr>
-											<th>Etage / Raum</th><th>Position</th><th class="text-right">Abstand</th>
-											<th class="text-right">Knoten</th><th class="text-right">Δ gemessen</th>
-											<th class="text-right">− Geometrie</th><th class="text-right">= Rest</th>
-											<th class="text-right">erklärbar</th><th class="text-right">Rest max</th>
+											<th>Etage / Raum</th><th>Position</th><th class="text-right!">Abstand</th>
+											<th class="text-right!">Knoten</th><th class="text-right!">Δ gemessen</th>
+											<th class="text-right!">− Geometrie</th><th class="text-right!">= Rest</th>
+											<th class="text-right!">erklärbar</th><th class="text-right!">Rest max</th>
 											<th>Was geschieht</th>
 										</tr>
 									</thead>
@@ -1909,8 +1909,8 @@
 							<table class="table table-compact w-full text-sm">
 								<thead class="sticky top-0 bg-surface-100-900">
 									<tr>
-										<th>Punkt</th><th>Knoten</th><th class="text-right">Messwerte</th>
-										<th class="text-right">Pegel</th><th class="text-right">Abstand</th>
+										<th>Punkt</th><th>Knoten</th><th class="text-right!">Messwerte</th>
+										<th class="text-right!">Pegel</th><th class="text-right!">Abstand</th>
 										<th>Grund</th><th></th>
 									</tr>
 								</thead>
@@ -1965,7 +1965,7 @@
 						<div class="overflow-x-auto mb-3">
 							<table class="table table-compact w-full text-sm">
 								<thead>
-									<tr><th>Punkt</th><th>Etage</th><th>Raum</th><th>Position</th><th class="text-right">Messungen</th><th>aufgenommen</th><th></th></tr>
+									<tr><th>Punkt</th><th>Etage</th><th>Raum</th><th>Position</th><th class="text-right!">Messungen</th><th>aufgenommen</th><th></th></tr>
 								</thead>
 								<tbody>
 									{#each diagnostics.staleWalkPoints as p}
