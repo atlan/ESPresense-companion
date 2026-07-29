@@ -94,10 +94,7 @@ public class NextActions(
                 Points = s.Samples,
                 MinM = s.MinDistanceM,
                 MaxM = s.MaxDistanceM,
-                // Ein Punkt, der die Spanne auf mindestens Faktor 2 bringt, mit Reserve. Lieber
-                // WEITER weg als naeher: bei 1 m faellt der Distanzterm weg, dort ist die
-                // Absorption prinzipiell nicht bestimmbar.
-                SuggestedM = Math.Round(Math.Max(s.MaxDistanceM * 1.6, s.MinDistanceM * 2.4), 1),
+                SuggestedM = Vorschlag(s),
                 OnlyInFolds = s.Reason == FitBlocker.NoDistanceSpanInFolds
             })
             .ToList();
@@ -128,6 +125,37 @@ public class NextActions(
             NodeSpans = betroffen.Take(8).ToList(),
             Suggestions = planner.Suggest(3)
         });
+    }
+
+    /// <summary>Naeher heran, so nah es sinnvoll ist.</summary>
+    private const double NahzielM = 1.4;
+
+    /// <summary>Darueber hinaus traegt eine Messung nichts mehr bei (siehe WalkPointPlanner).</summary>
+    private const double MaxNutzbarM = 12.0;
+
+    /// <summary>
+    /// In welcher Entfernung ein zusaetzlicher Punkt diesem Knoten hilft.
+    ///
+    /// ⚠ NAEHER, nicht weiter. Der erste Anlauf schlug „weiter weg" vor und kam bei einem Knoten
+    /// mit 3,5–10 m Spanne auf **16 m** heraus - eine Entfernung, die es im Haus nicht gibt.
+    /// Ein Rat, den man nicht befolgen kann, ist schlimmer als keiner. Naeher herangehen ist
+    /// dagegen immer moeglich: man stellt sich neben den Knoten.
+    ///
+    /// ⚠ Aber nicht bis auf einen Meter. Dort faellt der Distanzterm weg (log10(1) = 0) und die
+    /// Absorption ist prinzipiell nicht bestimmbar - genau die Singularitaet, an der sich heute
+    /// schon die Hygiene-Regel die Zaehne ausgebissen hat.
+    ///
+    /// Bei der knappen Variante (Spanne reicht nur ohne Hold-out) fehlt keine SPANNE, sondern
+    /// eine zweite Stuetze am Rand: dort hilft ein Punkt in der Naehe des naechstgelegenen.
+    /// </summary>
+    private static double Vorschlag(NodeFitStatus s)
+    {
+        if (s.Reason == FitBlocker.NoDistanceSpanInFolds)
+            return Math.Round(Math.Max(NahzielM, s.MinDistanceM * 0.9), 1);
+
+        if (s.MinDistanceM / 2.2 >= NahzielM) return Math.Round(s.MinDistanceM / 2.2, 1);
+        if (s.MaxDistanceM * 2.2 <= MaxNutzbarM) return Math.Round(s.MaxDistanceM * 2.2, 1);
+        return NahzielM;
     }
 
     private void DuenneAbdeckung(NextActionsResult result, WizardDiagnosticsResult diag)

@@ -11,7 +11,7 @@
 	interface NextAction {
 		id: string; rank: number; kind: 'Walk' | 'Hardware' | 'Cleanup' | number;
 		title: string; why: string; gain?: string | null;
-		nodeSpans?: { nodeId: string; nodeName?: string | null; points: number; minM: number; maxM: number; suggestedM: number }[] | null;
+		nodeSpans?: { nodeId: string; nodeName?: string | null; points: number; minM: number; maxM: number; suggestedM: number; onlyInFolds: boolean }[] | null;
 		rooms?: string[] | null;
 		suggestions?: { x: number; y: number; z: number; floorId?: string | null; roomName?: string | null; nearestNodeM: number }[] | null;
 	}
@@ -991,14 +991,17 @@
 									<div class="overflow-x-auto mt-2">
 										<table class="table table-compact text-xs">
 											<thead><tr><th>Knoten</th><th class="text-right">Aufnahmen</th>
-												<th class="text-right">bisher</th><th class="text-right">gebraucht wird</th></tr></thead>
+												<th class="text-right">bisher</th><th class="text-right">fehlt: ein Punkt bei</th></tr></thead>
 											<tbody>
 												{#each a.nodeSpans as n}
 													<tr>
 														<td>{n.nodeName ?? n.nodeId}</td>
 														<td class="text-right">{n.points}</td>
 														<td class="text-right">{n.minM}–{n.maxM} m</td>
-														<td class="text-right font-semibold">ab {n.suggestedM} m</td>
+														<td class="text-right font-semibold">
+															≈{n.suggestedM} m
+															{#if n.onlyInFolds}<span class="text-surface-600-400 font-normal" title="Die Spanne reicht insgesamt, aber nicht mehr, sobald zum Prüfen ein Teil zurückgehalten wird — es fehlt eine zweite Stütze am nahen Rand">(zweite Stütze)</span>{/if}
+														</td>
 													</tr>
 												{/each}
 											</tbody>
