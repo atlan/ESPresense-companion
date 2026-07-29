@@ -180,12 +180,22 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
     /// pair is more likely an RF obstruction and stays quiet here (that's what excluded_pairs is
     /// for). Because the tracker resets a node's pairs when its position changes, this check also
     /// re-evaluates cleanly after a node is moved.
+    ///
+    /// ⚠ Die Schlussfolgerung haengt davon ab, WIE VIELE betroffen sind. Bei einem oder zwei
+    /// Knoten ist eine falsche Eingabe die wahrscheinliche Erklaerung. Bei einem Drittel der
+    /// Anlage nicht mehr - dann ist die gemeinsame Ursache das Modell, und der Rat "pruef die
+    /// Koordinaten" schickt den Benutzer reihenweise auf eine Suche ins Leere. Ein Melder, der
+    /// aus einer systemischen Eigenschaft zwoelf Einzelvorwuerfe macht, ist schlimmer als
+    /// keiner: man glaubt ihm und sucht falsch.
     /// </summary>
     private void CheckNodePlacementSanity(WizardValidationResult result)
     {
         var pairErrors = pairErrorTracker.GetPairErrors()
             .Where(p => p.Samples >= PlacementMinSamples)
             .ToList();
+
+        var auffaellig = new List<(string Name, string Id, int Nachbarn, double Median)>();
+        var geprueft = 0;
 
         foreach (var (id, node) in state.Nodes)
         {
@@ -201,18 +211,47 @@ public class WizardService(State state, NodeTelemetryStore nts, ConfigLoader con
 
             errors.Sort();
             var median = errors[errors.Count / 2];
+            geprueft++;
             if (median > PlacementErrorThreshold)
-            {
-                result.Issues.Add(new ValidationIssue
-                {
-                    Severity = ValidationSeverity.Warning,
-                    Category = "placement_mismatch",
-                    NodeId = id,
-                    Message = $"Node '{node.Name ?? id}': RSSI-estimated distances to {errors.Count} same-floor neighbors have disagreed with its map position " +
-                              $"over the last minutes (median error {median:P0}). Check the entered X/Y/Z - a wrong height or transposed coordinates typically looks exactly like this."
-                });
-            }
+                auffaellig.Add((node.Name ?? id, id, errors.Count, median));
         }
+
+        if (auffaellig.Count == 0) return;
+        auffaellig.Sort((x, y) => y.Median.CompareTo(x.Median));
+
+        // ★★★ Der Punkt, an dem dieser Melder frueher falsch lag: er urteilte je Knoten und kam
+        // damit zum Schluss "die eingetragenen Koordinaten stimmen nicht". Bei EINEM Knoten ist
+        // das die richtige Erklaerung. Bei ZWOELF von achtzehn ist es keine mehr - niemand vertippt
+        // sich bei zwei Dritteln seiner Knoten, und der Benutzer laeuft zwoelfmal los, um etwas zu
+        // suchen, das nicht da ist. (Genau so gemeldet, 29.07.2026: "An der Positionierung der
+        // Nodes hat sich nichts geaendert, aber fuer etliche wird sowas angezeigt.")
+        //
+        // Wenn ein grosser Teil der Anlage betroffen ist, ist die GEMEINSAME Ursache die
+        // wahrscheinliche: das Pfadverlustmodell bildet dieses Gebaeude nicht ab. Deckt sich mit
+        // den uebrigen Befunden dieser Anlage (Knotenpaare, die kein Pfadverlust erklaert;
+        // Knoten, die eine Absorption ausserhalb der Grenzen fordern).
+        var systemisch = auffaellig.Count >= Math.Max(3, geprueft / 3.0);
+        var schlimmste = string.Join(", ", auffaellig.Take(3).Select(a => $"{a.Name} {a.Median:P0}"));
+
+        result.Issues.Add(new ValidationIssue
+        {
+            Severity = ValidationSeverity.Warning,
+            Category = "placement_mismatch",
+            // Nur bei genau einem Knoten zeigt die Meldung auf ihn - sonst gibt es keinen einen.
+            NodeId = auffaellig.Count == 1 ? auffaellig[0].Id : null,
+            Message = systemisch
+                ? $"{auffaellig.Count} of {geprueft} nodes measure distances to their same-floor neighbours that " +
+                  $"disagree with the map, the largest being {schlimmste}. " +
+                  "⚠ With this many at once, entered coordinates are NOT the likely cause - nobody mistypes two " +
+                  "thirds of their nodes. The shared explanation is that the path-loss model does not describe " +
+                  "this building: walls, floors and furniture attenuate more than any single absorption value can " +
+                  "represent, so measured distances come out systematically too long. Do not go checking X/Y/Z " +
+                  "unless a node also stands out in the signal-outlier table. This number tells you how far the " +
+                  "model is from the building, not where the nodes hang."
+                : $"{auffaellig.Count} node(s) measure distances to their same-floor neighbours that disagree with " +
+                  $"the map: {schlimmste}. With only a few affected, a wrong entry is the likely cause - check the " +
+                  "entered X/Y/Z, a wrong height or transposed coordinates typically looks exactly like this."
+        });
     }
 
     public HealthGateResult HealthGate()
