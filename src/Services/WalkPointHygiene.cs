@@ -92,9 +92,27 @@ public class WalkPointHygiene(WalkTestService walkTest)
     /// </summary>
     public List<Befund> ResolveSingleNodeConflicts(IEnumerable<(string IdA, string IdB, string NodeId, double MaxDb, double ExplainableDb)> faelle)
     {
+        var punkte = walkTest.GetPoints();
+        var gesamt = punkte.Sum(p => p.Nodes.Count);
+        var schonAus = punkte.Sum(p => p.Nodes.Count(n => n.Disabled));
+        var deckel = (int)Math.Floor(gesamt * MaxShareOfFleet);
+
         var getan = new List<Befund>();
         foreach (var f in faelle)
         {
+            // ⚠ Der Deckel zaehlt ALLES Stillgelegte, nicht nur diesen Lauf. Sonst umgeht jede
+            // zusaetzliche Regel ihn, indem sie ihr eigenes Kontingent bekommt - und die Summe
+            // waechst unbegrenzt, obwohl jede einzelne Regel brav unter der Grenze bleibt.
+            if (schonAus + getan.Count + 2 > deckel)
+            {
+                Log.Warning("Walk-Punkt-Hygiene: Deckel erreicht ({Aus} von {Gesamt} Messungen stillgelegt, " +
+                            "Grenze {Cap}). Weitere Einzelknoten-Widersprueche bleiben stehen und sind in der " +
+                            "Diagnose sichtbar - so viel Stilllegen auf einmal deutet auf ein gemeinsames " +
+                            "Problem, nicht auf lauter Einzelfaelle.",
+                            schonAus + getan.Count, gesamt, deckel);
+                break;
+            }
+
             var grund = $"Einzelner Knoten weicht um {f.MaxDb:0.0} dB ab, erklaerbar waeren {f.ExplainableDb:0.0} dB " +
                         $"(Doppel-Aufnahme {f.IdA}/{f.IdB} am selben Ort). Welche der beiden falsch liegt, ist nicht " +
                         "bestimmbar - deshalb schweigen beide.";

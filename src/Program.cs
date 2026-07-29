@@ -156,11 +156,24 @@ try
     // Danach die Einzelknoten-Widersprueche: zwei Aufnahmen am selben Ort, bei denen GENAU EIN
     // Knoten aus der Reihe faellt. Reihenfolge zaehlt - Apply() nimmt vorher unbrauchbare
     // Messungen heraus, die den Vergleich sonst mit verzerren wuerden.
-    var diag = app.Services.GetRequiredService<WizardDiagnostics>().Analyze();
-    var einzel = diag.ConflictingWalkPairs
-        .Where(c => c.Irreconcilable && c.SingleNodeOnly && c.MaxDeltaNode != null)
-        .Select(c => (c.IdA, c.IdB, c.MaxDeltaNode!, c.MaxDeltaDb, c.ExplainableDb));
-    hygiene.ResolveSingleNodeConflicts(einzel);
+    // ⚠ Mehrere Durchgaenge, aber GEDECKELT. Jede Stilllegung verschiebt die Mediane des Paares,
+    // wodurch ein bisher zweitschlimmster Knoten ueber die Schwelle rutschen kann - das ist echt
+    // (er lag immer so weit daneben), aber es ist auch genau die Kaskade, vor der der Deckel
+    // schuetzt. Drei Durchgaenge reichen erfahrungsgemaess; was danach bleibt, steht in der
+    // Diagnose und ist damit sichtbar statt stillschweigend weggeraeumt.
+    var diagnostics = app.Services.GetRequiredService<WizardDiagnostics>();
+    for (var runde = 1; runde <= 3; runde++)
+    {
+        var einzel = diagnostics.Analyze().ConflictingWalkPairs
+            .Where(c => c.Irreconcilable && c.SingleNodeOnly && c.MaxDeltaNode != null)
+            .Select(c => (c.IdA, c.IdB, c.MaxDeltaNode!, c.MaxDeltaDb, c.ExplainableDb))
+            .ToList();
+        if (einzel.Count == 0) break;
+        var getan = hygiene.ResolveSingleNodeConflicts(einzel);
+        Log.Information("Walk-Punkt-Hygiene Runde {Runde}: {Faelle} Einzelknoten-Widersprueche, " +
+                        "{Getan} Messungen stillgelegt", runde, einzel.Count, getan.Count);
+        if (getan.Count == 0) break;   // Deckel erreicht oder nichts mehr zu tun
+    }
 }
 catch (Exception ex) { Log.Warning(ex, "Walk-Punkt-Hygiene beim Start fehlgeschlagen"); }
 
