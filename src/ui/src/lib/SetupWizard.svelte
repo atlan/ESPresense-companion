@@ -1111,7 +1111,6 @@
 			{#if zeigeDetails}
 			<section class="space-y-6">
 				<header class="flex items-baseline gap-3 pt-2">
-					<span class="badge preset-filled-primary-500 shrink-0">Schritt 1</span>
 					<h2 class="text-xl font-bold">Pruefen</h2>
 				</header>
 				<p class="text-sm text-surface-600-400 -mt-4">Stimmen Knoten und Konfiguration? Alles Weitere misst sonst nur den Defekt.</p>
@@ -1187,7 +1186,6 @@
 
 			<section class="space-y-6">
 				<header class="flex items-baseline gap-3 pt-2">
-					<span class="badge preset-filled-primary-500 shrink-0">Schritt 2</span>
 					<h2 class="text-xl font-bold">Messen</h2>
 				</header>
 				<p class="text-sm text-surface-600-400 -mt-4">Der Walk-Test liefert die Grundwahrheit, gegen die alle folgenden Schritte rechnen. Ohne ihn koennen sie nichts sagen.</p>
@@ -1318,7 +1316,6 @@
 
 			<section class="space-y-6">
 				<header class="flex items-baseline gap-3 pt-2">
-					<span class="badge preset-filled-primary-500 shrink-0">Schritt 3</span>
 					<h2 class="text-xl font-bold">Kalibrieren</h2>
 				</header>
 				<p class="text-sm text-surface-600-400 -mt-4">Aus den Messungen die Funkparameter je Knoten bestimmen - Absorption, Empfindlichkeit, Ausreisser-Paare.</p>
@@ -1550,7 +1547,6 @@
 
 			<section class="space-y-6">
 				<header class="flex items-baseline gap-3 pt-2">
-					<span class="badge preset-filled-primary-500 shrink-0">Schritt 4</span>
 					<h2 class="text-xl font-bold">Verorten</h2>
 				</header>
 				<p class="text-sm text-surface-600-400 -mt-4">Welche Locators sollen laufen und mit welchen Parametern? Gemessen am Szenarien-Wettbewerb, so wie er live entscheidet.</p>
@@ -1698,7 +1694,6 @@
 
 			<section class="space-y-6">
 				<header class="flex items-baseline gap-3 pt-2">
-					<span class="badge preset-filled-primary-500 shrink-0">Schritt 5</span>
 					<h2 class="text-xl font-bold">Nachweisen</h2>
 				</header>
 				<p class="text-sm text-surface-600-400 -mt-4">Was kommt am Ende heraus? Dieselbe Messweise wie in Schritt 4, damit die Zahlen vergleichbar sind.</p>
@@ -1706,8 +1701,9 @@
 			<div class="card p-4">
 				<header class="flex items-center justify-between mb-3">
 					<h2 class="text-lg font-semibold">Accuracy Benchmark</h2>
-					<button class="btn preset-filled-primary-500" onclick={runBenchmark} disabled={benchBusy}>
-						{benchBusy ? 'Running...' : 'Run'}
+					<button class="btn btn-sm preset-tonal" onclick={runBenchmark} disabled={benchBusy}
+						title="Läuft nach jedem Optimierungsdurchgang ohnehin von selbst — dieser Knopf misst nur sofort">
+						{benchBusy ? 'misst …' : 'jetzt neu messen'}
 					</button>
 				</header>
 				<p class="text-sm text-surface-600-400 mb-3">
@@ -1951,10 +1947,20 @@
 					{/if}
 
 					{#if (diagnostics.staleWalkPoints?.length ?? 0) > 0 && diagnostics.staleWalkPoints}
-						<h3 class="font-semibold text-sm mb-2">Walk-Punkte ohne Pegel — nachzuholen ({diagnostics.staleWalkPoints.length})</h3>
+						<h3 class="font-semibold text-sm mb-2">Walk-Punkte ohne aufgezeichnete Pegel ({diagnostics.staleWalkPoints.length})</h3>
 						<p class="text-xs text-surface-600-400 mb-2">
-							Ein neuer Spaziergang legt einen <em>zusätzlichen</em> Punkt an — der alte bleibt
-							stehen. Die Liste wird also nur kürzer, wenn du den alten hier löschst.
+							<strong>Diese Punkte sind in Ordnung</strong> — sie stammen nur aus einer Zeit, in der
+							die Pegel noch nicht mitgeschrieben wurden. Für den Locator zählen sie voll mit; nur
+							eine Kalibrierung können sie nicht bewerten, weil sie auf eine geänderte Kalibrierung
+							gar nicht reagieren. Die Statuszeile oben nennt deshalb beide Zahlen getrennt.
+							Es gibt hier <em>nichts nachzuholen</em>.
+						</p>
+						<p class="text-xs text-surface-600-400 mb-2">
+							Wo du dennoch messen solltest, steht oben unter „Was du tun kannst" — dort zählt die
+							Entfernung zu bestimmten Knoten, nicht diese Liste. Und beachte: ein neuer Spaziergang
+							legt einen <em>zusätzlichen</em> Punkt an, der alte bleibt stehen. Die Liste wird also
+							nur kürzer, wenn du hier löschst — was du nur tun solltest, wenn ein Punkt wirklich
+							falsch ist.
 						</p>
 						<div class="overflow-x-auto mb-3">
 							<table class="table table-compact w-full text-sm">
