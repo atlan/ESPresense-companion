@@ -166,6 +166,22 @@ public class OptimizationRunner : BackgroundService
                 for (int i = 0; i < 3; i++)
                 {
                     _state.TakeOptimizationSnapshot();
+                    // ★ Nach jedem Durchlauf EINMAL messen und merken. Damit ist die Zahl, die
+                    // der Benutzer sieht, immer die aktuelle Anlage - er muss keinen Knopf
+                    // druecken, um zu erfahren, wie gut sein System ist. Ein Lauf kostet unter
+                    // einer Sekunde (1500 Ticks), das Intervall betraegt Stunden.
+                    //
+                    // ⚠ MIT den heutigen Overrides, sonst misst er den Mitschnitt - siehe
+                    // CalibrationBenchmark.CurrentCalibrationOverrides().
+                    try
+                    {
+                        _benchmark.Run(label: "auto", overrides: _benchmark.CurrentCalibrationOverrides());
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Automatischer Benchmark nach dem Optimierungslauf fehlgeschlagen");
+                    }
+
                     await InterruptibleDelay(TimeSpan.FromSeconds(optimization.IntervalSecs), stoppingToken);
                 }
 

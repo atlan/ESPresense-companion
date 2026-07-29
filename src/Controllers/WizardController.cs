@@ -25,6 +25,7 @@ public class WizardController(
     State state,
     WalkTestService walkTest,
     WalkPointHygiene hygiene,
+    NextActions nextActions,
     AutoTuneService autoTune,
     LocatorTuneService locatorTune) : ControllerBase
 {
@@ -44,6 +45,13 @@ public class WizardController(
     /// Measurement-level diagnostics: does the radio data agree with the map? Complements
     /// /api/wizard/validation, which only checks the geometry.
     /// </summary>
+    /// <summary>
+    /// Was der Benutzer tun kann, damit es besser wird - und wie gut es gerade ist.
+    /// Die eine Frage, die diese Seite beantworten soll.
+    /// </summary>
+    [HttpGet("api/wizard/next-actions")]
+    public IActionResult GetNextActions() => Ok(nextActions.Compute());
+
     [HttpGet("api/wizard/diagnostics")]
     public WizardDiagnosticsResult GetDiagnostics()
     {

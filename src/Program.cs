@@ -94,6 +94,7 @@ builder.Services.AddSingleton<WizardService>();
 builder.Services.AddSingleton<DeviceIdentityTracker>();
 builder.Services.AddSingleton<WizardDiagnostics>();
 builder.Services.AddSingleton<WalkPointHygiene>();
+builder.Services.AddSingleton<NextActions>();
 builder.Services.AddSingleton<WalkPointPlanner>();
 builder.Services.AddSingleton<CalibrationSweepService>();
 builder.Services.AddSingleton<LocatorSweepService>();

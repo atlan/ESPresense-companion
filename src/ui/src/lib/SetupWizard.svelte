@@ -8,6 +8,36 @@
 
 	const toastStore = getToastStore();
 
+	interface NextAction {
+		id: string; rank: number; kind: 'Walk' | 'Hardware' | 'Cleanup' | number;
+		title: string; why: string; gain?: string | null;
+		nodeSpans?: { nodeId: string; nodeName?: string | null; points: number; minM: number; maxM: number; suggestedM: number }[] | null;
+		rooms?: string[] | null;
+		suggestions?: { x: number; y: number; z: number; floorId?: string | null; roomName?: string | null; nearestNodeM: number }[] | null;
+	}
+	interface SystemStatus {
+		medianErrorM?: number | null; p90ErrorM?: number | null;
+		roomHitRate?: number | null; floorHitRate?: number | null;
+		measuredAt?: string | null; points: number;
+	}
+	let todo: { status?: SystemStatus | null; actions: NextAction[] } | null = null;
+
+	// Der Rest der Seite ist eingeklappt. Wer die Werkzeuge sucht, findet sie — aber die Seite
+	// beantwortet zuerst die Frage, mit der man kommt: was muss ich tun.
+	let zeigeDetails = false;
+	let zeigeExperte = false;
+
+	const KIND_TEXT: Record<string, string> = {
+		Walk: 'Hingehen und messen',
+		Hardware: 'Etwas anfassen',
+		Cleanup: 'Aufräumen'
+	};
+	const KIND_CLASS: Record<string, string> = {
+		Walk: 'preset-filled-primary-500',
+		Hardware: 'preset-filled-warning-500',
+		Cleanup: 'preset-tonal'
+	};
+
 	interface DisabledMeasurement {
 		pointId: string; nodeId: string; nodeName?: string | null;
 		floorId?: string | null; x: number; y: number; z: number;
@@ -428,7 +458,7 @@
 
 	async function fetchAll() {
 		try {
-			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes, offRes] = await Promise.all([
+			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes, offRes, naRes] = await Promise.all([
 				fetch(apiPath('/api/wizard/validation')),
 				fetch(apiPath('/api/wizard/health')),
 				fetch(apiPath('/api/wizard/excluded-pairs/suggestions')),
@@ -437,6 +467,7 @@
 				fetch(apiPath('/api/wizard/diagnostics')),
 				fetch(apiPath('/api/wizard/benchmark')),
 				fetch(apiPath('/api/wizard/walktest/disabled')),
+				fetch(apiPath('/api/wizard/next-actions')),
 			]);
 			if (vRes.ok) validation = await vRes.json();
 			if (hRes.ok) health = await hRes.json();
@@ -457,6 +488,7 @@
 			if (dRes.ok) diagnostics = await dRes.json();
 			if (bRes.ok) benchmark = await bRes.json();
 			if (offRes.ok) stillgelegt = await offRes.json();
+			if (naRes.ok) todo = await naRes.json();
 		} catch (error) {
 			console.error('Error fetching wizard data:', error);
 		} finally {
@@ -569,6 +601,15 @@
 		wtX = s.x;
 		wtY = s.y;
 		wtZ = s.z;
+	}
+
+	/// Aus der Handlungsliste heraus: Koordinaten uebernehmen, Details AUFKLAPPEN und
+	/// hinscrollen. Ohne das Aufklappen fuellt der Klick ein Formular, das der Benutzer
+	/// nicht sieht - er drueckt und nichts passiert.
+	function vorschlagUebernehmen(s: WalkPointSuggestion) {
+		useSuggestion(s);
+		zeigeDetails = true;
+		pendingWalkScroll = true;
 	}
 
 	async function fetchLocatorTune() {
@@ -896,6 +937,107 @@
 		{#if loading}
 			<p class="text-surface-600-400">Loading setup checks...</p>
 		{:else}
+			<!-- ══ Statuszeile: EINE Zahl, ohne dass jemand einen Knopf druecken muss ══ -->
+			{#if todo?.status?.medianErrorM != null}
+				<div class="card p-4 preset-tonal-primary">
+					<div class="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+						<span class="text-sm text-surface-600-400">Deine Anlage</span>
+						<span><strong class="text-2xl">{todo.status.medianErrorM.toFixed(2)} m</strong>
+							<span class="text-sm text-surface-600-400">typischer Fehler</span></span>
+						{#if todo.status.roomHitRate != null}
+							<span><strong class="text-xl">{(todo.status.roomHitRate * 100).toFixed(0)} %</strong>
+								<span class="text-sm text-surface-600-400">richtiger Raum</span></span>
+						{/if}
+						{#if todo.status.floorHitRate != null}
+							<span><strong class="text-xl">{(todo.status.floorHitRate * 100).toFixed(0)} %</strong>
+								<span class="text-sm text-surface-600-400">richtige Etage</span></span>
+						{/if}
+					</div>
+					<p class="text-xs text-surface-600-400 mt-2">
+						Gemessen an {todo.status.points} abgelaufenen Punkten mit der Kalibrierung, die
+						<em>heute</em> gilt{#if todo.status.measuredAt} — zuletzt {new Date(todo.status.measuredAt).toLocaleString()}{/if}.
+						Läuft nach jedem Optimierungsdurchgang von selbst.
+					</p>
+				</div>
+			{/if}
+
+			<!-- ══ Was du tun kannst ══ -->
+			<div class="card p-4">
+				<h2 class="text-lg font-semibold mb-1">Was du tun kannst</h2>
+				<p class="text-xs text-surface-600-400 mb-3">
+					Nur Dinge, die ein Mensch tun muss, weil sie in der echten Welt passieren. Alles, was
+					eine Rechnung ist, erledigt der Assistent selbst — dafür gibt es hier keine Knöpfe.
+					Nach Nutzen sortiert.
+				</p>
+
+				{#if !todo?.actions?.length}
+					<p class="text-sm">Nichts zu tun — an der Anlage selbst ist gerade nichts zu verbessern.
+						Der Assistent kalibriert im Hintergrund weiter.</p>
+				{:else}
+					<ol class="space-y-4">
+						{#each todo.actions as a}
+							<li class="border-l-4 pl-3 {a.rank === 1 ? 'border-primary-500' : 'border-surface-300-700'}">
+								<div class="flex items-start gap-2 flex-wrap">
+									<span class="badge {KIND_CLASS[a.kind as string] ?? 'preset-tonal'} shrink-0">
+										{KIND_TEXT[a.kind as string] ?? a.kind}
+									</span>
+									<strong class="text-base">{a.title}</strong>
+									{#if a.rank === 1}<span class="badge preset-tonal-primary">größter Hebel</span>{/if}
+								</div>
+								<p class="text-sm mt-1">{a.why}</p>
+								{#if a.gain}<p class="text-sm text-surface-600-400 mt-1">{a.gain}</p>{/if}
+
+								{#if a.nodeSpans?.length}
+									<div class="overflow-x-auto mt-2">
+										<table class="table table-compact text-xs">
+											<thead><tr><th>Knoten</th><th class="text-right">Aufnahmen</th>
+												<th class="text-right">bisher</th><th class="text-right">gebraucht wird</th></tr></thead>
+											<tbody>
+												{#each a.nodeSpans as n}
+													<tr>
+														<td>{n.nodeName ?? n.nodeId}</td>
+														<td class="text-right">{n.points}</td>
+														<td class="text-right">{n.minM}–{n.maxM} m</td>
+														<td class="text-right font-semibold">ab {n.suggestedM} m</td>
+													</tr>
+												{/each}
+											</tbody>
+										</table>
+									</div>
+								{/if}
+
+								{#if a.rooms?.length}
+									<ul class="text-xs text-surface-600-400 mt-2 list-disc list-inside">
+										{#each a.rooms as r}<li>{r}</li>{/each}
+									</ul>
+								{/if}
+
+								{#if a.suggestions?.length}
+									<p class="text-xs text-surface-600-400 mt-2">Vorgeschlagene Stellen:</p>
+									<div class="flex flex-wrap gap-2 mt-1">
+										{#each a.suggestions as sug}
+											<button type="button" class="btn btn-sm preset-tonal-primary"
+												onclick={() => vorschlagUebernehmen(sug)}
+												title="Koordinaten ins Formular übernehmen">
+												{sug.roomName ?? '—'} ({sug.x}, {sug.y})
+											</button>
+										{/each}
+									</div>
+								{/if}
+							</li>
+						{/each}
+					</ol>
+				{/if}
+			</div>
+
+			<!-- ══ Alles Weitere: eingeklappt ══ -->
+			<button type="button" class="btn preset-tonal w-full justify-between"
+				onclick={() => (zeigeDetails = !zeigeDetails)}>
+				<span>Details — Prüfungen, Messungen, Diagnosen</span>
+				<span>{zeigeDetails ? '▲' : '▼'}</span>
+			</button>
+
+			{#if zeigeDetails}
 			<section class="space-y-6">
 				<header class="flex items-baseline gap-3 pt-2">
 					<span class="badge preset-filled-primary-500 shrink-0">Schritt 1</span>
@@ -1785,7 +1927,15 @@
 				{/if}
 			</div>
 			</section>
+			{/if}
 
+			<button type="button" class="btn preset-tonal w-full justify-between"
+				onclick={() => (zeigeExperte = !zeigeExperte)}>
+				<span>Experte — Einstellungen, Grenzen, Konfigurationsdateien</span>
+				<span>{zeigeExperte ? '▲' : '▼'}</span>
+			</button>
+
+			{#if zeigeExperte}
 			<section class="space-y-6">
 				<header class="flex items-baseline gap-3 pt-2">
 					<span class="badge preset-tonal-surface shrink-0">Experten</span>
@@ -1948,6 +2098,7 @@
 				{/if}
 			</div>
 			</section>
+			{/if}
 		{/if}
 	</div>
 </div>
