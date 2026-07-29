@@ -122,11 +122,14 @@ public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest,
         {
             if (point.Raw.Count == 0) continue;
             var truth = new Point3D(point.X, point.Y, point.Z);
-            var recorded = point.Nodes.ToDictionary(n => n.NodeId, n => n.MapDistance, StringComparer.OrdinalIgnoreCase);
+            var recorded = point.Nodes.Where(n => !n.Disabled)
+                                      .ToDictionary(n => n.NodeId, n => n.MapDistance, StringComparer.OrdinalIgnoreCase);
+            var stillgelegt = point.DisabledNodeIds();
             var samples = new List<Sample>();
 
             foreach (var e in point.Raw)
             {
+                if (stillgelegt.Contains(e.N)) continue;
                 if (e.R is not { } rssi || e.Ref is not { } refRssi) continue;
 
                 double d;

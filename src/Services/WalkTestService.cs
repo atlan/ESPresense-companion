@@ -112,12 +112,46 @@ public class WalkTestService
         public double NodeLocY { get; set; }
         public double NodeLocZ { get; set; }
 
+        /// <summary>
+        /// Stillgelegt: diese EINE Knotenmessung geht nicht mehr in Fit, Gate oder
+        /// Pruefstand ein. Bewusst je Messung und nicht je Punkt - die Belege sind
+        /// knotenweise (ein umgehaengter Knoten macht acht andere Messungen desselben
+        /// Punkts nicht falsch), und der Bestand ist mit 10 von 32 Punkten mit Pegel
+        /// zu duenn, um Brauchbares mitzuwerfen.
+        ///
+        /// ⚠ NICHT loeschen: Walk-Punkte sind zu Fuss erlaufene Bodenwahrheit, und die
+        /// Diagnose, die sie verurteilt, kann irren - am 29.07.2026 wanderte die Zahl
+        /// der "unvereinbaren" Paare an einem Tag von 9 ueber 5 auf 3, nur weil der
+        /// Melder besser rechnete. Umkehrbarkeit schuetzt nicht vor der Zukunft,
+        /// sondern vor der eigenen Diagnose.
+        /// </summary>
+        public bool Disabled { get; set; }
+        /// <summary>Warum stillgelegt - im Klartext, damit ein spaeterer Lauf
+        /// unterscheiden kann, was zurueckkommen darf (Modellstreit) und was nie
+        /// (Knoten umgezogen, Wert physikalisch unmoeglich).</summary>
+        public string? DisabledReason { get; set; }
+        /// <summary>Kennung des Grundes zum maschinellen Auswerten (z.B. "few-samples").</summary>
+        public string? DisabledRule { get; set; }
+        public DateTime? DisabledAt { get; set; }
+
         [System.Text.Json.Serialization.JsonIgnore]
         public Point3D NodeLocationAtRecord => new(NodeLocX, NodeLocY, NodeLocZ);
     }
 
     public class WalkTestPoint
     {
+        /// <summary>
+        /// Knoten, deren Messung an diesem Punkt stillgelegt ist. Einmal je Schleife
+        /// bauen statt je Roh-Tick zu suchen: die Roh-Ticks sind hundertfach, die
+        /// Aggregate ein Dutzend.
+        /// ⚠ Wer Raw durchgeht, MUSS hiergegen filtern - sonst ist eine Messung im
+        /// Aggregat stillgelegt und im Rohverlauf weiter aktiv, und je nachdem welchen
+        /// Weg ein Verbraucher nimmt, rechnet er mit anderen Daten.
+        /// </summary>
+        public HashSet<string> DisabledNodeIds() =>
+            Nodes.Where(n => n.Disabled).Select(n => n.NodeId)
+                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         public string Id { get; set; } = "";
         public string DeviceId { get; set; } = "";
         public string? DeviceName { get; set; }
@@ -448,6 +482,9 @@ public class WalkTestService
 
     private readonly object _persistLock = new();
 
+    /// <summary>Von aussen anstossbar, wenn jemand Aggregate veraendert hat (Stilllegen).</summary>
+    public void PersistPoints() => SavePoints();
+
     private void SavePoints()
     {
         if (_persistPath == null) return;
@@ -507,6 +544,7 @@ public class WalkTestService
             var rssiShift = point.TxRefRssiEstimate.HasValue ? DefaultTxRefRssi - point.TxRefRssiEstimate.Value : 0;
             foreach (var agg in point.Nodes)
             {
+                if (agg.Disabled) continue;
                 if (!state.Nodes.TryGetValue(agg.NodeId, out var node) || !node.HasLocation) continue;
                 if (node.Location.DistanceTo(agg.NodeLocationAtRecord) > NodeMoveTracker.MoveThresholdM) continue;
 

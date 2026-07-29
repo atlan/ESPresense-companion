@@ -8,6 +8,56 @@
 
 	const toastStore = getToastStore();
 
+	interface DisabledMeasurement {
+		pointId: string; nodeId: string; nodeName?: string | null;
+		floorId?: string | null; x: number; y: number; z: number;
+		samples: number; medianRssi: number; refRssi: number; mapDistance: number;
+		rule?: string | null; reason?: string | null; at?: string | null;
+	}
+	let stillgelegt: DisabledMeasurement[] = [];
+
+	const REGEL_TEXT: Record<string, string> = {
+		'few-samples': 'zu wenige Messwerte',
+		'impossible-level': 'physikalisch unmöglicher Pegel',
+		manual: 'von Hand'
+	};
+
+	async function messungSchalten(pointId: string, nodeId: string, disabled: boolean, reason?: string) {
+		const res = await fetch(
+			apiPath(`/api/wizard/walktest/points/${encodeURIComponent(pointId)}/nodes/${encodeURIComponent(nodeId)}/disabled`),
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ disabled, reason })
+			}
+		);
+		if (!res.ok) {
+			toastStore.trigger({ message: `Fehlgeschlagen: ${await res.text()}`, background: 'preset-filled-error-500' });
+			return;
+		}
+		toastStore.trigger({
+			message: disabled ? `${pointId}/${nodeId} stillgelegt` : `${pointId}/${nodeId} wieder aufgenommen`,
+			background: 'preset-filled-success-500'
+		});
+		await fetchAll();
+	}
+
+	async function einzelknotenStilllegen(c: ConflictingWalkPair) {
+		if (!c.maxDeltaNode) return;
+		const ok = await showConfirm({
+			title: 'Messung stilllegen',
+			body:
+				`Die Messung des Knotens „${c.maxDeltaNode}" wird in BEIDEN Aufnahmen (${c.idA} und ${c.idB}) ` +
+				`stillgelegt — welche der beiden falsch liegt, lässt sich nicht sagen, und der Widerspruch ` +
+				`verschwindet nur, wenn beide Seiten weg sind. Alle übrigen Messungen der beiden Punkte ` +
+				`bleiben erhalten. Jederzeit rücknehmbar.`
+		});
+		if (!ok) return;
+		const grund = `Einzelner Knoten weicht um ${c.maxDeltaDb} dB ab, erklärbar wären ${c.explainableDb} dB (Doppel-Aufnahme ${c.idA}/${c.idB}).`;
+		await messungSchalten(c.idA, c.maxDeltaNode, true, grund);
+		await messungSchalten(c.idB, c.maxDeltaNode, true, grund);
+	}
+
 	interface ConflictingWalkPair {
 		idA: string; idB: string;
 		recordedAtA: string; recordedAtB: string;
@@ -16,7 +66,7 @@
 		distanceM: number; sharedNodes: number;
 		medianDeltaDb: number; medianGeometryDb: number; medianResidualDb: number;
 		maxDeltaDb: number; maxDeltaNode?: string | null;
-		irreconcilable: boolean; explainableDb: number;
+		irreconcilable: boolean; explainableDb: number; singleNodeOnly: boolean;
 	}
 
 	interface ValidationIssue {
@@ -392,7 +442,7 @@
 
 	async function fetchAll() {
 		try {
-			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes] = await Promise.all([
+			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes, offRes] = await Promise.all([
 				fetch(apiPath('/api/wizard/validation')),
 				fetch(apiPath('/api/wizard/health')),
 				fetch(apiPath('/api/wizard/excluded-pairs/suggestions')),
@@ -400,6 +450,7 @@
 				fetch(apiPath('/api/wizard/walktest/suggest')),
 				fetch(apiPath('/api/wizard/diagnostics')),
 				fetch(apiPath('/api/wizard/benchmark')),
+				fetch(apiPath('/api/wizard/walktest/disabled')),
 			]);
 			if (vRes.ok) validation = await vRes.json();
 			if (hRes.ok) health = await hRes.json();
@@ -419,6 +470,7 @@
 			}
 			if (dRes.ok) diagnostics = await dRes.json();
 			if (bRes.ok) benchmark = await bRes.json();
+			if (offRes.ok) stillgelegt = await offRes.json();
 		} catch (error) {
 			console.error('Error fetching wizard data:', error);
 		} finally {
@@ -1596,16 +1648,26 @@
 												<td class="text-right font-semibold">{c.medianResidualDb} dB</td>
 												<td class="text-right text-surface-600-400">{c.explainableDb} dB</td>
 												<td class="text-right" title={c.maxDeltaNode ?? ''}>{c.maxDeltaDb} dB</td>
-												<td>
-													<button type="button" class="btn btn-sm preset-tonal-error"
-														onclick={() => deleteWalkPointConfirmed(c.idA, new Date(c.recordedAtA).toLocaleDateString())}
-														title="Aufnahme A löschen">{c.idA}</button>
-												</td>
-												<td>
-													<button type="button" class="btn btn-sm preset-tonal-error"
-														onclick={() => deleteWalkPointConfirmed(c.idB, new Date(c.recordedAtB).toLocaleDateString())}
-														title="Aufnahme B löschen">{c.idB}</button>
-												</td>
+												{#if c.singleNodeOnly}
+													<td colspan="2">
+														<button type="button" class="btn btn-sm preset-tonal-warning w-full"
+															onclick={() => einzelknotenStilllegen(c)}
+															title="Nur die Messung dieses einen Knotens stilllegen — beide Aufnahmen bleiben erhalten">
+															nur „{c.maxDeltaNode}" stilllegen
+														</button>
+													</td>
+												{:else}
+													<td>
+														<button type="button" class="btn btn-sm preset-tonal-error"
+															onclick={() => deleteWalkPointConfirmed(c.idA, new Date(c.recordedAtA).toLocaleDateString())}
+															title="Aufnahme A löschen">{c.idA}</button>
+													</td>
+													<td>
+														<button type="button" class="btn btn-sm preset-tonal-error"
+															onclick={() => deleteWalkPointConfirmed(c.idB, new Date(c.recordedAtB).toLocaleDateString())}
+															title="Aufnahme B löschen">{c.idB}</button>
+													</td>
+												{/if}
 											</tr>
 										{/each}
 									</tbody>
@@ -1615,10 +1677,64 @@
 								„erklärbar" ist keine feste Grenze, sondern aus der aufgezeichneten
 								Entfernungs-Streuung beider Aufnahmen gerechnet und über das Pfadverlustmodell in
 								Dezibel umgesetzt — dieselbe Meter-Streuung bedeutet nah am Knoten deutlich mehr
-								Dezibel als weit weg. Der Knoten mit der größten Einzeldifferenz steht als
-								Hinweistext an „Δ max".
+								Dezibel als weit weg. „Rest max" nennt den auffälligsten Knoten als Hinweistext.
+							</p>
+							<p class="text-xs text-surface-600-400 mb-3">
+								Zwei Wege, je nachdem woran es liegt: fällt <strong>nur ein einzelner Knoten</strong>
+								aus der Reihe und der Median ist in Ordnung, reicht es, dessen Messung
+								stillzulegen — beide Aufnahmen bleiben sonst vollständig erhalten. Weicht dagegen
+								der <strong>Median</strong> ab, ist eine der beiden Aufnahmen als Ganzes fragwürdig,
+								und dann hilft nur, sie zu löschen.
 							</p>
 						{/if}
+					{/if}
+
+					{#if stillgelegt.length > 0}
+						<h3 class="font-semibold text-sm mb-2">Stillgelegte Messungen ({stillgelegt.length})</h3>
+						<p class="text-xs text-surface-600-400 mb-2">
+							Diese <em>einzelnen</em> Knotenmessungen gehen nicht mehr in Kalibrierung, Gate und
+							Prüfstand ein. Die zugehörigen Walk-Punkte sind vollständig erhalten — nur diese
+							Werte schweigen. Nichts davon ist gelöscht, jede Zeile lässt sich zurücknehmen.
+						</p>
+						<div class="overflow-x-auto mb-2">
+							<table class="table table-compact w-full text-sm">
+								<thead>
+									<tr>
+										<th>Punkt</th><th>Knoten</th><th class="text-right">Messwerte</th>
+										<th class="text-right">Pegel</th><th class="text-right">Abstand</th>
+										<th>Grund</th><th></th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each stillgelegt as m}
+										<tr>
+											<td class="font-mono">{m.pointId}</td>
+											<td>{m.nodeName ?? m.nodeId}</td>
+											<td class="text-right">{m.samples}</td>
+											<td class="text-right">{m.medianRssi?.toFixed(1)} dBm</td>
+											<td class="text-right">{m.mapDistance?.toFixed(1)} m</td>
+											<td class="text-xs" title={m.reason ?? ''}>
+												{REGEL_TEXT[m.rule ?? ''] ?? m.rule ?? '—'}
+											</td>
+											<td>
+												<button type="button" class="btn btn-sm preset-tonal-success"
+													onclick={() => messungSchalten(m.pointId, m.nodeId, false)}
+													title="Diese Messung wieder in die Kalibrierung aufnehmen">
+													zurücknehmen
+												</button>
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+						<p class="text-xs text-surface-600-400 mb-3">
+							Automatisch laufen nur Regeln, die <strong>ohne das Modell</strong> auskommen, das mit
+							denselben Daten kalibriert wird: zu wenige Messwerte, oder ein Pegel, der stärker ist
+							als auf dieser Entfernung physikalisch möglich. Urteile, die die Kalibrierung selbst
+							zum Maßstab nehmen, bleiben Vorschläge — sonst würden so lange Abweichungen entfernt,
+							bis der Fit schön aussieht, und die Ortung würde schlechter, ohne dass es auffällt.
+						</p>
 					{/if}
 
 					{#if (diagnostics.staleWalkPoints?.length ?? 0) > 0 && diagnostics.staleWalkPoints}

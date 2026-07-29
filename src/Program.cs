@@ -93,6 +93,7 @@ builder.Services.AddSingleton<WizardService>();
 // Subscribes to device messages on construction, so it must be created eagerly - see below.
 builder.Services.AddSingleton<DeviceIdentityTracker>();
 builder.Services.AddSingleton<WizardDiagnostics>();
+builder.Services.AddSingleton<WalkPointHygiene>();
 builder.Services.AddSingleton<WalkPointPlanner>();
 builder.Services.AddSingleton<CalibrationSweepService>();
 builder.Services.AddSingleton<LocatorSweepService>();
@@ -142,6 +143,13 @@ var app = builder.Build();
 // Eagerly resolve trackers that subscribe to MQTT in their constructor: as lazy singletons they
 // would only come alive on the first HTTP request and miss every message until then.
 app.Services.GetRequiredService<DeviceIdentityTracker>();
+
+// Walk-Punkt-Hygiene einmal beim Start: legt einzelne Knotenmessungen still, die aus sich
+// heraus unbrauchbar sind (zu wenige Messwerte, Pegel staerker als physikalisch moeglich).
+// Bewusst NUR die modellunabhaengigen Regeln - Urteile, die die Kalibrierung selbst zum
+// Massstab nehmen, bleiben Vorschlaege in der Diagnose. Siehe WalkPointHygiene.
+try { app.Services.GetRequiredService<WalkPointHygiene>().Apply(); }
+catch (Exception ex) { Log.Warning(ex, "Walk-Punkt-Hygiene beim Start fehlgeschlagen"); }
 
 app.UseWebSockets(new WebSocketOptions
 {

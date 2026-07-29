@@ -126,6 +126,7 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                     var truthRoom = SpatialUtils.FindRoomContaining(truth, truthFloor);
                     var estimates = new List<Point3D>();
 
+                    var stillgelegt = point.DisabledNodeIds();
                     foreach (var tickGroup in point.Raw.GroupBy(r => r.T))
                     {
                         // KEIN Etagen-Vorfilter mehr: live kennt das System die Etage nicht, sie ist
@@ -133,6 +134,7 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                         var heard = new List<(Node node, double dist, double? var)>();
                         foreach (var entry in tickGroup)
                         {
+                            if (stillgelegt.Contains(entry.N)) continue;
                             if (!state.Nodes.TryGetValue(entry.N, out var node) || !node.HasLocation) continue;
                             if (entry.D <= 0) continue;
                             heard.Add((node, entry.D, entry.V));

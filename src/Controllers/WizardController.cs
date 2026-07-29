@@ -24,6 +24,7 @@ public class WizardController(
     ConfigLoader configLoader,
     State state,
     WalkTestService walkTest,
+    WalkPointHygiene hygiene,
     AutoTuneService autoTune,
     LocatorTuneService locatorTune) : ControllerBase
 {
@@ -283,6 +284,34 @@ public class WizardController(
         var (ok, error) = walkTest.Cancel();
         return ok ? Ok(new { cancelled = true }) : BadRequest(new { error });
     }
+
+    /// <summary>
+    /// Stillgelegte Knotenmessungen auflisten - was die Automatik getan hat und was von
+    /// Hand abgeschaltet wurde, mit Begruendung. Damit nichts unsichtbar verschwindet.
+    /// </summary>
+    [HttpGet("api/wizard/walktest/disabled")]
+    public IActionResult DisabledMeasurements() =>
+        Ok(walkTest.GetPoints()
+            .SelectMany(p => p.Nodes.Where(n => n.Disabled).Select(n => new
+            {
+                pointId = p.Id, p.FloorId, p.X, p.Y, p.Z,
+                nodeId = n.NodeId, n.NodeName, n.Samples,
+                n.MedianRssi, n.RefRssi, n.MapDistance,
+                rule = n.DisabledRule, reason = n.DisabledReason, at = n.DisabledAt
+            }))
+            .OrderByDescending(x => x.at)
+            .ToList());
+
+    /// <summary>Eine einzelne Knotenmessung stilllegen oder wieder aufnehmen.</summary>
+    [HttpPost("api/wizard/walktest/points/{pointId}/nodes/{nodeId}/disabled")]
+    public IActionResult SetMeasurementDisabled(string pointId, string nodeId, [FromBody] SetDisabledRequest req) =>
+        hygiene.SetDisabled(pointId, nodeId, req.Disabled, req.Reason)
+            ? Ok(new { ok = true })
+            : NotFound(new { error = $"Keine Messung {pointId}/{nodeId}" });
+
+    /// <summary>Die automatischen Regeln von Hand anstossen (sonst laufen sie beim Start).</summary>
+    [HttpPost("api/wizard/walktest/hygiene")]
+    public IActionResult RunHygiene() => Ok(new { disabled = hygiene.Apply() });
 
     [HttpDelete("api/wizard/walktest/points/{id}")]
     public IActionResult WalkTestDeletePoint(string id)
@@ -604,6 +633,12 @@ public class DeviceSetupApplyRequest
     public int RefRssi { get; set; }
     public string? Name { get; set; }
     public string? Alias { get; set; }
+}
+
+public class SetDisabledRequest
+{
+    public bool Disabled { get; set; }
+    public string? Reason { get; set; }
 }
 
 public class LocatorApplyRequest

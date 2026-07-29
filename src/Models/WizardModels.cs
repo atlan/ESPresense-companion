@@ -255,6 +255,12 @@ public class ConflictingWalkPair
     public bool Irreconcilable { get; set; }
     /// <summary>Was die Streuung an Unterschied hergeben wuerde (dB), zum Vergleich.</summary>
     public double ExplainableDb { get; set; }
+    /// <summary>
+    /// True, wenn NUR ein einzelner Knoten aus der Reihe faellt und der Median in Ordnung
+    /// ist. Dann ist nicht die Aufnahme verdaechtig, sondern diese eine Messung - und es
+    /// reicht, sie stillzulegen, statt den ganzen Punkt in Frage zu stellen.
+    /// </summary>
+    public bool SingleNodeOnly { get; set; }
 }
 
 public class StaleWalkPoint

@@ -38,6 +38,14 @@ public class WizardDiagnostics(
     // schon normale Funkschwankung als Widerspruch gelten. 3 dB ist die Groessen-
     // ordnung, die Koerper, Tueren und Geraete-Orientierung ohnehin ausmachen.
     private const double MinExplainableDb = 3.0;
+    // Zweites Kriterium: ein EINZELNER Knoten, der so weit danebenliegt, reicht schon.
+    // Der Median kann gutmuetig aussehen, waehrend ein Knoten die Zielfunktion blockiert -
+    // gemessen an dieser Anlage galt wt16+wt23 mit Median 5,2 als "Rauschen" und hatte
+    // dabei einen Knoten mit 24,6 dB Rest. Fuer den Optimierer zaehlt genau der: dass sich
+    // neun andere Knoten einig sind, hilft ihm nicht, wenn der zehnte das Gegenteil fordert.
+    // Als Vielfaches der erklaerbaren Streuung, nicht als feste dB-Zahl - sonst waere die
+    // Schwelle nah am Knoten zu streng und fern zu lasch (siehe RssiSigmaDb).
+    private const double SingleNodeSigmaFactor = 3.0;
     // Rueckfall, wenn ein Knoten noch gar nicht kalibriert ist. Der Bibliothekswert
     // des Pfadverlustmodells. ⚠ In einer eingelaufenen Anlage liegt die echte
     // Absorption deutlich hoeher (hier ~3,7) - und weil sie sowohl in die erklaerbare
@@ -466,8 +474,9 @@ public class WizardDiagnostics(
             string? maxNode = null;
             foreach (var na in a.Nodes)
             {
+                if (na.Disabled) continue;
                 var nb = b.Nodes.FirstOrDefault(x => string.Equals(x.NodeId, na.NodeId, StringComparison.OrdinalIgnoreCase));
-                if (nb == null) continue;
+                if (nb == null || nb.Disabled) continue;
 
                 var gemessen = (na.MedianRssi + shiftA) - (nb.MedianRssi + shiftB);
                 var erwartet = GeometrieDb(na, nb);
@@ -507,7 +516,11 @@ public class WizardDiagnostics(
                 MaxDeltaDb = Math.Round(maxRest, 1),
                 MaxDeltaNode = maxNode,
                 ExplainableDb = Math.Round(explainable, 1),
-                Irreconcilable = medianRest > explainable
+                Irreconcilable = medianRest > explainable || maxRest > SingleNodeSigmaFactor * explainable,
+                // Woran es liegt, damit die Empfehlung spaeter das Richtige vorschlaegt:
+                // beim Median ist die ganze Aufnahme verdaechtig, beim Einzelknoten nur
+                // dessen Messung - und dann reicht es, DIESE stillzulegen.
+                SingleNodeOnly = medianRest <= explainable && maxRest > SingleNodeSigmaFactor * explainable
             });
         }
 
@@ -659,6 +672,9 @@ public class WizardDiagnostics(
         foreach (var p in walkTest.GetPoints())
         foreach (var agg in p.Nodes)
         {
+            // Schon stillgelegte Messungen nicht erneut melden - sonst steht in der
+            // Diagnose auf Dauer, was bereits erledigt ist.
+            if (agg.Disabled) continue;
             if (!state.Nodes.TryGetValue(agg.NodeId, out var node) || !node.HasLocation) continue;
             var then = new Point3D(agg.NodeLocX, agg.NodeLocY, agg.NodeLocZ);
             var d = then.DistanceTo(node.Location);
@@ -709,8 +725,10 @@ public class WizardDiagnostics(
             if (point.Raw.Count == 0) continue;
             var truth = new Point3D(point.X, point.Y, point.Z);
 
+            var stillgelegt = point.DisabledNodeIds();
             foreach (var e in point.Raw)
             {
+                if (stillgelegt.Contains(e.N)) continue;
                 if (e.R is not { } rssi || e.Ref is not { } refRssi) continue;
                 if (!state.Nodes.TryGetValue(e.N, out var node) || !node.HasLocation) continue;
 

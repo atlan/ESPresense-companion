@@ -193,6 +193,9 @@ public class StateController : ControllerBase
             var txM = c.Matrix.GetOrAdd(rowName);
             foreach (var n in p.Nodes)
             {
+                // Stillgelegtes hier NICHT verstecken: die Matrix zeigt, was aufgezeichnet
+                // wurde, und ein Wert, der stumm verschwindet, sieht aus wie ein Datenverlust.
+                if (n.Disabled) { txM.GetOrAdd(n.NodeName ?? n.NodeId)["disabled"] = 1; continue; }
                 var rxM = txM.GetOrAdd(n.NodeName ?? n.NodeId);
                 rxM["mapDistance"] = n.MapDistance;
                 rxM["distance"] = n.MedianDistance;
