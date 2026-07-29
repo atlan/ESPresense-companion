@@ -45,6 +45,92 @@ public class WalkPointPlanner(State state, WalkTestService walkTest, Calibration
     /// <summary>Height to place the device at when no walk point on that floor says otherwise.</summary>
     private const double DefaultDeviceHeightM = 1.0;
 
+    /// <summary>
+    /// Stellen, die GENAU DAS liefern, was der Fit vermisst: fuer jeden genannten Knoten eine
+    /// Position in der gebrauchten Entfernung.
+    ///
+    /// ★ Warum nicht `Suggest()`: das sortiert nach Abdeckung und Etagentrefferquote und schlug
+    /// deshalb am 29.07.2026 die drei TREPPENHAEUSER vor — ausgerechnet die Raeume, in denen
+    /// gemessen ohnehin schon 95–100 % der Etagen stimmen und in denen es keine Steckdose gibt.
+    /// Ueber der Liste stand gleichzeitig, dass neun Knoten mangels Entfernungs-Spannweite
+    /// GAR NICHT kalibrierbar sind. Ein Vorschlag, der nicht zur Handlung darueber passt, ist
+    /// schlimmer als keiner: der Benutzer laeuft los und es aendert sich nichts.
+    ///
+    /// Gesucht wird deshalb je Knoten die Stelle, die (a) in einem Raum liegt, (b) moeglichst
+    /// genau die gebrauchte Entfernung zu DIESEM Knoten hat und (c) von genug Knoten gehoert
+    /// wird, damit die Aufnahme ueberhaupt eine Position ergibt.
+    /// </summary>
+    public List<WalkPointSuggestion> SuggestForSpan(IEnumerable<(string NodeId, double TargetM)> bedarf, int count = 4)
+    {
+        var aus = new List<WalkPointSuggestion>();
+
+        foreach (var (nodeId, targetM) in bedarf)
+        {
+            if (!state.Nodes.TryGetValue(nodeId, out var node) || !node.HasLocation) continue;
+
+            WalkPointSuggestion? beste = null;
+            double besteAbweichung = double.MaxValue;
+
+            foreach (var floor in state.Floors.Values)
+            {
+                if (floor.Id == null || floor.Rooms.IsEmpty) continue;
+                // Nur Etagen, auf denen dieser Knoten ueberhaupt hoert.
+                if (!(node.Floors?.Any(f => f.Id == floor.Id) ?? false)) continue;
+
+                var etagenKnoten = state.Nodes.Values
+                    .Where(n => n.HasLocation && (n.Floors?.Any(f => f.Id == floor.Id) ?? false))
+                    .Select(n => n.Location).ToList();
+                if (etagenKnoten.Count == 0) continue;
+
+                // Geraetehoehe wie in Suggest(): gemessen statt geraten.
+                var punkte = walkTest.GetPoints()
+                    .Where(p => string.Equals(p.FloorId, floor.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+                var hoehen = punkte.Select(p => p.Z).OrderBy(z => z).ToList();
+                var deviceZ = hoehen.Count > 0 ? hoehen[hoehen.Count / 2] : DefaultDeviceHeightM;
+
+                foreach (var room in floor.Rooms.Values)
+                {
+                    if (room.Polygon == null) continue;
+                    var ecken = room.Polygon.Vertices.ToList();
+                    if (ecken.Count < 3) continue;
+
+                    for (var x = ecken.Min(v => v.X); x <= ecken.Max(v => v.X); x += SampleStepM)
+                    for (var y = ecken.Min(v => v.Y); y <= ecken.Max(v => v.Y); y += SampleStepM)
+                    {
+                        if (!room.Polygon.EnclosesPoint(new Point2D(x, y))) continue;
+                        var kandidat = new Point3D(x, y, deviceZ);
+
+                        var entfernungen = etagenKnoten.Select(n => n.DistanceTo(kandidat)).OrderBy(d => d).ToList();
+                        if (entfernungen.Count(d => d <= UsableRangeM) < MinNodesInRange) continue;
+
+                        var abweichung = Math.Abs(node.Location.DistanceTo(kandidat) - targetM);
+                        if (abweichung >= besteAbweichung) continue;
+
+                        besteAbweichung = abweichung;
+                        beste = new WalkPointSuggestion
+                        {
+                            X = Math.Round(x, 2), Y = Math.Round(y, 2), Z = Math.Round(deviceZ, 2),
+                            FloorId = floor.Id, FloorName = floor.Name,
+                            RoomId = room.Id, RoomName = room.Name,
+                            NearestNodeM = Math.Round(entfernungen[0], 2),
+                            ExistingPoints = punkte.Count,
+                            Reason = $"{Math.Round(node.Location.DistanceTo(kandidat), 1)} m von " +
+                                     $"„{node.Name ?? nodeId}“ — gebraucht werden ≈{targetM:0.0} m"
+                        };
+                    }
+                }
+            }
+
+            // Nur brauchbar, wenn die Stelle die gebrauchte Entfernung halbwegs trifft. Sonst
+            // lieber nichts vorschlagen als irgendwohin schicken.
+            if (beste != null && besteAbweichung <= Math.Max(0.5, targetM * 0.25))
+                aus.Add(beste);
+
+            if (aus.Count >= count) break;
+        }
+        return aus;
+    }
+
     public List<WalkPointSuggestion> Suggest(int count = 3)
     {
         var floorHitRates = (benchmark.Last?.Floors ?? new List<BenchmarkFloor>())

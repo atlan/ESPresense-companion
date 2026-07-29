@@ -144,7 +144,12 @@ public class NextActions(
             Gain = "Schaltet die Kalibrierung dieser Knoten überhaupt erst frei. Ein einziger Punkt " +
                    "in der genannten Entfernung genügt je Knoten.",
             NodeSpans = betroffen.Take(8).ToList(),
-            Suggestions = planner.Suggest(3)
+            // ⚠ NICHT planner.Suggest(): das sortiert nach Abdeckung und schlug deshalb die
+            // Treppenhaeuser vor — Raeume, in denen die Etage ohnehin zu 95–100 % stimmt und in
+            // denen es keine Steckdose gibt. Gebraucht wird eine Stelle in der genannten
+            // ENTFERNUNG zu genau diesen Knoten.
+            Suggestions = planner.SuggestForSpan(
+                betroffen.Take(4).Select(b => (b.NodeId, b.SuggestedM)), 4)
         });
     }
 

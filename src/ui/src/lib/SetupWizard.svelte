@@ -1054,13 +1054,17 @@
 								{/if}
 
 								{#if a.suggestions?.length}
-									<p class="text-xs text-surface-600-400 mt-2">Vorgeschlagene Stellen:</p>
+									<p class="text-xs text-surface-600-400 mt-2">
+										Vorgeschlagene Stellen — je Knoten die Position, die seine fehlende
+										Entfernung liefert:
+									</p>
 									<div class="flex flex-wrap gap-2 mt-1">
 										{#each a.suggestions as sug}
 											<button type="button" class="btn btn-sm preset-tonal-primary"
 												onclick={() => vorschlagUebernehmen(sug)}
-												title="Koordinaten ins Formular übernehmen">
+												title={sug.reason ?? 'Koordinaten ins Formular übernehmen'}>
 												{sug.roomName ?? '—'} ({sug.x}, {sug.y})
+												{#if sug.reason}<span class="opacity-70 ml-1">— {sug.reason}</span>{/if}
 											</button>
 										{/each}
 									</div>
