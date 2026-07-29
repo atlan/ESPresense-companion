@@ -20,6 +20,22 @@ namespace ESPresense.Services;
 ///
 /// ⚠ Sortiert nach NUTZEN, nicht nach Schwere. Ein dramatisch klingender Befund, an dem
 /// niemand etwas aendern kann, steht hinter einer kleinen Aufraeumarbeit, die wirklich hilft.
+///
+/// ★★★ HARTE REGEL, an die ich mich beim ersten Anlauf selbst nicht gehalten habe:
+/// **Ein Eintrag gehoert nur hierher, wenn er VERSCHWINDET, sobald man ihn erledigt.**
+///
+/// Die erste Fassung fuehrte zwei „Aufraeumen"-Punkte, die das nicht taten:
+///   • „Knoten wurde versetzt, Aufnahmen neu machen" — ein neuer Spaziergang legt einen
+///     ZUSAETZLICHEN Punkt an, der alte bleibt stehen (genau die Falle, die am selben Tag
+///     schon in der Nachhol-Tabelle steckte). Die Meldung sagt ausserdem selbst, dass der
+///     Fit korrekt bleibt: es war nie eine Handlung, sondern eine Information.
+///   • „22 Punkte ohne Pegel aufraeumen" — der Benchmark trennt die beiden Datensorten
+///     laengst und meldet beide Zahlen (33 Punkte: 1,98 m / 57,6 % · 11 mit Pegeln:
+///     1,55 m / 48,2 %). Es gab nichts zu verbessern, und Loeschen haette 22 von 33
+///     Punkten Bodenwahrheit fuer den Locator vernichtet.
+///
+/// Ein Eintrag, der nach dem Erledigen stehenbleibt, bringt dem Benutzer bei, die ganze
+/// Liste zu ueberblaettern. Beides gehoert in die Diagnose unter „Details", nicht hierher.
 /// </summary>
 public class NextActions(
     State state,
@@ -53,7 +69,14 @@ public class NextActions(
                 RoomHitRate = letzte.RoomHitRate,
                 FloorHitRate = letzte.FloorHitRate,
                 MeasuredAt = letzte.RanAt,
-                Points = letzte.Points?.Count ?? 0
+                Points = letzte.Points?.Count ?? 0,
+                PointsWithLevels = letzte.PointsWithLevels,
+                // Was die Kalibrierung ueberhaupt bewerten kann: nur Punkte MIT Pegeln reagieren
+                // auf eine Kalibrieraenderung. Das ist KEINE Handlung fuer den Benutzer - der
+                // Benchmark rechnet beide Zahlen ohnehin getrennt. Es gehoert nur dazugesagt,
+                // damit niemand die grosse Zahl fuer die Kalibrierguete haelt.
+                ResponsiveMedianErrorM = letzte.ResponsiveMedianErrorM,
+                ResponsiveRoomHitRate = letzte.ResponsiveRoomHitRate
             };
 
         var diag = diagnostics.Analyze();
@@ -61,8 +84,6 @@ public class NextActions(
         SpannweiteFehlt(result);
         DuenneAbdeckung(result, diag);
         KnotenPruefen(result, diag);
-        UmgehaengterKnoten(result, diag);
-        Altlasten(result, diag);
 
         // Rang erst am Schluss, damit die einzelnen Pruefungen sich nicht um Zahlen streiten.
         result.Actions = result.Actions.OrderByDescending(a => a.Value).ToList();
@@ -214,42 +235,6 @@ public class NextActions(
         });
     }
 
-    private void UmgehaengterKnoten(NextActionsResult result, WizardDiagnosticsResult diag)
-    {
-        var drift = diag.Issues.FirstOrDefault(i => i.Category == "geometry-drift");
-        if (drift == null) return;
-
-        result.Actions.Add(new NextAction
-        {
-            Id = "geometry-drift",
-            Kind = ActionKind.Cleanup,
-            Value = 30,
-            Title = "Ein Knoten wurde versetzt — die alten Aufnahmen beschreiben ihn noch am alten Platz",
-            Why = drift.Message,
-            Gain = "Die betroffenen Messungen fließen bereits nicht mehr in die Kalibrierung ein. " +
-                   "Sie neu aufzunehmen bringt die Bodenwahrheit an diesen Stellen zurück."
-        });
-    }
-
-    private void Altlasten(NextActionsResult result, WizardDiagnosticsResult diag)
-    {
-        var ohne = (diag.StaleWalkPoints ?? new()).Count;
-        if (ohne == 0) return;
-
-        result.Actions.Add(new NextAction
-        {
-            Id = "stale-points",
-            Kind = ActionKind.Cleanup,
-            // Bewusst der kleinste Nutzen: es ist Aufraeumen, keine Verbesserung. Es steht hier
-            // nur, damit die Liste nicht laenger wird, ohne dass jemand weiss warum.
-            Value = 10,
-            Title = $"{ohne} alte Walk-Punkte ohne Pegel aufräumen",
-            Why = "Diese Aufnahmen stammen aus einer Zeit, in der die Pegel noch nicht mitgeschrieben " +
-                  "wurden. Sie können den Locator prüfen, aber keine Kalibrierung bewerten.",
-            Gain = "Kein direkter Gewinn an Genauigkeit — aber die Bewertungszahlen werden ehrlicher, " +
-                   "weil sie nicht mehr über zwei verschiedene Datensorten mitteln."
-        });
-    }
 }
 
 public enum ActionKind
@@ -257,9 +242,9 @@ public enum ActionKind
     /// <summary>Der Benutzer muss irgendwo hingehen und messen.</summary>
     Walk,
     /// <summary>Der Benutzer muss etwas anfassen: Knoten aufhaengen, umhaengen, nachsehen.</summary>
-    Hardware,
-    /// <summary>Aufraeumen in den Daten - kein Gewinn an Genauigkeit, aber ehrlichere Zahlen.</summary>
-    Cleanup
+    Hardware
+    // Bewusst KEIN "Cleanup": Aufraeumen macht nichts besser, und ein Eintrag, der nach dem
+    // Erledigen stehenbleibt, gehoert nicht in diese Liste. Siehe die Regel im Kopfkommentar.
 }
 
 public class NextAction
@@ -298,6 +283,10 @@ public class SystemStatus
     public double? FloorHitRate { get; set; }
     public DateTime? MeasuredAt { get; set; }
     public int Points { get; set; }
+    /// <summary>Wie viele davon Pegel tragen und damit auf Kalibrieraenderungen reagieren koennen.</summary>
+    public int PointsWithLevels { get; set; }
+    public double? ResponsiveMedianErrorM { get; set; }
+    public double? ResponsiveRoomHitRate { get; set; }
 }
 
 public class NextActionsResult

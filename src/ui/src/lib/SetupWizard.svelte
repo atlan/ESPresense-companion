@@ -19,6 +19,8 @@
 		medianErrorM?: number | null; p90ErrorM?: number | null;
 		roomHitRate?: number | null; floorHitRate?: number | null;
 		measuredAt?: string | null; points: number;
+		pointsWithLevels: number;
+		responsiveMedianErrorM?: number | null; responsiveRoomHitRate?: number | null;
 	}
 	let todo: { status?: SystemStatus | null; actions: NextAction[] } | null = null;
 
@@ -50,13 +52,11 @@
 
 	const KIND_TEXT: Record<string, string> = {
 		Walk: 'Hingehen und messen',
-		Hardware: 'Etwas anfassen',
-		Cleanup: 'Aufräumen'
+		Hardware: 'Etwas anfassen'
 	};
 	const KIND_CLASS: Record<string, string> = {
 		Walk: 'preset-filled-primary-500',
-		Hardware: 'preset-filled-warning-500',
-		Cleanup: 'preset-tonal'
+		Hardware: 'preset-filled-warning-500'
 	};
 
 	interface DisabledMeasurement {
@@ -986,6 +986,16 @@
 						<em>heute</em> gilt{#if todo.status.measuredAt} — zuletzt {new Date(todo.status.measuredAt).toLocaleString()}{/if}.
 						Läuft nach jedem Optimierungsdurchgang von selbst.
 					</p>
+					{#if todo.status.responsiveMedianErrorM != null && todo.status.pointsWithLevels < todo.status.points}
+						<p class="text-xs text-surface-600-400 mt-1">
+							Davon tragen {todo.status.pointsWithLevels} Punkte aufgezeichnete Pegel und können
+							deshalb überhaupt auf eine Kalibrierung reagieren — auf diesen allein sind es
+							<strong>{todo.status.responsiveMedianErrorM.toFixed(2)} m</strong>
+							{#if todo.status.responsiveRoomHitRate != null}und {(todo.status.responsiveRoomHitRate * 100).toFixed(0)} % richtiger Raum{/if}.
+							Die Zahl oben ist die Ortungsgüte deiner Anlage, diese hier sagt, was die Kalibrierung
+							bewirkt. Beide sind richtig, sie beantworten verschiedene Fragen.
+						</p>
+					{/if}
 				</div>
 			{/if}
 
