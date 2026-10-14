@@ -252,11 +252,11 @@ public class ConfigCredentialRedactionTests
     }
 
     [Test]
-    public async Task SaveSection_ProtectedMapSection_IsRejected()
+    public async Task SaveSection_MapSection_IsWritable()
     {
-        // SaveSectionAsync is the only product path that writes config back to disk;
-        // the map section is protected so the API cannot rewrite it. Guard that here so
-        // a future refactor cannot silently open an arbitrary-section write.
+        // Fork: upstream protects the map section, but the floorplan editor
+        // (WizardController -> SaveSectionAsync("map", ...)) writes exactly there.
+        // Guard that a future upstream merge cannot silently re-protect it.
         var dir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "cfgprot", Guid.NewGuid().ToString());
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "config.yaml");
@@ -268,8 +268,9 @@ public class ConfigCredentialRedactionTests
             var loader = new ESPresense.Services.ConfigLoader(dir);
             await loader.ConfigAsync();
 
-            Assert.ThrowsAsync<InvalidOperationException>(
+            Assert.DoesNotThrowAsync(
                 () => loader.SaveSectionAsync("map", new { x = 1 }));
+            Assert.That(await File.ReadAllTextAsync(path), Does.Contain("map:"));
 
             await loader.StopAsync(CancellationToken.None);
             loader.Dispose();
