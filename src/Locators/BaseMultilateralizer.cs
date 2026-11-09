@@ -1,8 +1,8 @@
 using ESPresense.Extensions;
 using ESPresense.Models;
 using ESPresense.Utils;
+using MathNet.Numerics.LinearAlgebra;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 
 namespace ESPresense.Locators;
 
@@ -14,12 +14,15 @@ public abstract class BaseMultilateralizer : ILocate
     protected readonly Device Device;
     protected readonly Floor Floor;
     protected readonly State State;
+    protected readonly ILogger Logger;
 
-    protected BaseMultilateralizer(Device device, Floor floor, State state)
+    /// <param name="logger">Null discards; <see cref="ESPresense.Models.ScenarioFactory"/> passes one from the host.</param>
+    protected BaseMultilateralizer(Device device, Floor floor, State state, ILogger? logger = null)
     {
         Device = device;
         Floor = floor;
         State = state;
+        Logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     }
 
     public abstract bool Locate(Scenario scenario);
@@ -32,8 +35,8 @@ public abstract class BaseMultilateralizer : ILocate
     {
         var confidence = scenario.Confidence ?? 0;
 
-        nodes = Device.Nodes.Values
-            .Where(a => a.Current && (a.Node?.Floors?.Contains(Floor) ?? false))
+        nodes = scenario.TakeReadings(Device)
+            .Where(a => a.Node?.Floors?.Contains(Floor) ?? false)
             .OrderBy(a => a.Distance)
             .ToArray();
 
@@ -46,6 +49,7 @@ public abstract class BaseMultilateralizer : ILocate
         if (pos.Length <= 1)
         {
             ResetScenario(scenario);
+            scenario.Trace = LocatorTrace.NoFix(Floor, nodes);
             guess = Point3D.NaN;
             return false;
         }
@@ -103,6 +107,26 @@ public abstract class BaseMultilateralizer : ILocate
     }
 
     /// <summary>
+    /// Per-axis step used to seed the optimizer's simplex when the guess already sits on the target
+    /// </summary>
+    protected const double FallbackPerturbation = 0.1;
+
+    /// <summary>
+    /// Unit vector pointing from <paramref name="from"/> to <paramref name="to"/>, used to seed the
+    /// optimizer's initial simplex. When the two points coincide the difference is the zero vector,
+    /// whose normalization is degenerate (zero or NaN) and would collapse the simplex, so a fixed
+    /// small perturbation is returned instead.
+    /// </summary>
+    protected static Vector<double> DirectionOrFallback(Vector<double> from, Vector<double> to)
+    {
+        var direction = to.Subtract(from);
+        var norm = direction.L2Norm();
+        if (!(norm > 1e-9) || double.IsInfinity(norm))
+            return Vector<double>.Build.Dense(direction.Count, FallbackPerturbation);
+        return direction.Divide(norm);
+    }
+
+    /// <summary>
     /// Assigns room to scenario based on location
     /// </summary>
     protected void AssignRoom(Scenario scenario)
@@ -114,10 +138,14 @@ public abstract class BaseMultilateralizer : ILocate
     /// <summary>
     /// Performs final validation and room assignment
     /// </summary>
+    /// <param name="nodes">The nodes this pass used</param>
+    /// <param name="solvedWeights">The fit's per-node weights, left null unless the fit completed</param>
+    /// <param name="solvedScale">The factor the fit applied to geometric distance</param>
     /// <returns>True if scenario has moved and is valid</returns>
-    protected bool FinalizeScenario(Scenario scenario, int confidence)
+    protected bool FinalizeScenario(Scenario scenario, int confidence, DeviceToNode[] nodes, double[]? solvedWeights = null, double solvedScale = 1)
     {
         scenario.Confidence = confidence;
+        scenario.Trace = LocatorTrace.Finished(Floor, nodes, solvedWeights, scenario.Fit, solvedScale);
 
         if (confidence <= 0) return false;
         if (Math.Abs(scenario.Location.DistanceTo(scenario.LastLocation)) < 0.1) return false;
@@ -131,8 +159,9 @@ public abstract class BaseMultilateralizer : ILocate
     /// </summary>
     protected int HandleLocatorException(Exception ex, Scenario scenario, Point3D fallbackGuess)
     {
+        if (ex is ReadingsSupersededException) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex); // not a failure: Scenario.Locate drops this solve
         scenario.UpdateLocation(!double.IsNaN(fallbackGuess.X) ? fallbackGuess : new Point3D());
-        Log.Error("Error finding location for {Device}: {Message}", Device, ex.Message);
+        Logger.LogError("Error finding location for {Device}: {Message}", Device, ex.Message);
         return 0;
     }
 }

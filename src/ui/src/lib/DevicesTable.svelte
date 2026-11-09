@@ -1,12 +1,16 @@
 <script lang="ts">
-	import DeviceActions from '$lib/DeviceActions.svelte';
-	import DeviceActiveId from '$lib/DeviceActiveId.svelte';
-	import { devices } from '$lib/stores';
-	import type { Device } from '$lib/types';
-	import DataTable from '$lib/DataTable.svelte';
+	import DeviceActions from '#lib/DeviceActions.svelte';
+	import DeviceActiveId from '#lib/DeviceActiveId.svelte';
+	import { devices } from '#lib/stores.js';
+	import type { Device } from '#lib/types.js';
+	import DataTable from '#lib/DataTable.svelte';
 	import ago from 's-ago';
 
-	export let onselected: ((device: Device) => void) | undefined = undefined;
+	interface Props {
+		onselected?: ((device: Device) => void) | undefined;
+	}
+
+	let { onselected = undefined }: Props = $props();
 	let selected = '';
 
 	function select(d: Device) {
@@ -45,7 +49,7 @@
 				return `${isActive ? '0' : '1'}_${d.name || d.id}`;
 			}
 		},
-		{ key: 'room', title: 'Room / Floor', value: (d: Device) => displayRoomFloor(d), sortValue: (d: Device) => baseRoomFloor(d), sortable: true },
+		{ key: 'room', title: 'Room / Floor', value: (d: Device) => displayRoomFloor(d), sortValue: (d: Device) => baseRoomFloor(d), sortable: true, searchable: true },
 		{ key: 'location', title: 'Location (X, Y, Z)', value: (d: Device) => formatLocation(d), sortable: false },
 		{ key: 'fixes', title: 'Fixes', value: (d: Device) => d.fixes ?? 'n/a', sortable: true },
 		{ key: 'scale', title: 'Scale', value: (d: Device) => d.scale?.toFixed(3) ?? 'n/a', sortable: true },
@@ -64,11 +68,10 @@
 		{ key: 'lastSeen', title: 'Last Seen', value: (d: Device) => (d.lastSeen ? (ago(new Date(d.lastSeen)) ?? 'n/a') : 'n/a'), sortValue: (d: Device) => (d.lastSeen ? new Date(d.lastSeen) : new Date(0)), sortable: true },
 		{ key: 'actions', title: '', renderComponent: { component: DeviceActions } }
 	];
-
 </script>
 
 <div>
 	{#if $devices}
-		<DataTable {columns} classNameTable="table  table-compact" rows={$devices} onclickRow={(event) => select(event.row)} />
+		<DataTable {columns} classNameTable="table  table-compact" rows={$devices} search searchPlaceholder="Filter by name, id or room…" onclickRow={(event) => select(event.row)} />
 	{/if}
 </div>

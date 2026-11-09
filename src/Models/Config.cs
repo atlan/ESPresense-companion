@@ -1,5 +1,4 @@
-﻿using Newtonsoft.Json;
-using TextExtensions;
+﻿using TextExtensions;
 using YamlDotNet.Serialization;
 using ESPresense.Extensions;
 
@@ -40,9 +39,6 @@ namespace ESPresense.Models
 
         [YamlMember(Alias = "history")]
         public ConfigHistory History { get; set; } = new();
-
-        [YamlMember(Alias = "bounds")]
-        public double[][] Bounds { get; set; } = [];
 
         [YamlMember(Alias = "floors")]
         public ConfigFloor[] Floors { get; set; } = Array.Empty<ConfigFloor>();
@@ -105,7 +101,7 @@ namespace ESPresense.Models
         public double Bandwidth { get; set; } = 0.5;
 
         [YamlMember(Alias = "kernel")]
-        public string Kernel { get; set; } = "gaussian";
+        public string Kernel { get; set; } = "inverse_square";
 
         /// <summary>
         /// Reject readings that cannot all be true at once before estimating a position - see
@@ -118,7 +114,7 @@ namespace ESPresense.Models
         /// depending on what else is in place, which is the whole reason the benchmark exists.
         /// </summary>
         [YamlMember(Alias = "consistency_filter")]
-        public bool ConsistencyFilter { get; set; } = true;
+        public bool ConsistencyFilter { get; set; } = false;
 
         /// <summary>
         /// Slack on the triangle inequality, in metres plus a share of the node separation. Swept
@@ -191,6 +187,7 @@ namespace ESPresense.Models
         [YamlMember(Alias = "enabled")]
         public bool Enabled { get; set; }
 
+        // Don't fall back to a node whose distance to the device is above this (metres). Unset or <= 0: no limit.
         [YamlMember(Alias = "max_distance")]
         public double? MaxDistance { get; set; }
     }
@@ -216,16 +213,28 @@ namespace ESPresense.Models
     public partial class ConfigOptimization
     {
         [YamlMember(Alias = "enabled")] public bool Enabled { get; set; } = false;
-        [YamlMember(Alias = "optimizer")] public string Optimizer { get; set; } = "legacy"; // Options: global_absorption, per_node_absorption, legacy
-        [YamlMember(Alias = "interval_secs")] public int IntervalSecs { get; set; } = 60;
-        [YamlMember(Alias = "keep_snapshot_mins")] public int KeepSnapshotMins { get; set; } = 5;
+        [YamlMember(Alias = "optimizer")] public string Optimizer { get; set; } = "per_node_absorption"; // The only mode; the removed legacy and global_absorption modes fall back to it
+        [YamlMember(Alias = "sample_interval_secs", DefaultValuesHandling = DefaultValuesHandling.OmitNull)] public int? SampleIntervalSecs { get; set; }
+        [YamlMember(Alias = "training_window_mins", DefaultValuesHandling = DefaultValuesHandling.OmitNull)] public int? TrainingWindowMins { get; set; }
+        [YamlMember(Alias = "optimization_interval_secs", DefaultValuesHandling = DefaultValuesHandling.OmitNull)] public int? OptimizationIntervalSecs { get; set; }
+        [YamlMember(Alias = "validation_fraction")] public double ValidationFraction { get; set; } = 0.2;
+        [YamlMember(Alias = "minimum_improvement")] public double MinimumImprovement { get; set; } = 0; // How far a proposal's overall score must beat the current calibration's
+
+        // Legacy timing keys. Keep these as deserialization fallbacks for existing installations.
+        [YamlMember(Alias = "interval_secs", DefaultValuesHandling = DefaultValuesHandling.OmitNull)] public int? IntervalSecs { get; set; }
+        [YamlMember(Alias = "keep_snapshot_mins", DefaultValuesHandling = DefaultValuesHandling.OmitNull)] public int? KeepSnapshotMins { get; set; }
+        [YamlMember(Alias = "min_samples")] public int MinSamples { get; set; } = 5; // Minimum holdout measurements a candidate must be evaluated on before it can be applied
         [YamlMember(Alias = "limits")] public Dictionary<string, double> Limits { get; set; } = new();
         [YamlMember(Alias = "weights")] public Dictionary<string, double> Weights { get; set; } = new();
 
         // Same-floor node pairs to exclude from calibration entirely (e.g. two nodes separated by
         // an unusually attenuating wall) - see SpatialUtils.IsExcludedPair. Entries are
         // "node_id_a:node_id_b"; order and case don't matter.
-        [YamlMember(Alias = "excluded_pairs")] public List<string> ExcludedPairs { get; set; } = new();
+        [YamlMember(Alias = "excluded_pairs")] public string[] ExcludedPairs { get; set; } = Array.Empty<string>();
+        [YamlIgnore] public int EffectiveSampleIntervalSecs => Math.Max(1, SampleIntervalSecs ?? 30);
+        [YamlIgnore] public int EffectiveTrainingWindowMins => Math.Max(1, TrainingWindowMins ?? KeepSnapshotMins ?? 30);
+        [YamlIgnore] public int EffectiveOptimizationIntervalSecs => Math.Max(1, OptimizationIntervalSecs ?? IntervalSecs ?? 900);
+        [YamlIgnore] public double EffectiveValidationFraction => Math.Clamp(ValidationFraction, 0.1, 0.5);
 
         [YamlIgnore] public double AbsorptionMin => Limits.TryGetValue("absorption_min", out var val) ? val : 2;
         [YamlIgnore] public double AbsorptionMax => Limits.TryGetValue("absorption_max", out var val) ? val : 4;
@@ -260,9 +269,8 @@ namespace ESPresense.Models
         [YamlIgnore] public double RmseWeight => Weights.TryGetValue("rmse", out var val) ? val : 0.5;
 
         // Regularization strength pulling PerNodeAbsorptionRxTx's per-node absorption fit toward
-        // AbsorptionTarget. Default 10 matches the previous hardcoded value (unchanged behavior
-        // unless a config explicitly sets weights.absorption_penalty).
-        [YamlIgnore] public double AbsorptionPenaltyWeight => Weights.TryGetValue("absorption_penalty", out var val) ? val : 10;
+        // AbsorptionTarget. Default 4: a 0.5 deviation from the target costs as much as a 1 dB residual.
+        [YamlIgnore] public double AbsorptionPenaltyWeight => Weights.TryGetValue("absorption_penalty", out var val) ? val : 4;
 
         /// <summary>
         /// Where the regularization pulls absorption to. Null means "the middle of the limits",
@@ -275,12 +283,6 @@ namespace ESPresense.Models
         /// </summary>
         [YamlIgnore] public double? AbsorptionTarget => Weights.TryGetValue("absorption_target", out var val) ? val : null;
 
-        /// <summary>
-        /// Which residual the per-node fit minimizes. "distance" is the original: squared metres,
-        /// with a one-sided 4th power when the model predicts closer than the map. "db" compares
-        /// signal levels instead. See <see cref="PerNodeAbsorptionRxTx"/> for why that matters.
-        /// </summary>
-        [YamlMember(Alias = "objective")] public string Objective { get; set; } = "distance";
 
         /// <summary>
         /// Huber transition in dB for the "db" objective. Below it residuals are squared, above it
@@ -294,8 +296,9 @@ namespace ESPresense.Models
     {
         [YamlMember(Alias = "enabled")] public bool Enabled { get; set; } = false;
 
-        [YamlMember(Alias = "db")]
-        public string Database { get; set; } = "sqlite:///espresense.db";
+        // SQLite file; relative paths are under <config dir>/.storage. Read once at startup.
+        [YamlMember(Alias = "path")]
+        public string Path { get; set; } = "history.db";
 
         [YamlMember(Alias = "expire_after")] public string ExpireAfter { get; set; } = "24h";
 
@@ -327,33 +330,40 @@ namespace ESPresense.Models
 
     public partial class ConfigMqtt
     {
-        [JsonProperty("host")]
         public string? Host { get; set; }
 
-        [JsonProperty("port")]
         public int? Port { get; set; }
 
-        [JsonProperty("ssl")]
         public bool? Ssl { get; set; }
 
-        [JsonProperty("username")]
+        [YamlMember(Alias = "insecure")]
+        public bool Insecure { get; set; }
+
+        [YamlMember(Alias = "ca_cert_path")]
+        public string? CaCertPath { get; set; }
+
         public string? Username { get; set; }
 
-        // Never serialize the broker password to API responses, MCP clients, or logs.
-        // Both JSON stacks are ignored because Config is returned by StateController
-        // (System.Text.Json) and McpResources, while Newtonsoft is used elsewhere.
-        // YamlDotNet has its own attributes, so YAML round-tripping is unaffected.
-        [JsonIgnore]
+        // Never serialize the broker password to API responses or MCP clients. Config only leaves through
+        // System.Text.Json (Newtonsoft is confined to the files NewtonsoftConventionTests allows, none of
+        // which serialize Config). YamlDotNet has its own attributes, so YAML round-tripping is unaffected.
+        // Logging is not covered: Serilog's {@} destructuring ignores JSON attributes, so never {@}-log a Config.
         [System.Text.Json.Serialization.JsonIgnore]
         public string? Password { get; set; }
 
-        [JsonProperty("client_id")]
         [YamlMember(Alias = "client_id")]
         public string ClientId { get; set; } = "espresense-companion";
 
-        [JsonProperty("discovery_topic")]
         [YamlMember(Alias = "discovery_topic")]
         public string DiscoveryTopic { get; set; } = "homeassistant";
+
+        /// <summary>
+        /// When true the companion subscribes and processes messages but never publishes; each publish
+        /// is logged at Information level instead. Defaults to false. Replaces the deprecated heuristic
+        /// of a <see cref="ClientId"/> containing "read", which still enables read-only mode but logs a warning.
+        /// </summary>
+        [YamlMember(Alias = "read_only")]
+        public bool ReadOnly { get; set; }
     }
 
     public partial class ConfigDevice

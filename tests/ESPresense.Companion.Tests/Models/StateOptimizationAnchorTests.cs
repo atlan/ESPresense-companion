@@ -1,4 +1,5 @@
 using ESPresense.Models;
+using ESPresense.Optimizers;
 using ESPresense.Services;
 using MathNet.Spatial.Euclidean;
 using Moq;
@@ -14,7 +15,7 @@ public class StateOptimizationAnchorTests
     private Mock<IMqttCoordinator> _mockMqttCoordinator;
 
     [SetUp]
-    public void Setup()
+    public async Task Setup()
     {
         _mockMqttCoordinator = new Mock<IMqttCoordinator>();
         _configDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "cfg", Guid.NewGuid().ToString());
@@ -23,6 +24,9 @@ public class StateOptimizationAnchorTests
         _configLoader = new ConfigLoader(_configDir);
         _nodeTelemetryStore = new NodeTelemetryStore(_mockMqttCoordinator.Object);
         _state = new State(_configLoader, _nodeTelemetryStore);
+
+        // These tests build floors/nodes from Config; the constructor no longer loads, so load explicitly.
+        await _configLoader.LoadAsync();
     }
 
     [TearDown]
@@ -95,7 +99,7 @@ public class StateOptimizationAnchorTests
         device.Nodes["node2"] = deviceNode2;
 
         // Act
-        var snapshot = _state.TakeOptimizationSnapshot();
+        var snapshot = new OptimizationSnapshotStore().Take(_state);
 
         // Assert - Should have measures from anchored device to nodes
         Assert.That(snapshot.Measures, Has.Count.GreaterThanOrEqualTo(2));
@@ -119,6 +123,30 @@ public class StateOptimizationAnchorTests
         Assert.That(measureToNode2.Rx.Location, Is.EqualTo(node2.Location), "Rx should be at node2 location");
         Assert.That(measureToNode2.Rssi, Is.EqualTo(-65));
         Assert.That(measureToNode2.Distance, Is.EqualTo(4.2));
+    }
+
+    [Test]
+    public void TakeOptimizationSnapshot_AnchorMeasureCarriesTheRxAdjItWasTakenWith()
+    {
+        var node = new Node("node1", NodeSourceType.Config);
+        node.Update(_configLoader.Config!, new ConfigNode { Name = "Node 1", Point = new double[] { 0, 0, 0 } }, Enumerable.Empty<Floor>());
+        _state.Nodes["node1"] = node;
+
+        var device = new Device("anchored-device", null, TimeSpan.FromSeconds(30));
+        device.SetAnchor(new DeviceAnchor(new Point3D(2.5, 2.5, 0), null, null));
+        _state.Devices["anchored-device"] = device;
+
+        var deviceNode = new DeviceToNode(device, node);
+        device.Nodes["node1"] = deviceNode;
+        deviceNode.ReadMessage(new DeviceMessage { Rssi = -60, RssiRxAdj = 4, RefRssi = -59, Distance = 3.5 });
+        var before = new OptimizationSnapshotStore().Take(_state).Measures.Single(m => m.Tx.Id == device.Id);
+
+        // The node's rxAdj moves from 4 to 7, so the same signal is now published 3 dB lower.
+        deviceNode.ReadMessage(new DeviceMessage { Rssi = -63, RssiRxAdj = 7, RefRssi = -59, Distance = 3.5 });
+        var after = new OptimizationSnapshotStore().Take(_state).Measures.Single(m => m.Tx.Id == device.Id);
+
+        Assert.That(before.GetAdjustedRssi(5), Is.EqualTo(-61));
+        Assert.That(after.GetAdjustedRssi(5), Is.EqualTo(before.GetAdjustedRssi(5)), "readings from either side of an rxAdj change must agree once re-based");
     }
 
     [Test]
@@ -161,7 +189,7 @@ public class StateOptimizationAnchorTests
         device.Nodes["node2"] = deviceNode2;
 
         // Act
-        var snapshot = _state.TakeOptimizationSnapshot();
+        var snapshot = new OptimizationSnapshotStore().Take(_state);
 
         // Assert - Only current measurement should be included
         var anchorMeasures = snapshot.Measures.Where(m => m.Tx.Id == device.Id).ToList();
@@ -192,7 +220,7 @@ public class StateOptimizationAnchorTests
         device.Nodes["node1"] = deviceNode1;
 
         // Act
-        var snapshot = _state.TakeOptimizationSnapshot();
+        var snapshot = new OptimizationSnapshotStore().Take(_state);
 
         // Assert - Regular devices should not appear as Tx in measures
         var deviceMeasures = snapshot.Measures.Where(m => m.Tx.Id == device.Id).ToList();
@@ -238,12 +266,41 @@ public class StateOptimizationAnchorTests
         device.Nodes["node-without-location"] = deviceNode2;
 
         // Act
-        var snapshot = _state.TakeOptimizationSnapshot();
+        var snapshot = new OptimizationSnapshotStore().Take(_state);
 
         // Assert - Only node with location should be included
         var anchorMeasures = snapshot.Measures.Where(m => m.Tx.Id == device.Id).ToList();
         Assert.That(anchorMeasures, Has.Count.EqualTo(1), "Should only include nodes with locations");
         Assert.That(anchorMeasures[0].Rx.Id, Is.EqualTo(nodeWithLocation.Id));
+    }
+
+    /// <summary>
+    /// A node with stationary: false (a car) can have a point configured, but the anchor's distance to it is only
+    /// right while the node happens to be there, so it is left out, as it is from node-to-node links.
+    /// </summary>
+    [Test]
+    public void TakeOptimizationSnapshot_RequiresStationaryNode()
+    {
+        Node Placed(string id, bool stationary)
+        {
+            var node = new Node(id, NodeSourceType.Config);
+            node.Update(_configLoader.Config!, new ConfigNode { Name = id, Point = new double[] { 0, 0, 0 }, Stationary = stationary }, Enumerable.Empty<Floor>());
+            _state.Nodes[id] = node;
+            return node;
+        }
+        var fixedNode = Placed("fixed-node", stationary: true);
+        var car = Placed("car", stationary: false);
+
+        var device = new Device("anchored-device", null, TimeSpan.FromSeconds(30));
+        device.SetAnchor(new DeviceAnchor(new Point3D(2.5, 2.5, 0), null, null));
+        _state.Devices["anchored-device"] = device;
+        foreach (var node in new[] { fixedNode, car })
+            device.Nodes[node.Id] = new DeviceToNode(device, node) { Distance = 3.5, Rssi = -60, RefRssi = -59, LastHit = DateTime.UtcNow };
+
+        var snapshot = new OptimizationSnapshotStore().Take(_state);
+
+        var anchorMeasures = snapshot.Measures.Where(m => m.Tx.Id == device.Id).ToList();
+        Assert.That(anchorMeasures.Select(m => m.Rx.Id), Is.EqualTo(new[] { "fixed-node" }));
     }
 
     [Test]
@@ -288,7 +345,7 @@ public class StateOptimizationAnchorTests
         device.Nodes["rx-node"] = deviceNode;
 
         // Act
-        var snapshot = _state.TakeOptimizationSnapshot();
+        var snapshot = new OptimizationSnapshotStore().Take(_state);
 
         // Assert - Should have both node-to-node and anchor measures
         Assert.That(snapshot.Measures, Has.Count.EqualTo(2));
@@ -298,5 +355,53 @@ public class StateOptimizationAnchorTests
 
         var anchorMeasure = snapshot.Measures.FirstOrDefault(m => m.Tx.Id == device.Id);
         Assert.That(anchorMeasure, Is.Not.Null, "Should have anchor measure");
+
+        // The optimizers hold an anchored device's txRef at its rssi@1m rather than fitting it.
+        Assert.That(anchorMeasure!.Tx.IsAnchor, Is.True, "anchored device should be marked as an anchor");
+        Assert.That(anchorMeasure.HeldTxRef, Is.EqualTo(-59));
+        Assert.That(nodeToNodeMeasure!.Tx.IsAnchor, Is.False, "a node is not an anchor");
+        Assert.That(nodeToNodeMeasure.HeldTxRef, Is.Null);
+        Assert.That(snapshot.Measures.Any(m => m.Rx.IsAnchor), Is.False);
+    }
+
+    [Test]
+    public void TakeOptimizationSnapshot_DeviceWithANodesId_DoesNotMakeTheNodeAnAnchor()
+    {
+        var txNode = new Node("shared-id", NodeSourceType.Config);
+        txNode.Update(_configLoader.Config!, new ConfigNode { Name = "TX Node", Point = new double[] { 0, 0, 0 } }, Enumerable.Empty<Floor>());
+        _state.Nodes["shared-id"] = txNode;
+        var rxNode = new Node("rx-node", NodeSourceType.Config);
+        rxNode.Update(_configLoader.Config!, new ConfigNode { Name = "RX Node", Point = new double[] { 5, 0, 0 } }, Enumerable.Empty<Floor>());
+        _state.Nodes["rx-node"] = rxNode;
+        txNode.RxNodes["rx-node"] = new RxNode { Tx = txNode, Rx = rxNode, Distance = 5.0, Rssi = -70, RefRssi = -59, LastHit = DateTime.UtcNow };
+
+        var device = new Device("shared-id", null, TimeSpan.FromSeconds(30));
+        device.SetAnchor(new DeviceAnchor(new Point3D(2.5, 2.5, 0), null, null));
+        _state.Devices["shared-id"] = device;
+        device.Nodes["rx-node"] = new DeviceToNode(device, rxNode) { Distance = 3.5, Rssi = -60, RefRssi = -65, LastHit = DateTime.UtcNow };
+
+        var snapshot = new OptimizationSnapshotStore().Take(_state);
+
+        Assert.That(snapshot.Measures, Has.Count.EqualTo(1), "only the node-to-node reading; the colliding device is left out");
+        Assert.That(snapshot.Measures[0].Tx.IsAnchor, Is.False, "the node must keep a fitted txRef");
+        Assert.That(snapshot.Measures[0].Tx.Location, Is.EqualTo(txNode.Location));
+    }
+
+    [Test]
+    public void TakeOptimizationSnapshot_SkipsAnchorReadingsWithoutRssiAt1m()
+    {
+        var node = new Node("node1", NodeSourceType.Config);
+        node.Update(_configLoader.Config!, new ConfigNode { Name = "Node 1", Point = new double[] { 0, 0, 0 } }, Enumerable.Empty<Floor>());
+        _state.Nodes["node1"] = node;
+
+        var device = new Device("anchored-device", null, TimeSpan.FromSeconds(30));
+        device.SetAnchor(new DeviceAnchor(new Point3D(2.5, 2.5, 0), null, null));
+        _state.Devices["anchored-device"] = device;
+        device.Nodes["node1"] = new DeviceToNode(device, node) { Rssi = -60, Distance = 3.5, RefRssi = 0, LastHit = DateTime.UtcNow };
+
+        var snapshot = new OptimizationSnapshotStore().Take(_state);
+
+        Assert.That(snapshot.Measures.Where(m => m.Tx.Id == device.Id), Is.Empty,
+            "an anchor's txRef is held at the reading's rssi@1m, so a reading without one cannot be used");
     }
 }

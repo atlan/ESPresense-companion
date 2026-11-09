@@ -16,6 +16,7 @@ public class NodeTelemetryStore : BackgroundService
     // When the online/offline status last FLIPPED - lets consumers apply a grace period so a node
     // that just went offline (e.g. mid-reboot after a firmware update) isn't immediately reported.
     private readonly ConcurrentDictionary<string, DateTime> _statusChangedAt = new();
+    private readonly ConcurrentDictionary<string, string> _updateErrorById = new();
 
     /// <summary>
     /// Initializes a new instance of <see cref="NodeTelemetryStore"/> and stores the provided MQTT coordinator reference.
@@ -69,6 +70,15 @@ public class NodeTelemetryStore : BackgroundService
             return Task.CompletedTask;
         };
 
+        _mqttCoordinator.NodeUpdateErrorAsync += arg =>
+        {
+            if (arg.Error == null)
+                _updateErrorById.TryRemove(arg.NodeId, out _);
+            else
+                _updateErrorById[arg.NodeId] = arg.Error;
+            return Task.CompletedTask;
+        };
+
         await Task.Delay(-1, stoppingToken);
     }
 
@@ -109,13 +119,24 @@ public class NodeTelemetryStore : BackgroundService
     }
 
     /// <summary>
+    /// Returns the node's last reported firmware update failure, or null if none is outstanding.
+    /// </summary>
+    public virtual string? UpdateError(string id)
+    {
+        _updateErrorById.TryGetValue(id, out var error);
+        return error;
+    }
+
+    /// <summary>
     /// Publishes retained null messages to the node's telemetry and status MQTT topics to purge their retained values.
     /// </summary>
     /// <param name="id">The node/room identifier used to construct the MQTT topics.</param>
     /// <returns>A task that completes when both purge messages have been enqueued.</returns>
     public virtual async Task Delete(string id)
     {
-        await _mqttCoordinator.EnqueueAsync($"espresense/rooms/{id}/telemetry", null, true);
-        await _mqttCoordinator.EnqueueAsync($"espresense/rooms/{id}/status", null, true);
+        await _mqttCoordinator.EnqueueAsync(MqttTopics.NodeTelemetry(id), null, true);
+        await _mqttCoordinator.EnqueueAsync(MqttTopics.NodeStatus(id), null, true);
+        await _mqttCoordinator.EnqueueAsync(MqttTopics.NodeUpdateError(id), null, true);
+        _updateErrorById.TryRemove(id, out _);
     }
 }

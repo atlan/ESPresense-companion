@@ -1,15 +1,17 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { isEditableTarget } from './dom';
 	import { zoomIdentity } from 'd3-zoom';
-	import { getToastStore } from '$lib/toast/toastStore';
-	import { nodes } from '$lib/stores';
-	import type { LayerCakeContext } from '$lib/types';
+	import { getToastStore } from '#lib/toast/toastStore.js';
+	import { getLayerCakeContext } from 'layercake';
+	import { nodes } from '#lib/stores.js';
+	import type { MapScales } from '#lib/types.js';
 	const toastStore = getToastStore();
-	export let transform = zoomIdentity;
-	export let floorId: string | null = null;
-	$: cursorX = 0;
-	$: cursorY = 0;
-	let snappedNode: string | null = null;
+	let { transform = zoomIdentity, floorId = null }: { transform?: typeof zoomIdentity; floorId?: string | null } = $props();
+	// Plain state, not derived: the mouse handler owns these. As `$:` assignments they
+	// were liable to be re-run and reset the readout to 0.
+	let cursorX = $state(0);
+	let cursorY = $state(0);
+	let snappedNode = $state<string | null>(null);
 
 	// Cursor within this many screen pixels of a node marker snaps the readout to the node's
 	// exact configured coordinates - the raw cursor position inside a marker circle is otherwise
@@ -19,10 +21,10 @@
 	let copiedCoords: string[] = [];
 	let hasFocus = false;
 
-	const { xScale, yScale, width, height, padding } = getContext<LayerCakeContext>('LayerCake');
+	const chart = getLayerCakeContext<MapScales>();
 
 	function updateCoordinates(event: MouseEvent) {
-		if (!$xScale || !$yScale) return;
+		if (!chart.xScale || !chart.yScale) return;
 
 		const target = event.target as SVGElement;
 		const svg = target.ownerSVGElement || (target as SVGSVGElement);
@@ -42,22 +44,21 @@
 			// subtracting it again shifted the readout towards the top-left.
 			const svgPoint = point.matrixTransform(screenCTM.inverse());
 
-			const adjustedX = svgPoint.x;
-			const adjustedY = svgPoint.y;
+			// layercake 11 insets the <svg> itself by the padding (rather than translating a <g> inside it),
+			// so svg coordinates are already layer coordinates; subtracting the padding again shifts the readout.
+			const transformedX = (svgPoint.x - transform.x) / transform.k;
+			const transformedY = (svgPoint.y - transform.y) / transform.k;
 
-			const transformedX = (adjustedX - transform.x) / transform.k;
-			const transformedY = (adjustedY - transform.y) / transform.k;
-
-			cursorX = $xScale.invert(transformedX);
-			cursorY = $yScale.invert(transformedY);
+			cursorX = chart.xScale.invert(transformedX);
+			cursorY = chart.yScale.invert(transformedY);
 			snappedNode = null;
 
 			for (const n of $nodes ?? []) {
 				if (!n.location) continue;
 				if (floorId && n.floors && !n.floors.includes(floorId)) continue;
-				const nx = $xScale(n.location.x) * transform.k + transform.x;
-				const ny = $yScale(n.location.y) * transform.k + transform.y;
-				if (Math.hypot(adjustedX - nx, adjustedY - ny) <= SNAP_PX) {
+				const nx = chart.xScale(n.location.x) * transform.k + transform.x;
+				const ny = chart.yScale(n.location.y) * transform.k + transform.y;
+				if (Math.hypot(svgPoint.x - nx, svgPoint.y - ny) <= SNAP_PX) {
 					cursorX = n.location.x;
 					cursorY = n.location.y;
 					snappedNode = n.name ?? n.id;
@@ -70,6 +71,7 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
+		if (isEditableTarget(event.target)) return;
 		// Check for Ctrl/Cmd + C
 		if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
 			event.preventDefault();
@@ -111,7 +113,7 @@
 
 <svelte:window onmousemove={updateCoordinates} onkeydown={handleKeydown} onblur={handleFocusOut} />
 
-<g transform="translate({$width - (snappedNode ? 190 : 120)}, {$height - 40})">
+<g transform="translate({chart.width - (snappedNode ? 190 : 120)}, {chart.height - 40})">
 	<rect width={snappedNode ? 180 : 110} height="30" rx="4" fill={snappedNode ? '#059669' : '#2563eb'} class="shadow-lg" />
 	<text x={snappedNode ? 90 : 55} y="19" text-anchor="middle" fill="white" font-size="12">
 		{#if snappedNode}

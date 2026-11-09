@@ -30,6 +30,7 @@ public class CalibrationBenchmarkFloorTests
         Directory.CreateDirectory(_dir);
         await File.WriteAllTextAsync(Path.Combine(_dir, "config.yaml"), "mqtt:\n  host: localhost\nlocators:\n  nadaraya_watson:\n    enabled: true\n");
         _configLoader = new ConfigLoader(_dir);
+        await _configLoader.LoadAsync();
         await _configLoader.ConfigAsync();
         _state = new State(_configLoader, new NodeTelemetryStore(new Mock<IMqttCoordinator>().Object));
         _pointsPath = Path.Combine(_dir, "walktest-points.json");

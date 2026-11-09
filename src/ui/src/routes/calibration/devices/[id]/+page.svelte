@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { apiPath } from '$lib/api';
-	import { devices } from '$lib/stores';
+	import { apiFetch } from '#lib/api.js';
+	import { devices } from '#lib/stores.js';
 	import { readable } from 'svelte/store';
-	import type { DeviceSetting } from '$lib/types';
+	import type { DeviceSetting } from '#lib/types.js';
 	import { Accordion } from '@skeletonlabs/skeleton-svelte';
 
-	import DeviceCalibration from '$lib/DeviceCalibration.svelte';
-	import DeviceBreadcrumb from '$lib/DeviceBreadcrumb.svelte';
+	import DeviceCalibration from '#lib/DeviceCalibration.svelte';
+	import DeviceBreadcrumb from '#lib/DeviceBreadcrumb.svelte';
 
 	type DeviceDetailItem = { key: string; value: string };
 
@@ -21,9 +21,7 @@
 
 		async function fetchAndSet() {
 			try {
-				const response = await fetch(apiPath(`/api/device/${deviceId}`));
-				if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-				const result = await response.json();
+				const result = await apiFetch<{ details?: DeviceDetailItem[] }>(`/api/device/${deviceId}`);
 				set(result.details || []);
 			} catch (ex) {
 				console.error(`Error fetching device details: ${ex instanceof Error ? ex.message : String(ex)}`);

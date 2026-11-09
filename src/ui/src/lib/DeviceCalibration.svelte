@@ -1,31 +1,39 @@
 <script lang="ts">
-	import { apiPath } from '$lib/api';
-	import { devices, nodes, config, wsManager } from '$lib/stores';
-	import Map from '$lib/Map.svelte';
-	import { getToastStore } from '$lib/toast/toastStore';
-	import type { DeviceSetting, NodeSetting } from '$lib/types';
-	import type { DeviceMessage } from '$lib/types';
-	import { onMount, onDestroy } from 'svelte';
+	import { anchorSpot } from '#lib/calibrationSpot.js';
+	import { apiFetch, apiUrl } from '#lib/api.js';
+	import { devices, nodes, config, wsManager } from '#lib/stores.js';
+	import Map from '#lib/Map.svelte';
+	import { getToastStore } from '#lib/toast/toastStore.js';
+	import type { DeviceSetting, NodeSetting, NodeSettingDetails } from '#lib/types.js';
+	import type { DeviceMessage } from '#lib/types.js';
+	import { onMount, onDestroy, untrack } from 'svelte';
 
 	const toastStore = getToastStore();
 
-	// Changed from 'export let deviceId' to 'export let deviceSettings'
-	export let deviceSettings: DeviceSetting;
+	interface Props {
+		// The device's persisted settings, supplied by the route.
+		deviceSettings: DeviceSetting;
+	}
 
-	let nodeSettings: Record<string, NodeSetting | null> = {};
+	let { deviceSettings = $bindable() }: Props = $props();
+
+	let nodeSettings: Record<string, NodeSetting | null> = $state({});
+	// Which nodes we've already requested. Kept separate from `nodeSettings` because a node
+	// can legitimately have null settings, and guarding on the response value meant the
+	// reactive block below re-fetched it forever. Deliberately non-reactive.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- must NOT be reactive: a reactive Set would re-trigger the effect below into a fetch loop
+	const nodeSettingsRequested = new Set<string>();
 
 	// Device state - adjusted to fetch based on deviceId
-	let selectedFloorId: string | null = null;
-	let calibrationSpot: { x: number; y: number; z?: number } | null = null;
-	let calibrationSpotHeight = 1.0; // Default height in meters
-	let currentRefRssi: number | null = null; // Will set after fetch
+	let selectedFloorId: string | null = $state(null);
+	let calibrationSpot: { x: number; y: number; z?: number } | null = $state(null);
+	let calibrationSpotHeight = $state(1.0); // Default height in meters
+	let currentRefRssi: number | null = $state(null); // Will set after fetch
 
 	// Local storage for all device messages (keyed by nodeId)
-	let deviceMessages: Record<string, DeviceMessage[]> = {};
+	let deviceMessages: Record<string, DeviceMessage[]> = $state({});
 
-	$: isAnchored = deviceSettings?.x != null && deviceSettings?.y != null && deviceSettings?.z != null;
-
-	let showInstructions = false;
+	let showInstructions = $state(false);
 
 	function toggleInstructions() {
 		showInstructions = !showInstructions;
@@ -39,7 +47,7 @@
 	// Function to fetch device settings based on deviceId
 	async function fetchDeviceSettings() {
 		try {
-			const response = await fetch(apiPath(`/api/device/${deviceSettings.id}`));
+			const response = await fetch(apiUrl(`/api/device/${deviceSettings.id}`));
 			if (response.ok) {
 				deviceSettings = await response.json();
 				currentRefRssi = deviceSettings?.['rssi@1m'] || null;
@@ -56,13 +64,10 @@
 	// Function to fetch node settings
 	async function fetchNodeSettings(nodeId: string) {
 		try {
-			const response = await fetch(apiPath(`/api/node/${nodeId}`));
-			if (response.ok) {
-				const data = await response.json();
-				nodeSettings[nodeId] = data.settings;
-				// Force reactivity by creating a new object reference
-				nodeSettings = { ...nodeSettings };
-			}
+			const data = await apiFetch<NodeSettingDetails>(`/api/node/${nodeId}`);
+			nodeSettings[nodeId] = data.settings;
+			// Force reactivity by creating a new object reference
+			nodeSettings = { ...nodeSettings };
 		} catch (error) {
 			console.error(`Error fetching settings for node ${nodeId}:`, error);
 		}
@@ -114,100 +119,15 @@
 		if (positionDebounce) clearTimeout(positionDebounce);
 		if (deviceSettings?.id) {
 			wsManager.unsubscribeFromEvent('deviceMessage', handleDeviceMessage);
-			wsManager.sendMessage({
-				command: 'unsubscribe',
-				type: 'deviceMessage',
-				deviceId: deviceSettings.id
-			});
+			wsManager.unsubscribeDeviceMessage(deviceSettings.id);
 			deviceMessages = {};
 		}
 	});
 
 	// Calibration metrics and related reactive state
-	let nodeDistances: { id: string; name: string; distance: number; nodeZ?: number }[] = [];
-	let rssiValues: { [key: string]: number | null } = {};
-	let includedNodes: { [key: string]: boolean } = {};
-	let calculatedRefRssi: number | null = null;
-
-	// Error handling adjusted for fetched settings
-	$: if (deviceSettings?.error) {
-		toastStore.trigger({ message: deviceSettings.error, background: 'preset-filled-error-500' });
-	}
-
-	// Reactive device and floor lookup
-	$: device = $devices?.find((d: any) => d.id === deviceSettings.id);
-	$: floor = $config?.floors.find((f: any) => f.id === selectedFloorId);
-	$: bounds = floor?.bounds;
-
-	// Initialize from device data when available
-	$: if ($devices && deviceSettings?.id && !calibrationSpot) {
-		const device = $devices?.find((d: any) => d.id === deviceSettings.id);
-		if (device) {
-			if (device.floor !== null) {
-				selectedFloorId = device.floor.id;
-			}
-			if (device.location?.x != null && device.location?.y != null) {
-				calibrationSpot = { x: device.location.x, y: device.location.y };
-			}
-		}
-	}
-
-	// Reset data on floor change
-	$: if (selectedFloorId && calibrationSpot) {
-		rssiValues = {};
-		calculatedRefRssi = null;
-	}
-
-	// Update Z coordinate when height changes
-	$: if (calibrationSpot && calibrationSpotHeight) {
-		const floorLowerZ = bounds ? bounds[0][2] : 0;
-		calibrationSpot.z = floorLowerZ + calibrationSpotHeight;
-	}
-
-	// Calculate node distances whenever calibration spot or floor changes
-	$: nodeDistances = calculateNodeDistances(calibrationSpot, selectedFloorId, $nodes, bounds, calibrationSpotHeight);
-
-	// Set default inclusion for nodes
-	$: {
-		// Fetch settings for each node
-		nodeDistances.forEach((node) => {
-			// Set default inclusion
-			if (includedNodes[node.id] === undefined) {
-				includedNodes[node.id] = true;
-			}
-
-			// Fetch node settings if not already fetched
-			if (!nodeSettings[node.id]) {
-				fetchNodeSettings(node.id);
-			}
-		});
-	}
-
-	// Update RSSI values using all available messages for each node
-	$: if (nodeDistances.length > 0) {
-		const newRssiValues: { [key: string]: number | null } = {};
-		nodeDistances.forEach((node) => {
-			if (node.id in deviceMessages && deviceMessages[node.id].length > 0) {
-				// Use all messages for this node to calculate average RSSI
-				const messages = deviceMessages[node.id];
-				const validRssiValues = messages.map((msg) => msg.rssi).filter((rssi) => rssi !== null && rssi !== undefined) as number[];
-
-				if (validRssiValues.length > 0) {
-					// Calculate the average RSSI from all messages
-					const avgRssi = validRssiValues.reduce((sum, val) => sum + val, 0) / validRssiValues.length;
-					newRssiValues[node.id] = avgRssi;
-				}
-			}
-		});
-		if (Object.keys(newRssiValues).length > 0) {
-			rssiValues = newRssiValues;
-		}
-	}
-
-	// Calculate final RSSI using all device messages when enough data is collected
-	$: if (Object.values(deviceMessages).some((msgs) => msgs.length >= 5)) {
-		calculatedRefRssi = calculateFinalRssi();
-	}
+	let rssiValues: { [key: string]: number | null } = $state({});
+	let includedNodes: { [key: string]: boolean } = $state({});
+	let calculatedRefRssi: number | null = $state(null);
 
 	// --- Helper functions ---
 
@@ -226,13 +146,11 @@
 		if (!nodes || !calibrationSpot || !selectedFloorId) {
 			return [];
 		}
-		// z can still be unset right after a calibration spot is first placed
-		// (see anchorDevice()'s identical fallback) - falling back to undefined
-		// here would silently NaN out every distance below.
+		// Same fallback as anchorDevice/sendCapturePosition when the spot has no z yet
 		const spotZ = calibrationSpot.z ?? (bounds ? bounds[0][2] + calibrationSpotHeight : calibrationSpotHeight);
 		return nodes
 			.filter((node: any) => {
-				return node.floors.includes(selectedFloorId) && node.location.x != null && node.location.y != null;
+				return node.floors?.includes(selectedFloorId) && node.location.x != null && node.location.y != null;
 			})
 			.map((node: any) => {
 				// Use the relative heights for the z-component of the distance calculation
@@ -273,15 +191,11 @@
 		});
 
 		try {
-			const response = await fetch(apiPath(`/api/device/${deviceSettings?.originalId || deviceSettings?.id}`), {
+			await apiFetch(`/api/device/${deviceSettings?.originalId || deviceSettings?.id}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
 			});
-
-			if (!response.ok) {
-				throw new Error('Failed to anchor device');
-			}
 
 			deviceSettings = { ...deviceSettings, x: calibrationSpot.x, y: calibrationSpot.y, z: zValue };
 			toastStore.trigger({ message: 'Device anchored to the selected location.', background: 'preset-filled-success-500' });
@@ -295,14 +209,11 @@
 		if (!deviceSettings?.id && !deviceSettings?.originalId) return;
 		const payload = buildSettingsPayload({ x: null, y: null, z: null });
 		try {
-			const response = await fetch(apiPath(`/api/device/${deviceSettings?.originalId || deviceSettings?.id}`), {
+			await apiFetch(`/api/device/${deviceSettings?.originalId || deviceSettings?.id}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
 			});
-			if (!response.ok) {
-				throw new Error('Failed to clear anchor');
-			}
 
 			deviceSettings = { ...deviceSettings, x: null, y: null, z: null };
 			toastStore.trigger({ message: 'Anchor removed. Device will return to automatic positioning.', background: 'preset-filled-success-500' });
@@ -316,17 +227,15 @@
 
 	type CaptureStatus = { deviceId: string; active: boolean; count: number; positions: number; started: string; ended?: string; truncated: boolean };
 
-	let capture: CaptureStatus | null = null;
+	let capture: CaptureStatus | null = $state(null);
 	let captureInterval: ReturnType<typeof setInterval> | null = null;
 	let lastSentPosition: string | null = null;
-
-	$: exportUrl = deviceSettings?.id ? apiPath(`/api/device/${deviceSettings.id}/capture/export`) : '';
 
 	async function refreshCapture() {
 		if (!deviceSettings?.id) return;
 		try {
-			const response = await fetch(apiPath(`/api/device/${deviceSettings.id}/capture`));
-			capture = response.ok ? await response.json() : null;
+			// 204 (nothing captured for this device) comes back as undefined.
+			capture = (await apiFetch<CaptureStatus | undefined>(`/api/device/${deviceSettings.id}/capture`)) ?? null;
 		} catch {
 			capture = null;
 		}
@@ -335,9 +244,7 @@
 	async function startCapture() {
 		if (!deviceSettings?.id) return;
 		try {
-			const response = await fetch(apiPath(`/api/device/${deviceSettings.id}/capture/start`), { method: 'POST' });
-			if (!response.ok) throw new Error(response.statusText);
-			capture = await response.json();
+			capture = await apiFetch<CaptureStatus>(`/api/device/${deviceSettings.id}/capture/start`, { method: 'POST' });
 			lastSentPosition = null;
 			await sendCapturePosition();
 		} catch (error) {
@@ -349,8 +256,7 @@
 	async function stopCapture() {
 		if (!deviceSettings?.id) return;
 		try {
-			const response = await fetch(apiPath(`/api/device/${deviceSettings.id}/capture/stop`), { method: 'POST' });
-			if (response.ok) capture = await response.json();
+			capture = await apiFetch<CaptureStatus>(`/api/device/${deviceSettings.id}/capture/stop`, { method: 'POST' });
 		} catch (error) {
 			console.error('Error stopping capture:', error);
 		}
@@ -359,7 +265,7 @@
 	async function discardCapture() {
 		if (!deviceSettings?.id) return;
 		try {
-			await fetch(apiPath(`/api/device/${deviceSettings.id}/capture`), { method: 'DELETE' });
+			await fetch(apiUrl(`/api/device/${deviceSettings.id}/capture`), { method: 'DELETE' });
 			capture = null;
 		} catch (error) {
 			console.error('Error discarding capture:', error);
@@ -374,12 +280,11 @@
 		if (key === lastSentPosition) return;
 		lastSentPosition = key;
 		try {
-			const response = await fetch(apiPath(`/api/device/${deviceSettings.id}/capture/position`), {
+			capture = await apiFetch<CaptureStatus>(`/api/device/${deviceSettings.id}/capture/position`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(position)
 			});
-			if (response.ok) capture = await response.json();
 		} catch (error) {
 			console.error('Error sending capture position:', error);
 		}
@@ -390,19 +295,21 @@
 	// posts — otherwise every open tab would push its own stale marker position.
 	// Debounced so dragging posts a sparse trail instead of one point per mousemove.
 	let positionDebounce: ReturnType<typeof setTimeout> | null = null;
-	$: queueCapturePosition(calibrationSpot, calibrationSpotHeight, selectedFloorId);
 	function queueCapturePosition(..._deps: unknown[]) {
-		if (!capture?.active) return;
+		// `untrack`: the effect below must not re-run when polling reassigns `capture`.
+		if (!untrack(() => capture?.active)) return;
 		if (positionDebounce) clearTimeout(positionDebounce);
 		positionDebounce = setTimeout(() => sendCapturePosition(), 300);
 	}
 
 	// Update this function to use only parameters from device messages
-	let skippedUncalibrated: string[] = [];
+	let skippedUncalibrated: string[] = $state([]);
 
 	function calculateFinalRssi() {
 		const refRssiEstimates: Array<{ refRssi: number; weight: number }> = [];
-		skippedUncalibrated = [];
+		// Collected locally and assigned once below: this runs inside an $effect.pre, where reading
+		// the $state array (push) would make the effect depend on the state it writes.
+		const skipped: string[] = [];
 
 		// Calculate using all device messages
 		Object.entries(deviceMessages).forEach(([nodeId, messages]) => {
@@ -428,7 +335,7 @@
 			// exactly this case.
 			const absorption = nodeSettings[nodeId]?.calibration?.absorption;
 			if (absorption == null || absorption <= 0) {
-				skippedUncalibrated.push(nodeId);
+				skipped.push(nodeId);
 				return;
 			}
 
@@ -443,6 +350,8 @@
 
 			refRssiEstimates.push({ refRssi, weight });
 		});
+
+		skippedUncalibrated = skipped;
 
 		// If no valid estimates, return null
 		if (refRssiEstimates.length === 0) return null;
@@ -460,8 +369,6 @@
 		includedNodes[nodeId] = !includedNodes[nodeId];
 		includedNodes = { ...includedNodes }; // Trigger reactivity
 	}
-
-	$: messageStats = calculateMessageStats(deviceMessages);
 
 	// Get message statistics for display
 	function calculateMessageStats(deviceMessages: Record<string, DeviceMessage[]>) {
@@ -522,15 +429,15 @@
 		nodes: RefNodeReading[];
 	}
 
-	let refStatus: RefStatus | null = null;
-	let refNode: string = '';
-	let refDistance = 1.0;
-	let refBusy = false;
+	let refStatus: RefStatus | null = $state(null);
+	let refNode: string = $state('');
+	let refDistance = $state(1.0);
+	let refBusy = $state(false);
 	let refTimer: ReturnType<typeof setInterval> | null = null;
 
 	async function refFetchStatus() {
 		try {
-			const res = await fetch(apiPath('/api/wizard/device-setup/reference/status'));
+			const res = await fetch(apiUrl('/api/wizard/device-setup/reference/status'));
 			if (res.ok) refStatus = await res.json();
 		} catch {
 			// transient; the poll will try again
@@ -540,7 +447,7 @@
 	async function refStart() {
 		refBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/device-setup/reference/start'), {
+			const res = await fetch(apiUrl('/api/wizard/device-setup/reference/start'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -558,7 +465,7 @@
 	async function refFinish() {
 		refBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/device-setup/reference/finish'), { method: 'POST' });
+			const res = await fetch(apiUrl('/api/wizard/device-setup/reference/finish'), { method: 'POST' });
 			if (res.ok) refStatus = await res.json();
 		} finally {
 			refBusy = false;
@@ -569,7 +476,7 @@
 		if (refStatus?.estimatedRefRssi == null) return;
 		refBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/device-setup/apply'), {
+			const res = await fetch(apiUrl('/api/wizard/device-setup/apply'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -597,7 +504,7 @@
 	async function saveCalibration() {
 		if (!calculatedRefRssi) return;
 		try {
-			const response = await fetch(apiPath(`/api/device/${deviceSettings?.originalId || deviceSettings?.id}`), {
+			const response = await fetch(apiUrl(`/api/device/${deviceSettings?.originalId || deviceSettings?.id}`), {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ ...deviceSettings, 'rssi@1m': calculatedRefRssi })
@@ -619,6 +526,120 @@
 			toastStore.trigger({ message: error.message, background: 'preset-filled-error-500' });
 		}
 	}
+	let isAnchored = $derived(deviceSettings?.x != null && deviceSettings?.y != null && deviceSettings?.z != null);
+	// Error handling adjusted for fetched settings
+	$effect(() => {
+		if (deviceSettings?.error) {
+			toastStore.trigger({ message: deviceSettings.error, background: 'preset-filled-error-500' });
+		}
+	});
+	// Reactive device and floor lookup
+	let device = $derived($devices?.find((d: any) => d.id === deviceSettings.id));
+	// Initialize from device data when available
+	$effect.pre(() => {
+		// Wait for `$devices` to load (it starts null/[] and fills asynchronously) so a located device opens
+		// at its real position rather than the fallback below, which would then block the real one.
+		if (!$devices || !deviceSettings?.id || calibrationSpot) return;
+
+		// Only look up the real position once the list actually has entries; a loaded-but-empty list is a
+		// valid state (e.g. calibrating the first device before anything has been located) that must still
+		// reach the fallback below, or #1730 returns for "zero devices ever".
+		const device = $devices.find((d: any) => d.id === deviceSettings.id);
+
+		// An anchored device's position is known exactly, so open at its saved height, not the default.
+		// Height is relative to a floor, so wait for the config: guessing here would lock in a wrong z.
+		if (isAnchored) {
+			const anchor = anchorSpot(deviceSettings, $config?.floors, device?.floor?.id);
+			if (anchor) {
+				selectedFloorId = anchor.floorId;
+				calibrationSpot = anchor.spot;
+				calibrationSpotHeight = anchor.height;
+			}
+			return;
+		}
+
+		if (device) {
+			if (device.floor !== null) {
+				selectedFloorId = device.floor.id;
+			}
+			if (device.location?.x != null && device.location?.y != null) {
+				calibrationSpot = { x: device.location.x, y: device.location.y };
+			}
+		}
+		// A device that has never been located (untracked, or heard by too few nodes) has no floor and
+		// no location, and with no spot there was nothing to drag, so it could never be anchored from
+		// here (#1730). Fall back to the first floor and the middle of it.
+		if (!selectedFloorId) selectedFloorId = $config?.floors?.[0]?.id ?? null;
+		const b = $config?.floors?.find((f: any) => f.id === selectedFloorId)?.bounds;
+		if (!calibrationSpot && b) calibrationSpot = { x: (b[0][0] + b[1][0]) / 2, y: (b[0][1] + b[1][1]) / 2 };
+	});
+	let floor = $derived($config?.floors.find((f: any) => f.id === selectedFloorId));
+	let bounds = $derived(floor?.bounds);
+	// Declared after `bounds` so the derivation doesn't reference it before initialisation.
+	let nodeDistances: { id: string; name: string; distance: number; nodeZ?: number }[] = $derived(calculateNodeDistances(calibrationSpot, selectedFloorId, $nodes, bounds, calibrationSpotHeight));
+	// Reset data on floor change
+	$effect.pre(() => {
+		if (selectedFloorId && calibrationSpot) {
+			rssiValues = {};
+			calculatedRefRssi = null;
+		}
+	});
+	// Update Z coordinate when height changes
+	$effect.pre(() => {
+		if (calibrationSpot && calibrationSpotHeight != null) {
+			const floorLowerZ = bounds ? bounds[0][2] : 0;
+			calibrationSpot.z = floorLowerZ + calibrationSpotHeight;
+		}
+	});
+	// Set default inclusion for nodes
+	$effect.pre(() => {
+		// Fetch settings for each node
+		nodeDistances.forEach((node) => {
+			// Set default inclusion
+			if (includedNodes[node.id] === undefined) {
+				includedNodes[node.id] = true;
+			}
+
+			// Fetch node settings if not already requested
+			if (!nodeSettingsRequested.has(node.id)) {
+				nodeSettingsRequested.add(node.id);
+				fetchNodeSettings(node.id);
+			}
+		});
+	});
+	// Update RSSI values using all available messages for each node
+	$effect.pre(() => {
+		if (nodeDistances.length > 0) {
+			const newRssiValues: { [key: string]: number | null } = {};
+			nodeDistances.forEach((node) => {
+				if (node.id in deviceMessages && deviceMessages[node.id].length > 0) {
+					// Use all messages for this node to calculate average RSSI
+					const messages = deviceMessages[node.id];
+					const validRssiValues = messages.map((msg) => msg.rssi).filter((rssi) => rssi !== null && rssi !== undefined) as number[];
+
+					if (validRssiValues.length > 0) {
+						// Calculate the average RSSI from all messages
+						const avgRssi = validRssiValues.reduce((sum, val) => sum + val, 0) / validRssiValues.length;
+						newRssiValues[node.id] = avgRssi;
+					}
+				}
+			});
+			if (Object.keys(newRssiValues).length > 0) {
+				rssiValues = newRssiValues;
+			}
+		}
+	});
+	// Calculate final RSSI using all device messages when enough data is collected
+	$effect.pre(() => {
+		if (Object.values(deviceMessages).some((msgs) => msgs.length >= 5)) {
+			calculatedRefRssi = calculateFinalRssi();
+		}
+	});
+	let exportUrl = $derived(deviceSettings?.id ? apiUrl(`/api/device/${deviceSettings.id}/capture/export`) : '');
+	$effect(() => {
+		queueCapturePosition(calibrationSpot, calibrationSpotHeight, selectedFloorId);
+	});
+	let messageStats = $derived(calculateMessageStats(deviceMessages));
 </script>
 
 <svelte:head>
@@ -626,9 +647,9 @@
 </svelte:head>
 
 <div class="h-full overflow-y-auto">
-	<div class="w-full px-4 py-3 space-y-4">
+	<div class="w-full max-w-6xl mx-auto px-4 py-3 space-y-4">
 		<header class="flex items-center justify-between">
-			<h1 class="text-2xl font-bold text-surface-900-100">Device Calibration</h1>
+			<h1 class="text-xl font-bold text-surface-900-100">Device Calibration</h1>
 		</header>
 
 		<div class="card preset-tonal">
@@ -742,10 +763,11 @@
 		</header>
 
 		{#if $config?.floors}
-			<div class="grid grid-cols-1 gap-4">
-				<div>
-					<label class="label font-medium mb-1" for="floor-select">Select Floor</label>
-					<select id="floor-select" bind:value={selectedFloorId} class="select w-full">
+			<!-- One row at any column width: the select gives way down from 16rem, the height field stays 7rem. -->
+			<div class="card preset-tonal p-3 grid grid-cols-[minmax(0,16rem)_7rem] items-end gap-3">
+				<div class="min-w-0">
+					<label class="label text-sm font-medium mb-1 block" for="floor-select">Floor</label>
+					<select id="floor-select" bind:value={selectedFloorId} class="select w-full text-base py-2 pl-3 pr-10 appearance-none bg-no-repeat cursor-pointer" style="background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a0a8b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E&quot;); background-position: right 0.75rem center;">
 						{#each $config?.floors as { id, name }}
 							<option value={id}>{name}</option>
 						{/each}
@@ -754,11 +776,8 @@
 
 				{#if calibrationSpot}
 					<div>
-						<label class="label font-medium mb-1" for="height-input">Height from Floor (m)</label>
-						<div class="input-group input-group-divider grid-cols-[1fr_auto]">
-							<input id="height-input" type="number" min="0" max="5" step="0.1" bind:value={calibrationSpotHeight} class="input rounded-r-none" />
-							<button type="button" class="btn preset-filled-primary-500 rounded-l-none" onclick={() => (calibrationSpotHeight = calibrationSpotHeight)}>Set</button>
-						</div>
+						<label class="label text-sm font-medium mb-1 block" for="height-input" title="Height from floor">Height (m)</label>
+						<input id="height-input" type="number" min="0" max="5" step="0.1" bind:value={calibrationSpotHeight} class="input w-full text-base py-2" />
 					</div>
 				{/if}
 			</div>
@@ -766,7 +785,7 @@
 
 		{#if selectedFloorId}
 			<div class="card h-[400px] relative overflow-hidden">
-				<Map floorId={selectedFloorId} deviceId={device?.id} exclusive={true} calibrate={true} bind:calibrationSpot />
+				<Map floorId={selectedFloorId} deviceId={device?.id} exclusive={true} embedded={true} bind:calibrationSpot />
 			</div>
 			<div class="flex flex-wrap items-center justify-between gap-3">
 				<div class="text-sm text-surface-700-300">
@@ -801,6 +820,7 @@
 						{/if}
 					{/if}
 					{#if capture && capture.count > 0}
+						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- API download URL, already built with apiUrl() -->
 						<a class="btn preset-filled-secondary-500" href={exportUrl} download>Export JSON</a>
 						{#if !capture.active}
 							<button class="btn preset-filled-surface-500" onclick={discardCapture}>Discard</button>

@@ -1,5 +1,7 @@
+using ESPresense.Utils;
 using ESPresense.Controllers;
 using ESPresense.Models;
+using ESPresense.Utils;
 using Microsoft.Extensions.Logging;
 
 namespace ESPresense.Services;
@@ -38,7 +40,7 @@ public class DeviceService
 
         if (!_state.Devices.TryRemove(deviceId, out var device))
         {
-            _logger.LogDebug("Device {DeviceId} not found for deletion", deviceId.Replace("\r", "").Replace("\n", ""));
+            _logger.LogDebug("Device {DeviceId} not found for deletion", LogSanitizer.Strip(deviceId));
             return false;
         }
 
@@ -96,6 +98,28 @@ public class DeviceService
     }
 
     /// <summary>
+    /// Gives every device without a LastSeen a provisional one of <paramref name="now"/> and publishes it to the
+    /// device's retained attributes topic. A device rebuilt from retained discovery with no retained
+    /// <c>last_seen</c> otherwise has LastSeen == null forever and <see cref="GetInactiveDevices"/> never matches it;
+    /// publishing the stamp keeps the clock running across restarts, so such a device expires one retention period
+    /// after it was first stamped instead of never. A device that is heard again gets its real LastSeen from the nodes.
+    /// </summary>
+    /// <returns>Number of devices stamped</returns>
+    public async Task<int> StampUnseenDevicesAsync(DateTime now)
+    {
+        var stamped = 0;
+        foreach (var device in _state.Devices.Values.Where(d => d.LastSeen == null).ToList())
+        {
+            // Only stamp once the stamp is persisted; otherwise the next pass retries rather than a restart resetting the clock.
+            var payload = MqttPayloads.LastSeen(now);
+            if (!await _mqtt.TryEnqueueAsync(MqttTopics.DeviceAttributes(device.Id), payload, retain: true)) continue;
+            device.LastSeen = now;
+            stamped++;
+        }
+        return stamped;
+    }
+
+    /// <summary>
     /// Gets a device by ID.
     /// </summary>
     /// <param name="deviceId">The device ID</param>
@@ -141,8 +165,8 @@ public class DeviceService
 
         foreach (var topic in new[]
         {
-            $"espresense/companion/{device.Id}",
-            $"espresense/companion/{device.Id}/attributes"
+            MqttTopics.CompanionDeviceState(device.Id),
+            MqttTopics.DeviceAttributes(device.Id)
         })
         {
             try

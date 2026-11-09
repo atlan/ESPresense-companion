@@ -5,7 +5,6 @@ using MathNet.Spatial.Euclidean;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Moq;
-using AutoMapper;
 
 namespace ESPresense.Companion.Tests.Controllers;
 
@@ -16,17 +15,15 @@ public class StateControllerAnchorTests
     private Mock<IMqttCoordinator> _mockMqttCoordinator;
     private Mock<NodeSettingsStore> _mockNodeSettingsStore;
     private Mock<DeviceSettingsStore> _mockDeviceSettingsStore;
-    private Mock<IMapper> _mockMapper;
     private Mock<ILogger<StateController>> _mockLogger;
     private ConfigLoader _configLoader;
     private string _configDir;
 
     [SetUp]
-    public void Setup()
+    public async Task Setup()
     {
         _mockMqttCoordinator = new Mock<IMqttCoordinator>();
         _mockNodeSettingsStore = new Mock<NodeSettingsStore>(_mockMqttCoordinator.Object, Mock.Of<ILogger<NodeSettingsStore>>()) { CallBase = true };
-        _mockMapper = new Mock<IMapper>();
         _mockLogger = new Mock<ILogger<StateController>>();
 
         _configDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "cfg", Guid.NewGuid().ToString());
@@ -35,6 +32,9 @@ public class StateControllerAnchorTests
         _configLoader = new ConfigLoader(_configDir);
         var nodeTelemetryStore = new NodeTelemetryStore(_mockMqttCoordinator.Object);
         _state = new State(_configLoader, nodeTelemetryStore);
+
+        // These tests build nodes from Config; the constructor no longer loads, so load explicitly.
+        await _configLoader.LoadAsync();
         _mockDeviceSettingsStore = new Mock<DeviceSettingsStore>(_mockMqttCoordinator.Object, _state);
 
         var mockEventDispatcher = new Mock<GlobalEventDispatcher>();
@@ -46,9 +46,10 @@ public class StateControllerAnchorTests
             _mockNodeSettingsStore.Object,
             _mockDeviceSettingsStore.Object,
             nodeTelemetryStore,
-            _mockMapper.Object,
+            new NodeStateMapper(nodeTelemetryStore, Mock.Of<IFirmwareTypeStore>()),
             mockEventDispatcher.Object,
-            new WalkTestService(_state, new PairErrorTracker(_state), _mockNodeSettingsStore.Object, null)
+            new CalibrationService(_state, _mockNodeSettingsStore.Object),
+            new DeviceEnricher(_mockDeviceSettingsStore.Object)
         );
     }
 
@@ -129,6 +130,31 @@ public class StateControllerAnchorTests
         Assert.That(measurement["rssi"], Is.EqualTo(-65));
         Assert.That(measurement["mapDistance"], Is.EqualTo(4.0).Within(0.01)); // Expected distance from anchor to rx node
         Assert.That(measurement["diff"], Is.EqualTo(0.1).Within(0.01)); // 4.1 - 4.0
+
+        // One pair fits almost perfectly, so it must not become the best ever seen
+        Assert.That(calibration.RMSE, Is.GreaterThan(0));
+        Assert.That(calibration.BestRMSE, Is.Null);
+        Assert.That(calibration.BestR, Is.Null);
+    }
+
+    [Test]
+    public void GetCalibration_TracksBestLiveDistanceMetrics()
+    {
+        var first = _state.RecordCalibrationMetrics(2.5, 0.7);
+        var worse = _state.RecordCalibrationMetrics(3.0, 0.6);
+        var mixed = _state.RecordCalibrationMetrics(2.0, 0.8);
+
+        Assert.That(first.BestRMSE, Is.EqualTo(2.5));
+        Assert.That(first.BestR, Is.EqualTo(0.7));
+        Assert.That(worse.BestRMSE, Is.EqualTo(2.5));
+        Assert.That(worse.BestR, Is.EqualTo(0.7));
+        Assert.That(mixed.BestRMSE, Is.EqualTo(2.0));
+        Assert.That(mixed.BestR, Is.EqualTo(0.8));
+
+        _state.ResetCalibrationMetrics();
+        var afterReset = _state.RecordCalibrationMetrics(4.0, 0.4);
+        Assert.That(afterReset.BestRMSE, Is.EqualTo(4.0));
+        Assert.That(afterReset.BestR, Is.EqualTo(0.4));
     }
 
     [Test]

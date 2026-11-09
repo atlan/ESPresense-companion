@@ -57,6 +57,7 @@ public class DeviceControllerTests
             deviceService,
             _mockState.Object,
             captureService,
+            new DeviceStatePublisher(new Mock<IMqttCoordinator>().Object),
             mockConfigLoader.Object
         );
     }
@@ -111,6 +112,45 @@ public class DeviceControllerTests
         Assert.That(result.settings.Id, Is.EqualTo("keys:dt-spare"));
         Assert.That(result.settings.OriginalId, Is.EqualTo("keys:dt-spar"));
         Assert.That(result.settings.Name, Is.EqualTo("Darrell Spare Keys"));
+    }
+
+    [Test]
+    public void Get_Should_Return_Details_For_Device_Without_Saved_Settings()
+    {
+        _mockState.Object.Devices["untracked"] = new TestDevice("untracked", null, TimeSpan.FromSeconds(30));
+
+        var result = _deviceController.Get("untracked");
+
+        Assert.That(result.details, Is.Not.Empty);
+    }
+
+    [Test]
+    public void Explain_Should_Find_Device_Without_Saved_Settings()
+    {
+        _mockState.Object.Devices["untracked"] = new TestDevice("untracked", null, TimeSpan.FromSeconds(30));
+
+        var result = _deviceController.Explain("untracked");
+
+        Assert.That(result.Value?.Id, Is.EqualTo("untracked"));
+    }
+
+    [Test]
+    public void Explain_Should_Follow_An_Alias_To_The_Device()
+    {
+        _mockDeviceSettingsStore.Setup(x => x.Get("old-id")).Returns(new DeviceSettings { Id = "new-id", OriginalId = "old-id" });
+        _mockState.Object.Devices["new-id"] = new TestDevice("new-id", null, TimeSpan.FromSeconds(30));
+
+        var result = _deviceController.Explain("old-id");
+
+        Assert.That(result.Value?.Id, Is.EqualTo("new-id"));
+    }
+
+    [Test]
+    public void Explain_Should_Return_NotFound_For_Unknown_Device()
+    {
+        var result = _deviceController.Explain("nope");
+
+        Assert.That(result.Result, Is.TypeOf<Microsoft.AspNetCore.Mvc.NotFoundResult>());
     }
 
     [Test]

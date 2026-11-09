@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { apiPath } from '$lib/api';
-	import { getToastStore } from '$lib/toast/toastStore';
+	import { apiUrl } from '#lib/api.js';
+	import { getToastStore } from '#lib/toast/toastStore.js';
 
 	const toastStore = getToastStore();
 
@@ -18,7 +18,7 @@
 
 	async function load() {
 		try {
-			const res = await fetch(apiPath('/api/config/devices'));
+			const res = await fetch(apiUrl('/api/config/devices'));
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			const data = await res.json();
 			devices = data.devices ?? [];
@@ -33,7 +33,7 @@
 		if (busy) return;
 		busy = true;
 		try {
-			const res = await fetch(apiPath('/api/config/devices'), {
+			const res = await fetch(apiUrl('/api/config/devices'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ devices, excludeDevices })

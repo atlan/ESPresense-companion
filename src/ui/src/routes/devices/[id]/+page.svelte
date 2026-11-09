@@ -1,35 +1,36 @@
 <script lang="ts">
-	import { apiPath } from '$lib/api';
-	import { devices } from '$lib/stores';
+	import { apiFetch } from '#lib/api.js';
+	import { devices, includedDevice } from '#lib/stores.js';
 	import { readable } from 'svelte/store';
-	import type { DeviceSetting } from '$lib/types';
+	import type { DeviceExplanation, DeviceSetting } from '#lib/types.js';
 	import { Accordion } from '@skeletonlabs/skeleton-svelte';
 
-	import Map from '$lib/Map.svelte';
-	import DeviceBreadcrumb from '$lib/DeviceBreadcrumb.svelte';
-
-	// Define type for the details array items
-	type DeviceDetailItem = { key: string; value: string };
+	import Map from '#lib/Map.svelte';
+	import DeviceBreadcrumb from '#lib/DeviceBreadcrumb.svelte';
+	import DeviceExplain from '#lib/DeviceExplain.svelte';
 
 	let { data = {} }: { data: { settings?: DeviceSetting } } = $props();
 
 	let device = $derived($devices?.find((d) => d.id === data.settings?.id));
 
-	let accordionValue = $state(['details']);
+	$effect(() => {
+		includedDevice.set(data.settings?.id ?? null);
+		return () => includedDevice.set(null);
+	});
 
-	const deviceDetails = readable<DeviceDetailItem[]>([], (set) => {
+	let accordionValue = $state(['explain']);
+
+	const explanation = readable<DeviceExplanation | null>(null, (set) => {
 		const deviceId = data.settings?.id;
 		if (!deviceId) return () => {};
+		const url = `/api/device/${encodeURIComponent(deviceId)}/explain`;
 
 		async function fetchAndSet() {
 			try {
-				const response = await fetch(apiPath(`/api/device/${deviceId}`));
-				if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-				const result = await response.json();
-				set(result.details || []);
+				set(await apiFetch<DeviceExplanation>(url));
 			} catch (ex) {
-				console.error(`Error fetching device details: ${ex instanceof Error ? ex.message : String(ex)}`);
-				set([]);
+				console.error(`Error fetching device explanation: ${ex instanceof Error ? ex.message : String(ex)}`);
+				set(null);
 			}
 		}
 
@@ -50,32 +51,17 @@
 		<DeviceBreadcrumb deviceName={device?.name || device?.id || 'Unknown Device'} currentView="map" />
 
 		<div class="grid flex-1 min-h-0">
-			<Map deviceId={data.settings?.id} floorId={device?.floor?.id} exclusive={true} />
+			<Map deviceId={data.settings?.id} floorId={device?.floor?.id} explanation={$explanation} exclusive={true} />
 		</div>
 	</div>
-	<div class="w-64 flex-shrink-0 bg-surface-100-800 border-l border-surface-300-700 overflow-auto">
+	<div class="w-80 flex-shrink-0 bg-surface-100-800 border-l border-surface-300-700 overflow-auto">
 		<Accordion value={accordionValue} onValueChange={({ value }) => (accordionValue = value)}>
-			<Accordion.Item value="details">
+			<Accordion.Item value="explain">
 				<Accordion.ItemTrigger>
-					<h3 class="text-lg font-semibold">Details</h3>
+					<h3 class="text-lg font-semibold">Explain this fix</h3>
 				</Accordion.ItemTrigger>
 				<Accordion.ItemContent>
-					<div class="space-y-3 p-1">
-						{#if $deviceDetails}
-							{#if $deviceDetails.length > 0}
-								{#each $deviceDetails as d}
-									<label class="flex flex-col gap-1">
-										<span class="text-sm font-medium">{d.key}</span>
-										<input class="input rounded-full" type="text" disabled value={d.value} />
-									</label>
-								{/each}
-							{:else}
-								<p class="text-sm italic">No details available</p>
-							{/if}
-						{:else}
-							<p class="text-sm italic">Loading details...</p>
-						{/if}
-					</div>
+					<DeviceExplain explanation={$explanation} />
 				</Accordion.ItemContent>
 			</Accordion.Item>
 		</Accordion>

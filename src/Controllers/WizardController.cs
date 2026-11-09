@@ -223,8 +223,8 @@ public class WizardController(
         return Ok(new
         {
             suggestions = pairErrorTracker.GetSuggestions(excluded),
-            currentlyExcluded = excluded ?? new List<string>(),
-            currentlyExcludedFriendly = (excluded ?? new List<string>()).Select(FriendlyPair).ToList(),
+            currentlyExcluded = excluded ?? Array.Empty<string>(),
+            currentlyExcludedFriendly = (excluded ?? Array.Empty<string>()).Select(FriendlyPair).ToList(),
             minSamples = PairErrorTracker.MinSamples,
             minObservationHours = PairErrorTracker.MinObservation.TotalHours,
             minAboveFraction = PairErrorTracker.MinAboveFraction,
@@ -262,7 +262,7 @@ public class WizardController(
                            (a.Equals(parts[1].Trim(), StringComparison.OrdinalIgnoreCase) && b.Equals(parts[0].Trim(), StringComparison.OrdinalIgnoreCase));
                 });
                 if (exists) continue;
-                c.Optimization.ExcludedPairs.Add(pair.Trim());
+                c.Optimization.ExcludedPairs = [.. c.Optimization.ExcludedPairs, pair.Trim()];
                 added.Add(pair.Trim());
             }
 
@@ -469,8 +469,8 @@ public class WizardController(
         if (c == null) return StatusCode(500, new { error = "Config not loaded" });
         return Ok(new WizardSettings
         {
-            IntervalSecs = c.Optimization.IntervalSecs,
-            KeepSnapshotMins = c.Optimization.KeepSnapshotMins,
+            IntervalSecs = c.Optimization.EffectiveOptimizationIntervalSecs,
+            KeepSnapshotMins = c.Optimization.EffectiveTrainingWindowMins,
             Limits = c.Optimization.Limits,
             Weights = c.Optimization.Weights,
             NadarayaWatsonEnabled = c.Locators.NadarayaWatson.Enabled,
@@ -494,7 +494,7 @@ public class WizardController(
             FilteringSmoothingWeight = c.Filtering.SmoothingWeight,
             FilteringMotionSigma = c.Filtering.MotionSigma,
             HistoryEnabled = c.History.Enabled,
-            HistoryDb = c.History.Database,
+            HistoryDb = c.History.Path,
             HistoryExpireAfter = c.History.ExpireAfter,
             MapFlipX = c.Map.FlipX,
             MapFlipY = c.Map.FlipY,
@@ -551,7 +551,7 @@ public class WizardController(
             c.Filtering.MotionSigma = s.FilteringMotionSigma;
 
             c.History.Enabled = s.HistoryEnabled;
-            if (!string.IsNullOrWhiteSpace(s.HistoryDb)) c.History.Database = s.HistoryDb;
+            if (!string.IsNullOrWhiteSpace(s.HistoryDb)) c.History.Path = s.HistoryDb;
             if (!string.IsNullOrWhiteSpace(s.HistoryExpireAfter)) c.History.ExpireAfter = s.HistoryExpireAfter;
 
             c.Map.FlipX = s.MapFlipX;

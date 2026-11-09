@@ -1,31 +1,28 @@
 <script lang="ts">
 	// Page to display the 3D map for a SINGLE device and its history
 	import { onMount, onDestroy } from 'svelte';
-	import { page } from '$app/stores'; // To get route params
+	import { page } from '$app/state'; // To get route params
 	import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
-	import { devices, nodes, config } from '$lib/stores';
-	import Map3D from '$lib/Map3D.svelte';
-	import type { Device, Node, Config, DeviceHistory } from '$lib/types';
-	import { derived } from 'svelte/store';
+	import { devices, nodes, config } from '#lib/stores.js';
+	import Map3D from '#lib/Map3D.svelte';
+	import type { Device, Node, Config, DeviceHistory } from '#lib/types.js';
+	import { apiFetch } from '#lib/api.js';
 
 	// --- Route Param ---
-	let deviceId: string | null = null;
-	$: deviceId = $page.params.id ?? null; // Get device ID from URL
+	let deviceId = $derived(page.params.id ?? null); // Get device ID from URL
 
 	// --- Data Stores & Derived State ---
 	// Find the specific device based on the route ID
-	const currentDevice = derived([devices, page], ([$devices, $page]) => {
-		return $devices.find((d) => d.id === $page.params.id) || null;
-	});
+	let currentDevice = $derived($devices.find((d) => d.id === deviceId) || null);
 
 	// --- State for this page ---
 	let guiInstance: GUI | null = null;
-	let historyDurationMinutes: number = 60;
-	let deviceHistoryData: DeviceHistory[] = [];
-	let displayMode: 'current' | 'history' = 'current'; // Control what's shown
-	let showNodes = true; // Separate control for nodes on this page
-	let zRotationSpeed = 0.002; // Separate control for rotation
-	let historyDurationControl: any; // Reference to the GUI control
+	let historyDurationMinutes: number = $state(60);
+	let deviceHistoryData: DeviceHistory[] = $state([]);
+	let displayMode: 'current' | 'history' = $state('current'); // Control what's shown
+	let showNodes = $state(true); // Separate control for nodes on this page
+	let zRotationSpeed = $state(0.002); // Separate control for rotation
+	let historyDurationControl: any = $state(); // Reference to the GUI control
 
 	// Reactive controller for GUI
 	const effectController = {
@@ -47,15 +44,6 @@
 		};
 	});
 
-	// Refetch history when relevant parameters change
-	$: if (deviceId && displayMode === 'history') fetchDeviceHistory();
-	$: if (historyDurationMinutes && displayMode === 'history') fetchDeviceHistory();
-
-	// Show/Hide duration control based on mode
-	$: if (historyDurationControl) {
-		historyDurationControl.domElement.style.display = displayMode === 'history' ? '' : 'none';
-	}
-
 	// --- Data Fetching ---
 	async function fetchDeviceHistory() {
 		if (!deviceId || historyDurationMinutes <= 0) {
@@ -68,10 +56,7 @@
 
 		try {
 			console.log(`Fetching history for ${deviceId} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
-			const response = await fetch(`/api/history/${deviceId}/range?start=${startTime.toISOString()}&end=${endTime.toISOString()}`);
-			if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-			const data: { history: DeviceHistory[] } = await response.json();
+			const data = await apiFetch<{ history: DeviceHistory[] }>(`/api/history/${deviceId}/range?start=${startTime.toISOString()}&end=${endTime.toISOString()}`);
 			deviceHistoryData = data.history || [];
 			console.log(`Fetched ${deviceHistoryData.length} history points.`);
 		} catch (error) {
@@ -124,6 +109,18 @@
 
 		guiInstance.close();
 	}
+	// Refetch history when relevant parameters change. One effect, not one per input:
+	// fetchDeviceHistory() reads both deviceId and historyDurationMinutes synchronously,
+	// so both are tracked here, and it already bails out on a missing id or duration.
+	$effect(() => {
+		if (displayMode === 'history') fetchDeviceHistory();
+	});
+	// Show/Hide duration control based on mode
+	$effect(() => {
+		if (historyDurationControl) {
+			historyDurationControl.domElement.style.display = displayMode === 'history' ? '' : 'none';
+		}
+	});
 </script>
 
 <svelte:head>
@@ -131,9 +128,9 @@
 </svelte:head>
 
 <div class="w-full h-full relative">
-	{#if $config && $currentDevice && $nodes}
-		<Map3D devicesToShow={displayMode === 'current' ? [$currentDevice] : []} nodesToShow={$nodes} config={$config} historyData={displayMode === 'history' ? deviceHistoryData : []} showDevices={displayMode === 'current'} showHistoryPath={displayMode === 'history'} bind:showNodes bind:zRotationSpeed />
-	{:else if !$currentDevice && $devices}
+	{#if $config && currentDevice && $nodes}
+		<Map3D devicesToShow={displayMode === 'current' ? [currentDevice] : []} nodesToShow={$nodes} config={$config} historyData={displayMode === 'history' ? deviceHistoryData : []} showDevices={displayMode === 'current'} showHistoryPath={displayMode === 'history'} bind:showNodes bind:zRotationSpeed />
+	{:else if !currentDevice && $devices}
 		<div class="absolute inset-0 flex items-center justify-center text-white">
 			Device with ID '{deviceId}' not found.
 		</div>

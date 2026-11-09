@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { gotoMapSpot } from '$lib/urls';
+	import { gotoMapSpot } from '#lib/urls.js';
 	import { onMount, onDestroy } from 'svelte';
-	import { getToastStore } from '$lib/toast/toastStore';
-	import { calibration } from '$lib/stores';
-	import { apiPath } from '$lib/api';
-	import { showConfirm } from '$lib/modal/modalStore';
+	import { getToastStore } from '#lib/toast/toastStore.js';
+	import { calibration } from '#lib/stores.js';
+	import { apiUrl } from '#lib/api.js';
+	import { showConfirm } from '#lib/modal/modalStore.js';
 
 	const toastStore = getToastStore();
 
@@ -13,7 +13,7 @@
 		title: string; why: string; gain?: string | null;
 		nodeSpans?: { nodeId: string; nodeName?: string | null; points: number; minM: number; maxM: number; suggestedM: number; onlyInFolds: boolean }[] | null;
 		rooms?: string[] | null;
-		suggestions?: { x: number; y: number; z: number; floorId?: string | null; roomName?: string | null; nearestNodeM: number }[] | null;
+		suggestions?: WalkPointSuggestion[] | null;
 	}
 	interface SystemStatus {
 		medianErrorM?: number | null; p90ErrorM?: number | null;
@@ -37,7 +37,7 @@
 			body: 'Die vorherige Einstellung wieder herstellen? Das Ortungsverhalten ändert sich sofort.'
 		});
 		if (!ok) return;
-		const res = await fetch(apiPath(`/api/wizard/auto-applied/${encodeURIComponent(id)}/undo`), { method: 'POST' });
+		const res = await fetch(apiUrl(`/api/wizard/auto-applied/${encodeURIComponent(id)}/undo`), { method: 'POST' });
 		toastStore.trigger({
 			message: res.ok ? 'Zurückgenommen' : 'Fehlgeschlagen',
 			background: res.ok ? 'preset-filled-success-500' : 'preset-filled-error-500'
@@ -77,7 +77,7 @@
 		// Beim Zurücknehmen darf der Benutzer festhalten, WARUM — das ist die eine Information,
 		// die er hat und das System nicht („ich hatte das Handy in der Tasche"). Freiwillig.
 		const res = await fetch(
-			apiPath(`/api/wizard/walktest/points/${encodeURIComponent(pointId)}/nodes/${encodeURIComponent(nodeId)}/disabled`),
+			apiUrl(`/api/wizard/walktest/points/${encodeURIComponent(pointId)}/nodes/${encodeURIComponent(nodeId)}/disabled`),
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -483,16 +483,16 @@
 	async function fetchAll() {
 		try {
 			const [vRes, hRes, sRes, wRes, wsRes, dRes, bRes, offRes, naRes, aaRes] = await Promise.all([
-				fetch(apiPath('/api/wizard/validation')),
-				fetch(apiPath('/api/wizard/health')),
-				fetch(apiPath('/api/wizard/excluded-pairs/suggestions')),
-				fetch(apiPath('/api/wizard/walktest/status')),
-				fetch(apiPath('/api/wizard/walktest/suggest')),
-				fetch(apiPath('/api/wizard/diagnostics')),
-				fetch(apiPath('/api/wizard/benchmark')),
-				fetch(apiPath('/api/wizard/walktest/disabled')),
-				fetch(apiPath('/api/wizard/next-actions')),
-				fetch(apiPath('/api/wizard/auto-applied')),
+				fetch(apiUrl('/api/wizard/validation')),
+				fetch(apiUrl('/api/wizard/health')),
+				fetch(apiUrl('/api/wizard/excluded-pairs/suggestions')),
+				fetch(apiUrl('/api/wizard/walktest/status')),
+				fetch(apiUrl('/api/wizard/walktest/suggest')),
+				fetch(apiUrl('/api/wizard/diagnostics')),
+				fetch(apiUrl('/api/wizard/benchmark')),
+				fetch(apiUrl('/api/wizard/walktest/disabled')),
+				fetch(apiUrl('/api/wizard/next-actions')),
+				fetch(apiUrl('/api/wizard/auto-applied')),
 			]);
 			if (vRes.ok) validation = await vRes.json();
 			if (hRes.ok) health = await hRes.json();
@@ -537,7 +537,7 @@
 
 	async function fetchWalkStatus() {
 		try {
-			const res = await fetch(apiPath('/api/wizard/walktest/status'));
+			const res = await fetch(apiUrl('/api/wizard/walktest/status'));
 			if (res.ok) {
 				walkStatus = await res.json();
 				checkNewRawPoints();
@@ -551,7 +551,7 @@
 		if (wtBusy || !wtDevice || wtX == null || wtY == null || wtZ == null) return;
 		wtBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/walktest/start'), {
+			const res = await fetch(apiUrl('/api/wizard/walktest/start'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ deviceId: wtDevice, x: wtX, y: wtY, z: wtZ, durationSecs: wtDuration })
@@ -576,7 +576,7 @@
 		if (wtBusy) return;
 		wtBusy = true;
 		try {
-			const res = await fetch(apiPath(cancel ? '/api/wizard/walktest/cancel' : '/api/wizard/walktest/stop'), { method: 'POST' });
+			const res = await fetch(apiUrl(cancel ? '/api/wizard/walktest/cancel' : '/api/wizard/walktest/stop'), { method: 'POST' });
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
@@ -612,7 +612,7 @@
 
 	async function deleteWalkPoint(id: string) {
 		try {
-			const res = await fetch(apiPath(`/api/wizard/walktest/points/${id}`), { method: 'DELETE' });
+			const res = await fetch(apiUrl(`/api/wizard/walktest/points/${id}`), { method: 'DELETE' });
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			await fetchWalkStatus();
 		} catch (error) {
@@ -640,7 +640,7 @@
 
 	async function fetchLocatorTune() {
 		try {
-			const res = await fetch(apiPath('/api/wizard/locatortune/status'));
+			const res = await fetch(apiUrl('/api/wizard/locatortune/status'));
 			if (res.ok) locatorTune = await res.json();
 		} catch (error) {
 			console.error('Error fetching locator tune status:', error);
@@ -651,7 +651,7 @@
 		if (locatorTuneBusy) return;
 		locatorTuneBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/locatortune/run'), { method: 'POST' });
+			const res = await fetch(apiUrl('/api/wizard/locatortune/run'), { method: 'POST' });
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			locatorTune = await res.json();
 		} catch (error) {
@@ -673,7 +673,7 @@
 		});
 		if (!confirmed) return;
 		try {
-			const res = await fetch(apiPath('/api/wizard/locatortune/apply'), {
+			const res = await fetch(apiUrl('/api/wizard/locatortune/apply'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ candidateKey: r.candidate.key })
@@ -694,7 +694,7 @@
 
 	async function fetchSettings() {
 		try {
-			const res = await fetch(apiPath('/api/wizard/settings'));
+			const res = await fetch(apiUrl('/api/wizard/settings'));
 			if (res.ok) settings = await res.json();
 		} catch (error) {
 			console.error('Error fetching settings:', error);
@@ -705,7 +705,7 @@
 		if (settingsBusy || !settings) return;
 		settingsBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/settings'), {
+			const res = await fetch(apiUrl('/api/wizard/settings'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(settings)
@@ -727,7 +727,7 @@
 
 	async function fetchTuneStatus() {
 		try {
-			const res = await fetch(apiPath('/api/wizard/autotune/status'));
+			const res = await fetch(apiUrl('/api/wizard/autotune/status'));
 			if (res.ok) tuneState = await res.json();
 		} catch (error) {
 			console.error('Error fetching autotune status:', error);
@@ -738,7 +738,7 @@
 		if (tuneBusy) return;
 		tuneBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/autotune/start'), { method: 'POST' });
+			const res = await fetch(apiUrl('/api/wizard/autotune/start'), { method: 'POST' });
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
@@ -762,7 +762,7 @@
 		});
 		if (!confirmed) return;
 		try {
-			const res = await fetch(apiPath('/api/wizard/autotune/apply'), {
+			const res = await fetch(apiUrl('/api/wizard/autotune/apply'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ candidateKey: r.candidate.key })
@@ -784,7 +784,7 @@
 		if (calibrateBusy) return;
 		calibrateBusy = true;
 		try {
-			const response = await fetch(apiPath('/api/wizard/calibrate-now'), { method: 'POST' });
+			const response = await fetch(apiUrl('/api/wizard/calibrate-now'), { method: 'POST' });
 			if (!response.ok) {
 				const err = await response.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${response.status}`);
@@ -812,7 +812,7 @@
 
 		pairBusy[s.pairId] = true;
 		try {
-			const response = await fetch(apiPath('/api/wizard/excluded-pairs'), {
+			const response = await fetch(apiUrl('/api/wizard/excluded-pairs'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify([s.pairId])
@@ -847,7 +847,7 @@
 		locatorBusy = true;
 		locatorApplied = false;
 		try {
-			const res = await fetch(apiPath('/api/wizard/locator-sweep'), {
+			const res = await fetch(apiUrl('/api/wizard/locator-sweep'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({})
@@ -863,7 +863,7 @@
 	async function applyLocatorChoice(locators: string[]) {
 		locatorBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/locator-sweep/apply'), {
+			const res = await fetch(apiUrl('/api/wizard/locator-sweep/apply'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ locators })
@@ -878,7 +878,7 @@
 	async function runCalibrationSweep() {
 		sweepBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/calibration-sweep'), {
+			const res = await fetch(apiUrl('/api/wizard/calibration-sweep'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({})
@@ -894,7 +894,7 @@
 	async function runBenchmark() {
 		benchBusy = true;
 		try {
-			const res = await fetch(apiPath('/api/wizard/benchmark/run'), {
+			const res = await fetch(apiUrl('/api/wizard/benchmark/run'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ label: null })

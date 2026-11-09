@@ -20,6 +20,9 @@ namespace ESPresense.Services;
 /// </summary>
 public class WalkTestService
 {
+    /// <summary>Id prefix of the synthetic transmitter a walk point becomes in the optimizer's measures.</summary>
+    public const string SyntheticTxPrefix = "walktest:";
+
     private readonly State state;
     private readonly PairErrorTracker pairErrorTracker;
     private readonly NodeSettingsStore nodeSettings;
@@ -603,7 +606,7 @@ public class WalkTestService
 
                 var tx = new OptNode
                 {
-                    Id = $"walktest:{point.DeviceId}",
+                    Id = $"{SyntheticTxPrefix}{point.DeviceId}",
                     Name = $"WalkTest {point.DeviceName ?? point.DeviceId}",
                     Location = new Point3D(point.X, point.Y, point.Z),
                     FloorIds = txFloorIds

@@ -14,11 +14,16 @@ public class DeviceSettingsStoreTests
     private ConfigLoader _configLoader = null!;
     private NodeTelemetryStore _nodeTelemetryStore = null!;
     private string _configDir = null!;
+    private Func<DeviceSettingsEventArgs, Task> _receive = null!;
 
     [SetUp]
-    public void Setup()
+    public async Task Setup()
     {
         _mockMqttCoordinator = new Mock<IMqttCoordinator>();
+        var subscribed = new TaskCompletionSource<Func<DeviceSettingsEventArgs, Task>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockMqttCoordinator.SetupAdd(m => m.DeviceConfigReceivedAsync += It.IsAny<Func<DeviceSettingsEventArgs, Task>>())
+            .Callback<Func<DeviceSettingsEventArgs, Task>>(handler => subscribed.TrySetResult(handler));
 
         _configDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "cfg", Guid.NewGuid().ToString());
         Directory.CreateDirectory(_configDir);
@@ -29,11 +34,9 @@ public class DeviceSettingsStoreTests
 
         _deviceSettingsStore = new DeviceSettingsStore(_mockMqttCoordinator.Object, _state);
 
-        // Start the background service so it subscribes to events
-        var startTask = _deviceSettingsStore.StartAsync(CancellationToken.None);
-        // Ensure the service has started
-        startTask.Wait(TimeSpan.FromSeconds(1));
-        Assert.That(startTask.IsCompleted, Is.True, "Service should start within 1 second");
+        // StartAsync can return before the background service subscribes to MQTT events.
+        await _deviceSettingsStore.StartAsync(CancellationToken.None);
+        _receive = await subscribed.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [TearDown]
@@ -320,6 +323,134 @@ public class DeviceSettingsStoreTests
         Assert.That(device.IsAnchored, Is.False);
         Assert.That(device.Anchor, Is.Null);
         Assert.That(device.Check, Is.True);
+    }
+
+    [Test]
+    public async Task AliasChange_Should_Prune_Stale_Alias_And_Allow_Writes_To_It()
+    {
+        _mockMqttCoordinator.Setup(x => x.EnqueueAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        // Device "keys:orig" first advertises alias "keys:alias-a"
+        await ReceiveDeviceConfigAsync("keys:orig", new DeviceSettings { Id = "keys:alias-a", OriginalId = "keys:orig", Name = "Keys" });
+
+        Assert.That(_deviceSettingsStore.Get("keys:alias-a"), Is.Not.Null);
+        Assert.ThrowsAsync<InvalidOperationException>(() => _deviceSettingsStore.Set("keys:alias-a", new DeviceSettings { Id = "keys:alias-a" }));
+
+        // The same device now advertises a different alias
+        await ReceiveDeviceConfigAsync("keys:orig", new DeviceSettings { Id = "keys:alias-b", OriginalId = "keys:orig", Name = "Keys" });
+
+        Assert.That(_deviceSettingsStore.Get("keys:alias-a"), Is.Null, "stale alias should be pruned");
+        Assert.That(_deviceSettingsStore.Get("keys:alias-b"), Is.Not.Null);
+        Assert.That(_deviceSettingsStore.Get("keys:orig")!.Id, Is.EqualTo("keys:alias-b"));
+
+        // Writing to the old alias is no longer rejected as an alias write
+        await _deviceSettingsStore.Set("keys:alias-a", new DeviceSettings { Id = "keys:alias-a", Name = "Other" });
+        _mockMqttCoordinator.Verify(x => x.EnqueueAsync("espresense/settings/keys:alias-a/config", It.IsAny<string?>(), true), Times.Once);
+    }
+
+    [Test]
+    public async Task AliasChange_Should_Not_Prune_Alias_Now_Owned_By_Another_Device()
+    {
+        await ReceiveDeviceConfigAsync("keys:one", new DeviceSettings { Id = "keys:shared", OriginalId = "keys:one" });
+        // A second device takes over the alias
+        await ReceiveDeviceConfigAsync("keys:two", new DeviceSettings { Id = "keys:shared", OriginalId = "keys:two" });
+        // The first device moves to a new alias; "keys:shared" must keep pointing at device two
+        await ReceiveDeviceConfigAsync("keys:one", new DeviceSettings { Id = "keys:one-new", OriginalId = "keys:one" });
+
+        var shared = _deviceSettingsStore.Get("keys:shared");
+        Assert.That(shared, Is.Not.Null);
+        Assert.That(shared!.OriginalId, Is.EqualTo("keys:two"));
+        Assert.That(_deviceSettingsStore.Get("keys:one-new"), Is.Not.Null);
+    }
+
+    [Test]
+    public async Task AliasRename_Should_Retire_Raw_Key_Then_Previous_Alias()
+    {
+        var retired = new List<IReadOnlyList<string>>();
+        _deviceSettingsStore.DeviceIdsRetiredAsync += ids => { retired.Add(ids); return Task.CompletedTask; };
+
+        // Name only: nothing retired
+        await ReceiveDeviceConfigAsync("irk:70f7", new DeviceSettings { Name = "iPhone" });
+        Assert.That(retired, Is.Empty);
+
+        // First alias: the raw key is dead
+        await ReceiveDeviceConfigAsync("irk:70f7", new DeviceSettings { Id = "phone:piper", Name = "iPhone" });
+        Assert.That(retired, Has.Count.EqualTo(1));
+        Assert.That(retired[0], Is.EquivalentTo(new[] { "irk:70f7" }));
+
+        // Same alias again (e.g. a name edit): nothing new
+        await ReceiveDeviceConfigAsync("irk:70f7", new DeviceSettings { Id = "phone:piper", Name = "Piper" });
+        Assert.That(retired, Has.Count.EqualTo(1));
+
+        // Rename: the previous alias is dead (and the raw key still is)
+        await ReceiveDeviceConfigAsync("irk:70f7", new DeviceSettings { Id = "phone:old-iphone", Name = "iPhone" });
+        Assert.That(retired, Has.Count.EqualTo(2));
+        Assert.That(retired[1], Is.EquivalentTo(new[] { "phone:piper", "irk:70f7" }));
+
+        Assert.That(_deviceSettingsStore.IsRetired("irk:70f7"), Is.True);
+        Assert.That(_deviceSettingsStore.IsRetired("phone:old-iphone"), Is.False);
+    }
+
+    [Test]
+    public async Task AliasRemoved_Should_Retire_Alias_But_Not_Raw_Key()
+    {
+        var retired = new List<string>();
+        _deviceSettingsStore.DeviceIdsRetiredAsync += ids => { retired.AddRange(ids); return Task.CompletedTask; };
+
+        await ReceiveDeviceConfigAsync("irk:70f7", new DeviceSettings { Id = "phone:piper" });
+        retired.Clear();
+        await ReceiveDeviceConfigAsync("irk:70f7", new DeviceSettings { Name = "iPhone" });
+
+        Assert.That(retired, Is.EquivalentTo(new[] { "phone:piper" }));
+        Assert.That(_deviceSettingsStore.IsRetired("irk:70f7"), Is.False);
+    }
+
+    [Test]
+    public async Task AliasChange_Should_Not_Retire_Alias_Taken_Over_By_Another_Device()
+    {
+        var retired = new List<string>();
+        _deviceSettingsStore.DeviceIdsRetiredAsync += ids => { retired.AddRange(ids); return Task.CompletedTask; };
+
+        await ReceiveDeviceConfigAsync("keys:one", new DeviceSettings { Id = "keys:shared" });
+        await ReceiveDeviceConfigAsync("keys:two", new DeviceSettings { Id = "keys:shared" });
+        retired.Clear();
+        await ReceiveDeviceConfigAsync("keys:one", new DeviceSettings { Id = "keys:one-new" });
+
+        Assert.That(retired, Is.EquivalentTo(new[] { "keys:one" }));
+    }
+
+    [Test]
+    public async Task AliasChange_By_Last_Writer_Should_Keep_Alias_Still_Used_By_Another_Key()
+    {
+        var retired = new List<string>();
+        _deviceSettingsStore.DeviceIdsRetiredAsync += ids => { retired.AddRange(ids); return Task.CompletedTask; };
+
+        await ReceiveDeviceConfigAsync("keys:one", new DeviceSettings { Id = "keys:shared", OriginalId = "keys:one" });
+        await ReceiveDeviceConfigAsync("keys:two", new DeviceSettings { Id = "keys:shared", OriginalId = "keys:two" });
+        retired.Clear();
+        // The key that wrote the alias map last moves away; keys:one still uses the alias
+        await ReceiveDeviceConfigAsync("keys:two", new DeviceSettings { Id = "keys:two-new", OriginalId = "keys:two" });
+
+        Assert.That(retired, Is.EquivalentTo(new[] { "keys:two" }));
+        Assert.That(_deviceSettingsStore.Get("keys:shared")?.OriginalId, Is.EqualTo("keys:one"));
+    }
+
+    [Test]
+    public async Task Settings_Whose_Id_Equals_Key_Are_Not_Retired()
+    {
+        var retired = new List<string>();
+        _deviceSettingsStore.DeviceIdsRetiredAsync += ids => { retired.AddRange(ids); return Task.CompletedTask; };
+
+        await ReceiveDeviceConfigAsync("keys:darrell", new DeviceSettings { Id = "keys:darrell", Name = "Keys" });
+
+        Assert.That(retired, Is.Empty);
+        Assert.That(_deviceSettingsStore.IsRetired("keys:darrell"), Is.False);
+    }
+
+    private Task ReceiveDeviceConfigAsync(string deviceId, DeviceSettings deviceSettings)
+    {
+        return _receive(new DeviceSettingsEventArgs { DeviceId = deviceId, Payload = deviceSettings });
     }
 
     private async Task SimulateMqttDeviceConfig(string deviceId, DeviceSettings deviceSettings)

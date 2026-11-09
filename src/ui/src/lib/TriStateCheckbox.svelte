@@ -1,8 +1,12 @@
 <script lang="ts">
-	export let checked: boolean | null = false;
-	export let id: string;
-	export let disabled: boolean = false;
-	export let onchange: ((event: { checked: boolean | null }) => void) | undefined = undefined;
+	interface Props {
+		checked?: boolean | null;
+		id: string;
+		onchange?: ((event: { checked: boolean | null }) => void) | undefined;
+		disabled?: boolean;
+	}
+
+	let { checked = $bindable(false), id, onchange = undefined, disabled = false }: Props = $props();
 
 	function handleClick(event: Event) {
 		if (disabled) return;
@@ -21,8 +25,7 @@
 		onchange?.({ checked });
 	}
 
-	let ariaChecked: boolean | 'mixed';
-	$: ariaChecked = checked === null ? 'mixed' : checked;
+	let ariaChecked = $derived(checked === null ? ('mixed' as const) : checked);
 </script>
 
 <input type="checkbox" class="checkbox" {id} {disabled} onclick={handleClick} checked={checked === true} indeterminate={checked === null} readOnly={checked === null} aria-checked={ariaChecked} />

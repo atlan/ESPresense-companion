@@ -1,25 +1,27 @@
 <script lang="ts">
-	import { apiPath } from '$lib/api';
-	import { gotoDetail } from '$lib/urls';
-	import link from '$lib/images/link.svg';
-	import type { Node, NodeSetting, NodeSettingDetails } from '$lib/types';
-	import { getToastStore } from '$lib/toast/toastStore';
-	import { showComponent, showConfirm } from '$lib/modal/modalStore';
-	import { updateMethod, firmwareSource, flavor, version, artifact, forkAsset, flavorNames, firmwareTypes, getFirmwareUrl } from '$lib/firmware';
-	import Firmware from '$lib/modals/Firmware.svelte';
-	import NodeSettingsModal from '$lib/modals/NodeSettingsModal.svelte';
+	import { apiFetch } from '#lib/api.js';
+	import { gotoDetail } from '#lib/urls.js';
+	import type { Node, NodeSetting, NodeSettingDetails } from '#lib/types.js';
+	import { getToastStore } from '#lib/toast/toastStore.js';
+	import { showComponent, showConfirm } from '#lib/modal/modalStore.js';
+	import { updateMethod, firmwareSource, flavor, version, artifact, forkAsset, flavorNames, firmwareTypes, getFirmwareUrl } from '#lib/firmware.js';
+	import Firmware from '#lib/modals/Firmware.svelte';
+	import NodeSettingsModal from '#lib/modals/NodeSettingsModal.svelte';
 
-	export let row: Node; // Node data for this row
-	export let col: string; // Column identifier from parent table
-	$: _ = col; // Suppress unused variable warning while preserving the prop
+	interface Props {
+		row: Node; // Node data for this row
+		col: string; // Column identifier from parent table
+	}
+
+	let { row, col }: Props = $props();
+	let _ = $derived(col); // Suppress unused variable warning while preserving the prop
 
 	const toastStore = getToastStore();
-	let loadingEdit = false;
+	let loadingEdit = $state(false);
 
 	async function onRestart(node: Node) {
 		try {
-			const response = await fetch(apiPath(`/api/node/${node.id}/restart`), { method: 'POST' });
-			if (!response.ok) throw new Error(response.statusText || 'Failed to restart node');
+			await apiFetch(`/api/node/${node.id}/restart`, { method: 'POST' });
 
 			toastStore.trigger({
 				message: `${node.name || node.id} asked to reboot`,
@@ -43,8 +45,7 @@
 		if (!confirmed) return;
 
 		try {
-			const response = await fetch(apiPath(`/api/node/${encodeURIComponent(node.id)}`), { method: 'DELETE' });
-			if (!response.ok) throw new Error(response.statusText || 'Failed to delete node');
+			await apiFetch(`/api/node/${encodeURIComponent(node.id)}`, { method: 'DELETE' });
 
 			toastStore.trigger({
 				message: `${node.name || node.id} deleted`,
@@ -117,7 +118,7 @@
 				}
 			}
 
-			const response = await fetch(apiPath(`/api/node/${node.id}/update`), {
+			await apiFetch(`/api/node/${node.id}/update`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -128,8 +129,6 @@
 					url: url
 				})
 			});
-
-			if (!response.ok) throw new Error(response.statusText || 'Update failed');
 
 			toastStore.trigger({
 				message: `${node.name || node.id} asked to update ${updateDescription}`,
@@ -168,10 +167,7 @@
 		loadingEdit = true;
 
 		try {
-			const response = await fetch(apiPath(`/api/node/${row.id}`));
-			if (!response.ok) throw new Error(`Failed to fetch node settings details: ${response.statusText}`);
-
-			const nodeSettingsDetails: NodeSettingDetails = await response.json();
+			const nodeSettingsDetails = await apiFetch<NodeSettingDetails>(`/api/node/${row.id}`);
 
 			if (!nodeSettingsDetails.settings) {
 				// Create default settings if none exist
@@ -207,7 +203,15 @@
 
 <div class="flex gap-1">
 	{#if row.online}
-		<button class="btn btn-sm preset-filled-primary-500" onclick={(e) => { e.stopPropagation(); handleEdit(); }} disabled={loadingEdit} aria-label="Edit node settings">
+		<button
+			class="btn btn-sm preset-filled-primary-500"
+			onclick={(e) => {
+				e.stopPropagation();
+				handleEdit();
+			}}
+			disabled={loadingEdit}
+			aria-label="Edit node settings"
+		>
 			{#if loadingEdit}
 				<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
 			{:else}
@@ -215,27 +219,36 @@
 			{/if}
 		</button>
 
-		<button class="btn btn-sm preset-filled-secondary-500" onclick={(e) => { e.stopPropagation(); gotoDetail(row); }} aria-label="View node on map"> Map </button>
+		<button
+			class="btn btn-sm preset-filled-secondary-500"
+			onclick={(e) => {
+				e.stopPropagation();
+				gotoDetail(row);
+			}}
+			aria-label="View node on map"
+		>
+			Map
+		</button>
 
 		{#if row.telemetry?.version}
-			<button onclick={e => onUpdate(row)} disabled={!($updateMethod === 'self' || ($firmwareTypes && $firmwareSource === 'release' && $version) || ($firmwareTypes && $firmwareSource === 'artifact' && $artifact) || ($firmwareSource === 'fork' && $version && $forkAsset))} class="btn btn-sm preset-filled-tertiary-500" aria-label="Update node firmware"> Update </button>
+			<button onclick={(e) => onUpdate(row)} disabled={!($updateMethod === 'self' || ($firmwareTypes && $firmwareSource === 'release' && $version) || ($firmwareTypes && $firmwareSource === 'artifact' && $artifact) || ($firmwareSource === 'fork' && $version && $forkAsset))} class="btn btn-sm preset-filled-tertiary-500" aria-label="Update node firmware"> Update </button>
 		{/if}
 
 		{#if row.telemetry}
-			<button onclick={e => onRestart(row)} class="btn btn-sm preset-filled-warning-500" aria-label="Restart node"> Restart </button>
-		{/if}
-
-		{#if row.telemetry?.ip}
-			<a href="http://{row.telemetry?.ip}" target="_blank" class="btn btn-sm preset-filled-surface-500" aria-label="Open node web interface">
-				<span>Visit</span>
-				<span><img class="w-4" src={link} alt="External Link" /></span>
-			</a>
+			<button onclick={(e) => onRestart(row)} class="btn btn-sm preset-filled-warning-500" aria-label="Restart node"> Restart </button>
 		{/if}
 	{:else}
 		{#if row.sourceType === 'Config'}
 			<button disabled class="btn btn-sm preset-filled-surface-500 disabled:pointer-events-none disabled:cursor-not-allowed" aria-label="Config-defined node cannot be deleted" title="This node is defined in config.yaml and cannot be deleted from the UI">Delete</button>
 		{:else}
-			<button onclick={e => { e.preventDefault(); onDelete(row) }} class="btn btn-sm preset-filled-error-500" aria-label="Delete node">Delete</button>
+			<button
+				onclick={(e) => {
+					e.preventDefault();
+					onDelete(row);
+				}}
+				class="btn btn-sm preset-filled-error-500"
+				aria-label="Delete node">Delete</button
+			>
 		{/if}
 	{/if}
 </div>

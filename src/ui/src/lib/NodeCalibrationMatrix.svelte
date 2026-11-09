@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { calibration } from '$lib/stores';
-	import { apiPath } from '$lib/api';
-	import { getToastStore } from '$lib/toast/toastStore';
-	import { showConfirm } from '$lib/modal/modalStore';
-	import { tooltip } from '$lib/tooltip';
-	import SlideToggle from '$lib/SlideToggle.svelte';
+	import { calibration } from '#lib/stores.js';
+	import { apiFetch, apiUrl } from '#lib/api.js';
+	import { getToastStore } from '#lib/toast/toastStore.js';
+	import { showConfirm } from '#lib/modal/modalStore.js';
+	import { tooltip } from '#lib/tooltip.js';
+	import { errorColor } from '#lib/explain.js';
+	import SlideToggle from '#lib/SlideToggle.svelte';
 	import { onMount } from 'svelte';
 
 	enum DataPoint {
@@ -20,15 +21,7 @@
 		if (percent == null) {
 			return '';
 		}
-		// Clamp percent between -2 and +2
-		percent = Math.max(-2, Math.min(percent, 2));
-
-		// Clamp the color mapping between -1 and +1 for hue purposes
-		const colorPercent = Math.max(-1, Math.min(percent, 1));
-
-		// Map colorPercent (-1 to +1) to hue (240° blue -> 120° green -> 0° red)
-		const hue = 240 - (colorPercent + 1) * (240 / 2); // Shift from 240° to 0°
-		return `background-color: hsl(${hue}, 50%, 50%)`;
+		return `background-color: ${errorColor(percent)}`;
 	}
 
 	function value(n1: any, data_point: number) {
@@ -57,9 +50,9 @@
 		}
 	}
 
-	let rxColumns: Array<string> = [];
-	$: {
+	let rxColumns: Array<string> = $derived.by(() => {
 		const matrix = $calibration?.matrix ?? {};
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- temp inside $derived.by, not state
 		const rxSet = new Set<string>();
 
 		// Only include receivers that have actual data from at least one transmitter
@@ -71,12 +64,17 @@
 				}
 			});
 		});
-		rxColumns = Array.from(rxSet).sort();
-	}
+		return Array.from(rxSet).sort();
+	});
 
 	// Helper function to check if a transmitter is an anchored device
 	function isAnchored(txName: string): boolean {
 		return $calibration?.anchored?.includes(txName) ?? false;
+	}
+
+	function formatOptimizerTime(value?: string): string {
+		if (!value) return 'n/a';
+		return new Date(value).toLocaleString();
 	}
 
 	// Recorded walk-test points appear as extra Tx rows (ground truth at record time)
@@ -86,28 +84,23 @@
 
 	// Row order: real nodes first, then anchored devices, then walk points - each group
 	// numeric-aware (wt2 before wt10; plain localeCompare sorted them lexicographically).
-	let sortedRows: Array<[string, any]> = [];
-	$: {
+	let sortedRows: Array<[string, any]> = $derived.by(() => {
 		const walkSet = new Set($calibration?.walkPoints ?? []);
 		const anchorSet = new Set($calibration?.anchored ?? []);
 		const rank = (k: string) => (walkSet.has(k) ? 2 : anchorSet.has(k) ? 1 : 0);
-		sortedRows = Object.entries($calibration?.matrix ?? {}).sort(
-			(a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0], undefined, { numeric: true })
-		);
-	}
+		return Object.entries($calibration?.matrix ?? {}).sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0], undefined, { numeric: true }));
+	});
 
-	let data_point: DataPoint = 0;
+	let data_point: DataPoint = $state(0);
 
 	const toastStore = getToastStore();
-	let autoOptimization = false;
-	let autoOptimizationLoaded = false;
-	let autoOptimizationBusy = false;
+	let autoOptimization = $state(false);
+	let autoOptimizationLoaded = $state(false);
+	let autoOptimizationBusy = $state(false);
 
 	async function fetchAutoOptimizationState() {
 		try {
-			const response = await fetch(apiPath('/api/state/calibration/auto-optimize'));
-			if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-			const data = await response.json();
+			const data = await apiFetch<{ autoOptimize: boolean }>('/api/state/calibration/auto-optimize');
 			autoOptimization = !!data.autoOptimize;
 		} catch (error) {
 			console.error('Error fetching auto-optimization state:', error);
@@ -120,13 +113,12 @@
 		}
 	}
 
-	async function toggleAutoOptimization() {
+	async function toggleAutoOptimization(desiredState: boolean) {
 		if (!autoOptimizationLoaded || autoOptimizationBusy) return;
 		autoOptimizationBusy = true;
-		const desiredState = autoOptimization;
 
 		try {
-			const response = await fetch(apiPath('/api/state/calibration/auto-optimize'), {
+			const data = await apiFetch<{ autoOptimize: boolean }>('/api/state/calibration/auto-optimize', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
@@ -134,8 +126,6 @@
 				body: JSON.stringify(desiredState)
 			});
 
-			if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-			const data = await response.json();
 			autoOptimization = !!data.autoOptimize;
 		} catch (error) {
 			console.error('Error toggling auto-optimization:', error);
@@ -158,8 +148,9 @@
 		if (!confirmed) return;
 
 		try {
-			const response = await fetch(apiPath('/api/state/calibration/reset'), { method: 'POST' });
+			const response = await fetch(apiUrl('/api/state/calibration/reset'), { method: 'POST' });
 			if (response.ok) {
+				await calibration.refresh();
 				toastStore.trigger({
 					message: 'Calibration reset successfully',
 					background: 'preset-filled-success-500'
@@ -182,101 +173,143 @@
 
 <!-- Retrigger CI on $(date) -->
 
-<div class="h-full overflow-y-auto">
+<div data-testid="calibration-content">
 	<div class="w-full px-4 py-2">
-		<!-- Active Optimizers -->
-		{#if $calibration?.optimizerState?.optimizers}
-		<div class="mb-4">
-			<span class="text-sm font-semibold text-surface-600-400">Active Optimizers:</span>
-			<span class="text-surface-900-100 ml-2">{$calibration.optimizerState.optimizers}</span>
-		</div>
+		{#if $calibration?.optimizerState}
+			<div class="card preset-tonal mb-4 p-4">
+				<div class="flex flex-wrap items-start justify-between gap-3">
+					<div>
+						<div class="flex items-center gap-2">
+							<h2 class="font-semibold">Auto Optimization</h2>
+							<span class="badge preset-filled-surface-500">{$calibration.optimizerState.phase}</span>
+						</div>
+						<p class="text-surface-600-400 mt-1 text-sm">{$calibration.optimizerState.message}</p>
+					</div>
+					{#if $calibration.optimizerState.optimizers}
+						<div class="text-right text-sm">
+							<div class="text-surface-600-400">Optimizer</div>
+							<div class="font-medium">{$calibration.optimizerState.optimizers}</div>
+						</div>
+					{/if}
+				</div>
+
+				<div class="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+					<div>
+						<div class="text-surface-600-400">Collected</div>
+						<div class="font-medium">{$calibration.optimizerState.snapshotCount} snapshots / {$calibration.optimizerState.measurementCount} measurements</div>
+					</div>
+					<div>
+						<div class="text-surface-600-400">Train / Validate</div>
+						<div class="font-medium">{$calibration.optimizerState.trainingSamples} / {$calibration.optimizerState.validationSamples} samples</div>
+					</div>
+					<div>
+						<div class="text-surface-600-400">Last Run</div>
+						<div class="font-medium">{formatOptimizerTime($calibration.optimizerState.lastRunAt)}</div>
+					</div>
+					<div>
+						<div class="text-surface-600-400">Next Run</div>
+						<div class="font-medium">{formatOptimizerTime($calibration.optimizerState.nextRunAt)}</div>
+					</div>
+				</div>
+
+				{#if $calibration.optimizerState.leaseHolder}
+					<div class="border-surface-300-700 mt-3 border-t pt-3 text-sm">
+						<span class="text-surface-600-400">Lease:</span>
+						<span class="ml-1 font-medium">{$calibration.optimizerState.leaseHolder}</span>
+						{#if $calibration.optimizerState.leaseExpiresAt}
+							<span class="text-surface-600-400 ml-1">until {formatOptimizerTime($calibration.optimizerState.leaseExpiresAt)}</span>
+						{/if}
+					</div>
+				{/if}
+				{#if $calibration.optimizerState.lastOutcome}
+					<div class="border-surface-300-700 mt-3 border-t pt-3 text-sm">
+						<span class="text-surface-600-400">Last outcome:</span>
+						<span class="ml-1">{$calibration.optimizerState.lastOutcome}</span>
+					</div>
+				{/if}
+			</div>
 		{/if}
 
 		<!-- Calibration Statistics -->
 		{#if $calibration?.optimizerState}
-		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-			<div class="card p-4 preset-tonal">
-				<div class="text-2xl font-bold text-primary-500">{$calibration?.rmse?.toFixed(3) ?? 'n/a'}</div>
-				<div class="text-sm text-surface-600-400">RMSE</div>
+			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+				<div class="card p-4 preset-tonal">
+					<div class="text-2xl font-bold text-primary-500">{$calibration?.rmse?.toFixed(3) ?? 'n/a'}</div>
+					<div class="text-sm text-surface-600-400">Current RMSE (m)</div>
+				</div>
+				<div class="card p-4 preset-tonal">
+					<div class="text-2xl font-bold text-primary-500">{$calibration?.r?.toFixed(3) ?? 'n/a'}</div>
+					<div class="text-sm text-surface-600-400">Current R</div>
+				</div>
+				<div class="card p-4 preset-tonal">
+					<div class="text-2xl font-bold text-success-500">{$calibration?.bestRMSE?.toFixed(3) ?? 'n/a'}</div>
+					<div class="text-sm text-surface-600-400">Best Seen RMSE (m)</div>
+				</div>
+				<div class="card p-4 preset-tonal">
+					<div class="text-2xl font-bold text-success-500">{$calibration?.bestR?.toFixed(3) ?? 'n/a'}</div>
+					<div class="text-sm text-surface-600-400">Best Seen R</div>
+				</div>
 			</div>
-			<div class="card p-4 preset-tonal">
-				<div class="text-2xl font-bold text-primary-500">{$calibration?.r?.toFixed(3) ?? 'n/a'}</div>
-				<div class="text-sm text-surface-600-400">R</div>
-			</div>
-			<div class="card p-4 preset-tonal">
-				<div class="text-2xl font-bold text-success-500">{$calibration?.optimizerState?.bestRMSE?.toFixed(3) ?? 'n/a'}</div>
-				<div class="text-sm text-surface-600-400">Best RMSE</div>
-			</div>
-			<div class="card p-4 preset-tonal">
-				<div class="text-2xl font-bold text-success-500">{$calibration?.optimizerState?.bestR?.toFixed(3) ?? 'n/a'}</div>
-				<div class="text-sm text-surface-600-400">Best R</div>
-			</div>
-		</div>
 		{/if}
 
 		{#if $calibration?.matrix}
-		<div class="card">
-			<header class="text-lg font-semibold mb-4">Node Calibration</header>
-			<div class="space-y-4">
-				<div class="flex flex-col gap-6 rounded-lg border border-surface-300-700 bg-surface-50-950 p-4 shadow-sm">
-					<div class="flex flex-wrap items-center justify-between gap-3">
-						<div class="flex flex-wrap items-center gap-2">
-							<button class="btn {data_point === 0 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 0)}>Error %</button>
-							<button class="btn {data_point === 1 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 1)}>Error (m)</button>
-							<button class="btn {data_point === 2 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 2)}>Absorption</button>
-							<button class="btn {data_point === 3 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 3)}>Rx Rssi Adj</button>
-							<button class="btn {data_point === 4 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 4)}>Tx Rssi Ref</button>
-							<button class="btn {data_point === 5 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 5)}>Variance (m)</button>
-						</div>
-						<div class="flex flex-wrap items-center gap-3">
-							<SlideToggle
-								name="auto-optimization"
-								bind:checked={autoOptimization}
-								disabled={!autoOptimizationLoaded || autoOptimizationBusy}
-								onclick={toggleAutoOptimization}
-							>
-								Auto Optimization
-							</SlideToggle>
-							<button class="btn preset-filled-warning-500" onclick={resetCalibration}> Reset Calibration </button>
+			<div class="card">
+				<header class="text-lg font-semibold mb-4">Node Calibration</header>
+				<div class="space-y-4">
+					<div class="flex flex-col gap-6 rounded-lg border border-surface-300-700 bg-surface-50-950 p-4 shadow-sm">
+						<div class="flex flex-wrap items-center justify-between gap-3">
+							<div class="flex flex-wrap items-center gap-2">
+								<button class="btn {data_point === 0 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 0)}>Error %</button>
+								<button class="btn {data_point === 1 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 1)}>Error (m)</button>
+								<button class="btn {data_point === 2 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 2)}>Absorption</button>
+								<button class="btn {data_point === 3 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 3)}>Rx Rssi Adj</button>
+								<button class="btn {data_point === 4 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 4)}>Tx Rssi Ref</button>
+								<button class="btn {data_point === 5 ? 'preset-filled-primary-500' : 'preset-ghost-surface-500'}" onclick={() => (data_point = 5)}>Variance (m)</button>
+							</div>
+							<div class="flex flex-wrap items-center gap-3">
+								<SlideToggle name="auto-optimization" bind:checked={autoOptimization} disabled={!autoOptimizationLoaded || autoOptimizationBusy} onchange={toggleAutoOptimization}>Auto Optimization</SlideToggle>
+								<button class="btn preset-filled-warning-500" onclick={resetCalibration}> Reset Calibration </button>
+							</div>
 						</div>
 					</div>
-				</div>
-				<!-- Height-capped: the walk-point rows can make this table very tall -->
-				<div class="overflow-x-auto overflow-y-auto max-h-[65vh]">
-					<table class="table">
-						<thead>
-							<tr>
-								<th class="sticky top-0 z-10 bg-surface-100-900" style="text-align: center; color: oklch(1 0 none);">Name</th>
-								{#each rxColumns as id}
-									<th class="h-32 whitespace-nowrap px-2 py-1 min-w-10 sticky top-0 z-10 bg-surface-100-900">
-										<div style="writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg); position: absolute; bottom: 8px; left: 50%; transform-origin: center; transform: translateX(-50%) rotate(180deg); white-space: nowrap; color: oklch(1 0 none);">Rx: {id}</div>
-									</th>
-								{/each}
-							</tr>
-						</thead>
-						<tbody>
-							{#each sortedRows as [id1, n1] (id1)}
+					<!-- Height-capped only when walk points exist: their rows can make this table very tall -->
+					<div class="overflow-x-auto {($calibration?.walkPoints?.length ?? 0) > 0 ? 'overflow-y-auto max-h-[65vh]' : ''}">
+						<table class="table">
+							<thead>
 								<tr>
-									<td style="text-align: right; white-space: nowrap;">Tx: {id1}{#if isAnchored(id1)} 📍{/if}{#if isWalkPoint(id1)} 🚶{/if}</td>
-									{#each rxColumns as id2 (id2)}
-										<td style="text-align: center; {coloring(n1[id2]?.percent)}" use:tooltip={n1[id2] ? `Map Distance ${n1[id2].mapDistance?.toFixed(1)} - Measured ${n1[id2]?.distance?.toFixed(1)} = Error ${n1[id2]?.diff?.toFixed(1)}` : isWalkPoint(id1) ? 'Not heard during this walk recording' : 'No beacon Received in last 30 seconds'}
-											>{#if n1[id2]}{value(n1[id2], data_point)}{/if}</td
-										>
+									<th class="sticky top-0 z-10 bg-surface-100-900" style="text-align: center; color: oklch(1 0 none);">Name</th>
+									{#each rxColumns as id}
+										<th class="h-32 whitespace-nowrap px-2 py-1 min-w-10 sticky top-0 z-10 bg-surface-100-900">
+											<div style="writing-mode: vertical-rl; text-orientation: mixed; position: absolute; bottom: 8px; left: 50%; transform-origin: center; transform: translateX(-50%) rotate(180deg); white-space: nowrap; color: oklch(1 0 none);">Rx: {id}</div>
+										</th>
 									{/each}
 								</tr>
-							{/each}
-						</tbody>
-					</table>
+							</thead>
+							<tbody>
+								{#each sortedRows as [id1, n1] (id1)}
+									<tr>
+										<td style="text-align: right; white-space: nowrap;"
+											>Tx: {id1}{#if isAnchored(id1)}
+												📍{/if}{#if isWalkPoint(id1)}
+												🚶{/if}</td
+										>
+										{#each rxColumns as id2 (id2)}
+											<td style="text-align: center; {coloring(n1[id2]?.percent)}" use:tooltip={n1[id2] ? `Map Distance ${n1[id2].mapDistance?.toFixed(1)} - Measured ${n1[id2]?.distance?.toFixed(1)} = Error ${n1[id2]?.diff?.toFixed(1)}` : isWalkPoint(id1) ? 'Not heard during this walk recording' : 'No beacon Received in last 30 seconds'}
+												>{#if n1[id2]}{value(n1[id2], data_point)}{/if}</td
+											>
+										{/each}
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					{#if ($calibration?.walkPoints?.length ?? 0) > 0}
+						<p class="text-xs text-surface-600-400">🚶 = recorded walk-test point (median measured vs. true distance at record time - ground truth, not live). 📍 = anchored device.</p>
+					{/if}
 				</div>
-				{#if ($calibration?.walkPoints?.length ?? 0) > 0}
-					<p class="text-xs text-surface-600-400">🚶 = recorded walk-test point (median measured vs. true distance at record time - ground truth, not live). 📍 = anchored device.</p>
-				{/if}
 			</div>
-		</div>
 		{:else}
-		<div class="text-center py-8 text-surface-600-400">
-			Loading calibration data...
-		</div>
+			<div class="text-center py-8 text-surface-600-400">Loading calibration data...</div>
 		{/if}
 	</div>
 </div>

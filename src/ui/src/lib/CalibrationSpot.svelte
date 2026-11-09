@@ -1,35 +1,46 @@
 <script lang="ts">
 	import { zoomIdentity } from 'd3-zoom';
-	import { createEventDispatcher, getContext } from 'svelte';
-	import type { AxisLayerCakeContext } from '$lib/types';
-
-	const dispatch = createEventDispatcher();
+	import { getLayerCakeContext } from 'layercake';
+	import type { MapScales } from '#lib/types.js';
 
 	// Get the scales from the LayerCake context.
-	const { xScale, yScale } = getContext<AxisLayerCakeContext>('LayerCake');
+	const chart = getLayerCakeContext<MapScales>();
 
-	// The current d3 zoom transform.
-	export let transform = zoomIdentity;
-	/**
-	 * Ziehbar? Auf der Kartenseite wird der Punkt nur ANGEZEIGT ("hier liegt der Walk-Punkt") - dort
-	 * waere Verschieben irrefuehrend, weil niemand auf dragend hoert und die Position aus der
-	 * Adresszeile stammt. Die Kalibrieransicht laesst ihn weiterhin ziehen.
-	 */
-	export let interactive = true;
-	/**
-	 * Klick auf den Marker. Bewusst UNABHAENGIG von `interactive`: auf der
-	 * Kartenseite soll er sich nicht verschieben lassen (die Position kommt aus der
-	 * Adresszeile), anklickbar sein soll er trotzdem - sonst hebelt das eine das
-	 * andere aus.
-	 */
-	export let onclick: (() => void) | null = null;
-	// The calibration spot's logical (data) position.
-	export let position = { x: 0, y: 0 };
-	// Data-space bounds.
-	export let bounds: number[][] = [
-		[0, 0],
-		[500, 500]
-	];
+	interface Props {
+		// The current d3 zoom transform.
+		transform?: any;
+		// The calibration spot's logical (data) position.
+		position?: any;
+		// Data-space bounds.
+		bounds?: number[][];
+		// Called when a drag completes.
+		ondragend?: (detail: { position: { x: number; y: number } }) => void;
+		/**
+		 * Ziehbar? Auf der Kartenseite wird der Punkt nur ANGEZEIGT ("hier liegt der Walk-Punkt") - dort
+		 * waere Verschieben irrefuehrend, weil niemand auf dragend hoert und die Position aus der
+		 * Adresszeile stammt. Die Kalibrieransicht laesst ihn weiterhin ziehen.
+		 */
+		interactive?: boolean;
+		/**
+		 * Klick auf den Marker. Bewusst UNABHAENGIG von `interactive`: auf der
+		 * Kartenseite soll er sich nicht verschieben lassen (die Position kommt aus der
+		 * Adresszeile), anklickbar sein soll er trotzdem - sonst hebelt das eine das
+		 * andere aus.
+		 */
+		onclick?: (() => void) | null;
+	}
+
+	let {
+		transform = zoomIdentity,
+		position = $bindable({ x: 0, y: 0 }),
+		bounds = [
+			[0, 0],
+			[500, 500]
+		],
+		ondragend,
+		interactive = true,
+		onclick = null
+	}: Props = $props();
 
 	let isDragging = false;
 	// Offset (in screen space) from the pointer to the marker's center.
@@ -58,10 +69,10 @@
 		const coords = getClientCoords(event);
 
 		// Compute the marker's current screen position.
-		// The marker is rendered at: translate($xScale(position.x), $yScale(position.y))
+		// The marker is rendered at: translate(chart.xScale(position.x), chart.yScale(position.y))
 		// and then the outer <g> applies the zoom transform.
-		const markerScreenX = transform.k * $xScale(position.x) + transform.x;
-		const markerScreenY = transform.k * $yScale(position.y) + transform.y;
+		const markerScreenX = transform.k * chart.xScale(position.x) + transform.x;
+		const markerScreenY = transform.k * chart.yScale(position.y) + transform.y;
 
 		// Record the offset from the pointer to the marker center.
 		offset.x = coords.clientX - markerScreenX;
@@ -93,8 +104,8 @@
 		// Convert the screen coordinates back into data coordinates.
 		// First, remove the zoom transform: subtract translation and divide by scale.
 		// Then, invert the scales to get back to data space.
-		const newDataX = $xScale.invert((newMarkerScreenX - transform.x) / transform.k);
-		const newDataY = $yScale.invert((newMarkerScreenY - transform.y) / transform.k);
+		const newDataX = chart.xScale.invert((newMarkerScreenX - transform.x) / transform.k);
+		const newDataY = chart.yScale.invert((newMarkerScreenY - transform.y) / transform.k);
 
 		// Optionally, clamp to bounds.
 		const clampedX = Math.max(bounds[0][0], Math.min(bounds[1][0], newDataX));
@@ -124,17 +135,17 @@
 			window.removeEventListener('touchcancel', handlePointerUp, { capture: true });
 
 			// Notify that dragging has completed
-			dispatch('dragend', { position });
+			ondragend?.({ position });
 		}
 	}
 </script>
 
 <!--
   The outer <g> applies the d3‑zoom transform.
-  The inner <g> positions the calibration spot using $xScale and $yScale.
+  The inner <g> positions the calibration spot using chart.xScale and chart.yScale.
 -->
 <g transform={transform.toString()}>
-	<g transform="translate({$xScale(position.x)}, {$yScale(position.y)})" style="cursor: {interactive ? 'move' : 'default'}">
+	<g transform="translate({chart.xScale(position.x)}, {chart.yScale(position.y)})" style="cursor: {interactive ? 'move' : 'default'}">
 		<!-- Outer ring -->
 		<circle r="10" fill="none" stroke="#4CAF50" stroke-width="2" opacity="0.8" />
 		<!-- Inner dot -->

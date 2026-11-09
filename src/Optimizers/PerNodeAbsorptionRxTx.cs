@@ -2,18 +2,58 @@ using ESPresense.Models;
 using ESPresense.Utils;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
-using Serilog;
 using ESPresense.Extensions;
 
 namespace ESPresense.Optimizers;
 
+/// <summary>
+/// Joint fit of rxAdj + absorption per receiver and txRef per transmitter, by least squares on the
+/// RSSI residual <c>measured(rxAdj) - (txRef - 10*absorption*log10(d))</c>.
+///
+/// Two things keep it honest on real radio:
+///
+/// Fitting in dB, not metres. The log-distance model's noise is roughly constant in dB, so a dB
+/// residual weights every measurement alike; a metre residual is dominated by the far nodes, and an
+/// asymmetric one (the previous quartic penalty on under-estimates) bends the whole fit toward
+/// over-estimating. Huber loss caps the pull of multipath outliers.
+///
+/// Holding txRef near a reference. With only node-to-node data, "every transmitter is k dB hot" and "every
+/// receiver is k dB hot" produce identical RSSI, so the data alone cannot place the calibration;
+/// but devices are ranged with their own rssi@1m, which the optimizer never touches, so the choice
+/// matters to them: rxAdj must be right in absolute terms. The reference is what the
+/// transmitter already advertises (its configured txRef, else the rssi@1m on the measurement), and
+/// txRef only moves off it when the evidence outweighs the prior.
+///
+/// Anchored devices are not given a txRef at all: they are ranged with their own rssi@1m, so the fit
+/// holds them there (<see cref="Measure.HeldTxRef"/>). That removes the gauge freedom outright, so
+/// with anchors in the data the txRef prior gives up the common shift and only keeps the nodes'
+/// txRefs from straying apart: rxAdj is placed by the anchors, not by where the incumbent sat.
+/// </summary>
 public class PerNodeAbsorptionRxTx : IOptimizer
 {
     private readonly State _state;
+    private readonly ILogger<PerNodeAbsorptionRxTx> _logger;
 
-    public PerNodeAbsorptionRxTx(State state)
+    /// <summary>
+    /// Variance (dB²) of a link's own error, added to its reported RSSI variance in the fit's weights. About 4 dB
+    /// per link remains on anchored devices whatever the node settings, so a reading's steadiness alone says little
+    /// about how far it is from the model.
+    /// </summary>
+    internal const double LinkErrorVariance = 16;
+
+
+    /// <summary>Prior weight on txRef: a 2 dB departure from the advertised reference costs as much as a ~1.4 dB residual.</summary>
+    private const double TxRefPrior = 0.5;
+
+    /// <summary>For replays and sweeps that report their own outcome: the fit's warnings go nowhere.</summary>
+    public PerNodeAbsorptionRxTx(State state) : this(state, Microsoft.Extensions.Logging.Abstractions.NullLogger<PerNodeAbsorptionRxTx>.Instance)
+    {
+    }
+
+    public PerNodeAbsorptionRxTx(State state, ILogger<PerNodeAbsorptionRxTx> logger)
     {
         _state = state;
+        _logger = logger;
     }
 
     public string Name => "Per Node Absorption Rx Tx Adj";
@@ -29,9 +69,6 @@ public class PerNodeAbsorptionRxTx : IOptimizer
     public double? AbsorptionMinOverride { get; init; }
     public double? AbsorptionMaxOverride { get; init; }
 
-    /// <summary>Residual to minimize: "distance" (original) or "db". Overrides the config for one run.</summary>
-    public string? ObjectiveOverride { get; init; }
-
     /// <summary>Where the regularization pulls to. Overrides both config and the fleet-median seed.</summary>
     public double? AbsorptionTargetOverride { get; init; }
 
@@ -46,6 +83,7 @@ public class PerNodeAbsorptionRxTx : IOptimizer
     {
         var or = new OptimizationResults();
         var optimization = _state.Config?.Optimization;
+        if (optimization == null) return or;
 
         // A single shared absorption value per Rx node cannot fit both same-floor pairs and
         // cross-floor pairs (e.g. separated by a concrete floor slab) well at the same time - live-
@@ -54,256 +92,172 @@ public class PerNodeAbsorptionRxTx : IOptimizer
         // same-floor nodes (each Locator filters by Node.Floors), cross-floor node-to-node
         // measurements carry no useful signal for calibration and are excluded entirely rather than
         // just down-weighted.
-        var excludedPairs = _state.Config?.Optimization?.ExcludedPairs;
-        var allRxNodes = os.ByRx().SelectMany(g => g)
-            .Where(n => !SpatialUtils.IsCrossFloor(n.Rx, n.Tx))
-            .Where(n => !SpatialUtils.IsExcludedPair(n.Rx, n.Tx, excludedPairs))
+        var excludedPairs = optimization.ExcludedPairs;
+        var measures = os.Measures
+            .Where(m => m.Rx?.Location != null && m.Tx?.Location != null)
+            .Where(m => !m.IsUnusableAnchor) // nothing to hold its txRef at, and it must not be fitted like a node
+            .Where(m => !SpatialUtils.IsCrossFloor(m.Rx, m.Tx))
+            .Where(m => !SpatialUtils.IsExcludedPair(m.Rx, m.Tx, excludedPairs))
+            .Select(m => (m, logD: Math.Log10(m.Rx.Location.DistanceTo(m.Tx.Location))))
+            .Where(t => double.IsFinite(t.logD))
             .ToList();
 
-        if (allRxNodes.Count < 3)
+        if (measures.Count < 3)
         {
-            Log.Warning("Not enough valid measurements for optimization. Found {Count} measurements, need at least 3. Add more BLE beacons or ESPresense nodes.", allRxNodes.Count);
+            _logger.LogWarning("Not enough valid measurements for optimization. Found {Count} measurements, need at least 3. Add more BLE beacons or ESPresense nodes.", measures.Count);
             return or;
         }
 
-        // Get unique Rx and Tx nodes
-        var uniqueRxIds = allRxNodes.Select(n => n.Rx.Id).Distinct().ToList();
-        var uniqueTxIds = allRxNodes.Select(n => n.Tx.Id).Distinct().ToList();
+        var rxIds = measures.Select(t => t.m.Rx.Id).Distinct().ToList();
+        // Only nodes have a txRef to fit; an anchored device's is held at its rssi@1m.
+        var txIds = measures.Where(t => t.m.HeldTxRef == null).Select(t => t.m.Tx.Id).Distinct().ToList();
 
-        // Map parameter indices
-        var rxIndexMap = new Dictionary<string, int>();
-        var txIndexMap = new Dictionary<string, int>();
-        int paramIndex = 0;
-
-        // Each Rx node has two parameters: rxAdjRssi and absorption
-        foreach (var rxId in uniqueRxIds)
-        {
-            rxIndexMap[rxId] = paramIndex;
-            paramIndex += 2;
-        }
-
-        // Each Tx node has one parameter: txRefRssi
-        foreach (var txId in uniqueTxIds)
-        {
-            txIndexMap[txId] = paramIndex;
-            paramIndex++;
-        }
-
-        int totalParams = paramIndex;
-
-        if (optimization == null) return or;
+        // Layout: [rxAdj, absorption] per receiver, then txRef per transmitter.
+        var rxIndex = rxIds.Select((id, i) => (id, i)).ToDictionary(t => t.id, t => 2 * t.i);
+        var txIndex = txIds.Select((id, i) => (id, i)).ToDictionary(t => t.id, t => 2 * rxIds.Count + t.i);
+        int totalParams = 2 * rxIds.Count + txIds.Count;
 
         var absorptionMin = AbsorptionMinOverride ?? optimization.AbsorptionMin;
         var absorptionMax = AbsorptionMaxOverride ?? optimization.AbsorptionMax;
-        // ★ The target the regularization shrinks towards. It is the midpoint of the limits unless
-        // told otherwise, which conflates two statements - the limits say what absorption is
-        // POSSIBLE, the target says what is LIKELY - so weights.absorption_target now separates them.
-        //
-        // What it does NOT do is change the default, and that is a correction to my own reasoning.
-        // The argument was: limits 2.5..4.8 put the target at 3.65 while all 18 nodes fit to
-        // 4.06-4.59, so the penalty drags every node down, against the data. Measured against the
-        // walk points twice (26 points, then 31), pulling down is BETTER: target 3.65 scored 1.38 m
-        // and 1.55 m, the fleet's own median 4.23 scored 1.39 m and 1.59 m. Small, but the same
-        // direction both times. The regularization is not merely a tie-breaker being dragged off
-        // course - it is moving the fit somewhere better, and "the data says 4.2" turns out to be
-        // the node-to-node data, which is not what the locator is scored on.
+        // The target the regularization shrinks towards. It is the midpoint of the limits unless told
+        // otherwise, which conflates two statements: the limits say what absorption is POSSIBLE, the
+        // target says what is LIKELY, so weights.absorption_target separates them. The default stays the
+        // midpoint on purpose. Measured against the walk points twice (26 points, then 31), target 3.65
+        // scored 1.38 m and 1.55 m, the fleet's own median 4.23 scored 1.39 m and 1.59 m.
         var targetAbsorption = AbsorptionTargetOverride
                                ?? optimization.AbsorptionTarget
                                ?? absorptionMin + (absorptionMax - absorptionMin) / 2.0;
         LastTargetAbsorption = targetAbsorption;
-        double penaltyWeight = AbsorptionPenaltyOverride ?? optimization.AbsorptionPenaltyWeight;
-        var useDb = string.Equals(ObjectiveOverride ?? optimization.Objective, "db", StringComparison.OrdinalIgnoreCase);
-        var huberDelta = HuberDeltaOverride ?? optimization.HuberDeltaDb;
+        // Prior weight on absorption (weights.absorption_penalty, default 4: a 0.5 deviation from the target
+        // costs as much as a 1 dB residual).
+        var absorptionPrior = AbsorptionPenaltyOverride ?? optimization.AbsorptionPenaltyWeight;
+        // Residuals beyond this many dB count linearly rather than quadratically.
+        var huberDb = HuberDeltaOverride ?? optimization.HuberDeltaDb;
 
-        // Pre-calculate weights for each node based on RssiVar
-        var nodeWeights = new Dictionary<Measure, double>();
-        double totalWeight = 0;
-
-        foreach (var node in allRxNodes)
+        // The reference each transmitter is held near: what it is already calibrated or advertised at.
+        var txPriorRef = txIds.ToDictionary(id => id, id =>
         {
-            // Inverse variance weighting - use 1/variance as weight
-            double weight = 1.0;
-            if (node.RssiVar > 0)
+            existingSettings.TryGetValue(id, out var ns);
+            var configured = ns?.Calibration?.TxRefRssi;
+            if (configured.HasValue) return (double)configured.Value;
+            var refs = measures.Where(t => t.m.Tx.Id == id).Select(t => t.m.RefRssi).Where(double.IsFinite).ToList();
+            return refs.Count > 0 ? refs.Average() : -59;
+        });
+
+        // With anchors in the data the gauge is placed by them, so the prior must not also place it:
+        // it then holds only how far each node's txRef strays relative to the others (its departure from
+        // its reference, less the mean departure), and a common shift is left to the anchors. Without
+        // anchors the full prior is all that places the gauge.
+        bool anchored = measures.Any(t => t.m.HeldTxRef != null);
+        double TxPriorCentre(Vector<double> x) => anchored && txIds.Count > 0 ? txIds.Average(id => x[txIndex[id]] - txPriorRef[id]) : 0;
+
+        // Inverse-variance weights, normalised to mean 1 so the priors keep their meaning. A link's error is its
+        // reported RSSI variance (noise over time) plus the error of the link itself that no node setting can remove
+        // (multipath, walls, antenna aspect), which the reported variance cannot see. Without that term a link that
+        // reads steadily but wrong outweighs a typical one up to a hundredfold.
+        var weights = measures.Select(t => 1.0 / ((t.m.RssiVar is > 0 and var v && double.IsFinite(v) ? v : LinkErrorVariance) + LinkErrorVariance)).ToArray();
+        var weightSum = weights.Sum();
+        for (int i = 0; i < weights.Length; i++) weights[i] = weights[i] / weightSum * weights.Length;
+
+        double Residual(Vector<double> x, int i)
+        {
+            var (m, logD) = measures[i];
+            double rxAdj = x[rxIndex[m.Rx.Id]];
+            double absorption = x[rxIndex[m.Rx.Id] + 1];
+            double txRef = m.HeldTxRef ?? x[txIndex[m.Tx.Id]];
+            return m.GetAdjustedRssi(rxAdj) - (txRef - 10 * absorption * logD);
+        }
+
+        double Huber(double e) => Math.Abs(e) <= huberDb ? 0.5 * e * e : huberDb * (Math.Abs(e) - 0.5 * huberDb);
+        double HuberPrime(double e) => Math.Abs(e) <= huberDb ? e : huberDb * Math.Sign(e);
+
+        double Objective(Vector<double> x)
+        {
+            double loss = 0;
+            for (int i = 0; i < measures.Count; i++)
+                loss += weights[i] * Huber(Residual(x, i));
+            loss /= measures.Count;
+
+            foreach (var id in rxIds)
+                loss += absorptionPrior / rxIds.Count * Math.Pow(x[rxIndex[id] + 1] - targetAbsorption, 2);
+            var centre = TxPriorCentre(x);
+            foreach (var id in txIds)
+                loss += TxRefPrior / txIds.Count * Math.Pow(x[txIndex[id]] - txPriorRef[id] - centre, 2);
+            return loss;
+        }
+
+        Vector<double> Gradient(Vector<double> x)
+        {
+            var grad = Vector<double>.Build.Dense(totalParams);
+            for (int i = 0; i < measures.Count; i++)
             {
-                weight = 1.0 / Math.Max(node.RssiVar.Value, 0.1); // Adding minimum to avoid extreme weights
+                var (m, logD) = measures[i];
+                double g = weights[i] * HuberPrime(Residual(x, i)) / measures.Count;
+                int r = rxIndex[m.Rx.Id];
+                // d(residual)/d(rxAdj) is -1 when the measurement carries the rxAdj it was taken with
+                // (GetAdjustedRssi re-bases it), and 0 when it does not and rxAdj cannot be fitted.
+                if (m.RssiRxAdj != null) grad[r] -= g;
+                grad[r + 1] += g * 10 * logD;
+                if (m.HeldTxRef == null) grad[txIndex[m.Tx.Id]] -= g;
             }
-
-            nodeWeights[node] = weight;
-            totalWeight += weight;
+            foreach (var id in rxIds)
+                grad[rxIndex[id] + 1] += 2 * absorptionPrior / rxIds.Count * (x[rxIndex[id] + 1] - targetAbsorption);
+            // The centre's own derivative drops out: the departures from it sum to zero.
+            var centre = TxPriorCentre(x);
+            foreach (var id in txIds)
+                grad[txIndex[id]] += 2 * TxRefPrior / txIds.Count * (x[txIndex[id]] - txPriorRef[id] - centre);
+            return grad;
         }
 
-        // Normalize weights if needed
-        if (totalWeight > 0)
+        var lower = Vector<double>.Build.Dense(totalParams);
+        var upper = Vector<double>.Build.Dense(totalParams);
+        var initial = Vector<double>.Build.Dense(totalParams);
+        foreach (var id in rxIds)
         {
-            foreach (var node in allRxNodes)
-            {
-                nodeWeights[node] = nodeWeights[node] / totalWeight * allRxNodes.Count;
-            }
+            int r = rxIndex[id];
+            existingSettings.TryGetValue(id, out var ns);
+            lower[r] = optimization.RxAdjRssiMin; upper[r] = optimization.RxAdjRssiMax;
+            lower[r + 1] = absorptionMin; upper[r + 1] = absorptionMax;
+            initial[r] = Math.Clamp(ns?.Calibration?.RxAdjRssi ?? 0, lower[r], upper[r]);
+            initial[r + 1] = Math.Clamp(ns?.Calibration?.Absorption ?? targetAbsorption, lower[r + 1], upper[r + 1]);
         }
-
-        // The original residual: squared metres, with a one-sided 4th power whenever the model
-        // predicts a shorter distance than the map. Two problems, both measurable.
-        //
-        // The asymmetry rests on "closer than the map distance is physically impossible" - but the
-        // model producing a short distance is not the device being in an impossible place, it is the
-        // level reading high, which constructive multipath does routinely. And a 4th power means a
-        // 3 m discrepancy weighs 81x a 1 m one, so a single reflective pair can steer the entire fit.
-        //
-        // Metres are the second problem: distance is exponential in level, so the same few dB of
-        // noise is centimetres at 1 m and metres at 10 m. A metre-based sum is therefore dominated by
-        // the pairs the model represents worst, and barely hears the ones it represents well.
-        Func<double, double, double> distanceResidual = (calculated, map) =>
-            calculated < map ? Math.Pow(map - calculated, 4) : Math.Pow(map - calculated, 2);
-
-        // Huber: quadratic while the disagreement is within ordinary noise, linear beyond it. A pair
-        // that contradicts the map by 30 dB then contributes proportionally rather than quadratically,
-        // so it pulls without dictating - which is what "robust" has to mean here, given that the
-        // diagnostics report 20 such contradictions on this installation alone.
-        Func<double, double> huber = residual =>
+        foreach (var id in txIds)
         {
-            var a = Math.Abs(residual);
-            return a <= huberDelta ? 0.5 * residual * residual : huberDelta * (a - 0.5 * huberDelta);
-        };
-
-        // Both halves of ObjectiveFunction.Gradient used to carry their own copy of the error term,
-        // penalty included. Two copies of one formula is one too many when the formula is the thing
-        // being changed - a single Evaluate keeps the numeric gradient honest by construction.
-        double Evaluate(Vector<double> x)
-        {
-            double error = 0;
-            double weightSum = 0;
-
-            foreach (var node in allRxNodes)
-            {
-                int rxBaseIndex = rxIndexMap[node.Rx.Id];
-                int txBaseIndex = txIndexMap[node.Tx.Id];
-
-                double rxAdjRssi = x[rxBaseIndex];
-                double absorption = x[rxBaseIndex + 1];
-                double txRefRssi = x[txBaseIndex];
-
-                double mapDistance = node.Rx.Location.DistanceTo(node.Tx.Location);
-                double weight = nodeWeights[node];
-                weightSum += weight;
-
-                if (useDb)
-                {
-                    // Level the model needs at the mapped distance, against the level actually
-                    // measured. Same physics as the distance form, rearranged so the residual lives
-                    // in the units the measurement was taken in.
-                    double requiredRssi = txRefRssi - 10.0 * absorption * Math.Log10(Math.Max(mapDistance, 0.1));
-                    error += weight * huber(node.GetAdjustedRssi(rxAdjRssi) - requiredRssi);
-                }
-                else
-                {
-                    double calculatedDistance = Math.Pow(10, (txRefRssi - node.GetAdjustedRssi(rxAdjRssi)) / (10.0 * absorption));
-                    error += weight * distanceResidual(calculatedDistance, mapDistance);
-                }
-
-                error += weight * penaltyWeight * Math.Pow(absorption - targetAbsorption, 2);
-            }
-
-            return weightSum > 0 ? error / weightSum : error;
-        }
-
-        var objectiveFunction = ObjectiveFunction.Gradient(
-            Evaluate,
-            x =>
-            {
-                var grad = Vector<double>.Build.Dense(totalParams);
-                const double h = 1e-6;
-                for (int i = 0; i < totalParams; i++)
-                {
-                    var xPlus = x.Clone();
-                    var xMinus = x.Clone();
-                    xPlus[i] = x[i] + h;
-                    xMinus[i] = x[i] - h;
-                    grad[i] = (Evaluate(xPlus) - Evaluate(xMinus)) / (2 * h);
-                }
-                return grad;
-            }
-        );
-
-        // Build lower and upper bound vectors
-        var lowerBound = Vector<double>.Build.Dense(totalParams);
-        var upperBound = Vector<double>.Build.Dense(totalParams);
-
-        // For Rx nodes: rxAdjRssi and absorption bounds
-        foreach (var rxId in uniqueRxIds)
-        {
-            int baseIndex = rxIndexMap[rxId];
-            lowerBound[baseIndex] = optimization.RxAdjRssiMin;
-            upperBound[baseIndex] = optimization.RxAdjRssiMax;
-            lowerBound[baseIndex + 1] = absorptionMin;
-            upperBound[baseIndex + 1] = absorptionMax;
-        }
-
-        // For Tx nodes: txRefRssi bounds
-        foreach (var txId in uniqueTxIds)
-        {
-            lowerBound[txIndexMap[txId]] = optimization.TxRefRssiMin;
-            upperBound[txIndexMap[txId]] = optimization.TxRefRssiMax;
-        }
-
-        // Initialize with a reasonable guess (ensure within bounds)
-        var initialGuess = Vector<double>.Build.Dense(totalParams);
-        foreach (var rxId in uniqueRxIds)
-        {
-            int baseIndex = rxIndexMap[rxId];
-            existingSettings.TryGetValue(rxId, out var nodeSettings);
-            // Clamp initial guess within global bounds
-            initialGuess[baseIndex] = Math.Clamp(nodeSettings?.Calibration?.RxAdjRssi ?? 0, optimization.RxAdjRssiMin, optimization.RxAdjRssiMax);
-            // Clamp initial guess within global bounds
-            // Clamp against the EFFECTIVE (possibly overridden) bounds - stored absorption values can lie
-            // outside a narrower candidate range, and BfgsBMinimizer throws on an out-of-bounds start,
-            // silently voiding the whole candidate fit.
-            initialGuess[baseIndex + 1] = Math.Clamp(nodeSettings?.Calibration?.Absorption ?? targetAbsorption, absorptionMin, absorptionMax);
-        }
-        foreach (var txId in uniqueTxIds)
-        {
-            existingSettings.TryGetValue(txId, out var nodeSettings);
-            // Initial guess uses node setting if available, else -59
-            // Clamp initial guess within global bounds
-            initialGuess[txIndexMap[txId]] = Math.Clamp(nodeSettings?.Calibration?.TxRefRssi ?? -59, optimization.TxRefRssiMin, optimization.TxRefRssiMax);
+            int t = txIndex[id];
+            lower[t] = optimization.TxRefRssiMin; upper[t] = optimization.TxRefRssiMax;
+            initial[t] = Math.Clamp(txPriorRef[id], lower[t], upper[t]);
         }
 
         try
         {
-            // Use the bounded BFGS solver
             var solver = new BfgsBMinimizer(1e-8, 1e-8, 1e-8, 10000);
-            var result = solver.FindMinimum(objectiveFunction, lowerBound, upperBound, initialGuess);
+            var result = solver.FindMinimum(ObjectiveFunction.Gradient(Objective, Gradient), lower, upper, initial);
+            var x = result.MinimizingPoint.Clone();
+            for (int i = 0; i < totalParams; i++) x[i] = Math.Clamp(x[i], lower[i], upper[i]);
 
-            // Process Rx node results
-            foreach (var rxId in uniqueRxIds)
+            // Each node's own dB residuals at the fitted values, rather than the global objective, which
+            // is the same for every node and includes the priors.
+            var rms = new NodeResidualRms();
+            for (int i = 0; i < measures.Count; i++)
+                rms.Add(measures[i].m, Residual(x, i), weights[i]);
+
+            foreach (var id in rxIds)
             {
-                int baseIndex = rxIndexMap[rxId];
-                double rxAdjRssi = result.MinimizingPoint[baseIndex];
-                double absorption = result.MinimizingPoint[baseIndex + 1];
-
-                // Ensure values are within bounds (should be already)
-                rxAdjRssi = Math.Max(optimization.RxAdjRssiMin, Math.Min(rxAdjRssi, optimization.RxAdjRssiMax));
-                absorption = Math.Max(absorptionMin, Math.Min(absorption, absorptionMax));
-
-                var n = or.Nodes.GetOrAdd(rxId);
-                n.RxAdjRssi = rxAdjRssi;
-                n.Absorption = absorption;
-                n.Error = result.FunctionInfoAtMinimum.Value;
+                var n = or.Nodes.GetOrAdd(id);
+                n.RxAdjRssi = x[rxIndex[id]];
+                n.Absorption = x[rxIndex[id] + 1];
+                n.Error = rms.Get(id);
             }
-
-            // Process Tx node results
-            foreach (var txId in uniqueTxIds)
+            foreach (var id in txIds)
             {
-                double txRefRssi = result.MinimizingPoint[txIndexMap[txId]];
-                txRefRssi = Math.Max(optimization.TxRefRssiMin, Math.Min(txRefRssi, optimization.TxRefRssiMax));
-
-                var n = or.Nodes.GetOrAdd(txId);
-                n.TxRefRssi = txRefRssi;
-                n.Error = result.FunctionInfoAtMinimum.Value;
+                var n = or.Nodes.GetOrAdd(id);
+                n.TxRefRssi = x[txIndex[id]];
+                n.Error = rms.Get(id);
             }
         }
         catch (Exception ex)
         {
-            Log.Error("Error optimizing all nodes: {0}", ex.Message);
+            _logger.LogError("Error optimizing all nodes: {Message}", ex.Message);
         }
 
         return or;

@@ -13,11 +13,13 @@ namespace ESPresense.Controllers
         private readonly DeviceService _deviceService;
         private readonly State _state;
         private readonly DeviceCaptureService _captureService;
+        private readonly IDeviceStatePublisher _publisher;
 
         private readonly ConfigLoader _configLoader;
 
-        public DeviceController(ILogger<DeviceController> logger, DeviceSettingsStore deviceSettingsStore, DeviceService deviceService, State state, DeviceCaptureService captureService, ConfigLoader configLoader)
+        public DeviceController(ILogger<DeviceController> logger, DeviceSettingsStore deviceSettingsStore, DeviceService deviceService, State state, DeviceCaptureService captureService, IDeviceStatePublisher publisher, ConfigLoader configLoader)
         {
+            _publisher = publisher;
             _logger = logger;
             _deviceSettingsStore = deviceSettingsStore;
             _deviceService = deviceService;
@@ -31,10 +33,20 @@ namespace ESPresense.Controllers
         {
             var deviceSettings = _deviceSettingsStore.Get(id);
             var details = new List<KeyValuePair<string, string>>();
-            if (deviceSettings?.Id != null && _state.Devices.TryGetValue(deviceSettings.Id, out var device))
+            if (FindDevice(id, deviceSettings) is { } device)
                 details.AddRange(device.GetDetails());
             return new DeviceSettingsDetails(deviceSettings ?? new DeviceSettings { Id = id, OriginalId = id }, details);
         }
+
+        [HttpGet("{id}/explain")]
+        public ActionResult<DeviceExplanation> Explain(string id)
+        {
+            var device = FindDevice(id, _deviceSettingsStore.Get(id));
+            return device == null ? NotFound() : DeviceExplanation.From(device, NodeBias.Find(_state.ReadMeasures()), _publisher.Reported(device));
+        }
+
+        private Device? FindDevice(string id, DeviceSettings? settings) =>
+            _state.Devices.TryGetValue(settings?.Id ?? id, out var device) ? device : null;
 
         [HttpPut("{id}")]
         public async Task<IActionResult> Set(string id, [FromBody] DeviceSettings value)
@@ -104,7 +116,7 @@ namespace ESPresense.Controllers
         public ActionResult<CaptureStatus> GetCapture(string id)
         {
             var status = _captureService.GetStatus(id);
-            return status == null ? NotFound() : status;
+            return status == null ? NoContent() : status;
         }
 
         [HttpDelete("{id}/capture")]

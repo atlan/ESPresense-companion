@@ -1,12 +1,16 @@
 <script lang="ts">
 	import type { DeviceSetting } from './types';
-	import { gotoCalibration } from '$lib/urls';
+	import { gotoCalibration } from '#lib/urls.js';
 
-	export let settings: DeviceSetting; // Parent handles loading
-	export let anchorEnabled = false;
-	/// Navigating away does not dismiss the modal on its own - the wrapper has to be told, or the
-	/// calibration page opens underneath a dialog that is still sitting on top of it.
-	export let onNavigateAway: (() => void) | undefined = undefined;
+	interface Props {
+		settings: DeviceSetting; // Parent handles loading
+		anchorEnabled?: boolean;
+		/// Navigating away does not dismiss the modal on its own - the wrapper has to be told, or the
+		/// calibration page opens underneath a dialog that is still sitting on top of it.
+		onNavigateAway?: () => void;
+	}
+
+	let { settings = $bindable(), anchorEnabled = $bindable(false), onNavigateAway }: Props = $props();
 
 	function measure() {
 		onNavigateAway?.();

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using AutoMapper;
 using ESPresense.Controllers;
 using ESPresense.Models;
 using ESPresense.Services;
@@ -37,7 +36,7 @@ public class StateControllerConfigRedactionTests
     public async Task GetConfig_ResponseBody_OmitsMqttPassword()
     {
         var configLoader = new ConfigLoader(_configDir);
-        await configLoader.ConfigAsync();
+        await configLoader.LoadAsync(); // the constructor no longer loads; ConfigAsync alone would wait forever
 
         var mqtt = new Mock<IMqttCoordinator>();
         var nodeTelemetryStore = new NodeTelemetryStore(mqtt.Object);
@@ -52,9 +51,10 @@ public class StateControllerConfigRedactionTests
             nodeSettingsStore.Object,
             deviceSettingsStore.Object,
             nodeTelemetryStore,
-            Mock.Of<IMapper>(),
+            new NodeStateMapper(nodeTelemetryStore, Mock.Of<IFirmwareTypeStore>()),
             new GlobalEventDispatcher(),
-            new WalkTestService(state, new PairErrorTracker(state), nodeSettingsStore.Object, null));
+            new CalibrationService(state, nodeSettingsStore.Object),
+            new DeviceEnricher(deviceSettingsStore.Object));
 
         // Call the real action method.
         var config = controller.GetConfig();

@@ -55,6 +55,7 @@ nodes:
   - ground
 ");
         _configLoader = new ConfigLoader(_configDir);
+        await _configLoader.LoadAsync();
         await _configLoader.ConfigAsync(); // ctor loads asynchronously - wait before touching Config
         _state = new State(_configLoader, new NodeTelemetryStore(new Mock<IMqttCoordinator>().Object));
         _sut = new FloorplanController(_configLoader, _state);

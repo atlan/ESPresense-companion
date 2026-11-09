@@ -7,12 +7,11 @@
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <SpaRoot>..\..\src\ui</SpaRoot>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AutoMapper" Version="16.2.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.6.0" />
     <PackageReference Include="NUnit" Version="3.13.3" />
@@ -23,25 +22,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="TestData\stationary,7,14.75,1.25.jsonp" />
+    <EmbeddedResource Include="TestData\stationary.jsonp" />
+    <None Include="TestData\robot-survey\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ESPresense.Companion.csproj" />
   </ItemGroup>
-
-  <!-- Playwright-Browsertests. Mit -p:SkipFrontendTests=true abschaltbar, damit sich die
-       C#-Tests einzeln laufen lassen (und CI beides getrennt melden kann). -->
-  <Target Name="RunFrontendTests" BeforeTargets="VSTest" Condition="'$(SkipFrontendTests)' != 'true'">
-    <Exec Command="node --version" ContinueOnError="true">
-      <Output TaskParameter="ExitCode" PropertyName="NodeErrorCode" />
-    </Exec>
-    <Error Condition="'$(NodeErrorCode)' != '0'" Text="Node.js is required to run frontend tests. Install it from https://nodejs.org/." />
-
-    <Message Importance="high" Text="Running frontend tests using 'pnpm test' in $(SpaRoot)..." />
-    <Exec WorkingDirectory="$(SpaRoot)" Command="pnpm install --frozen-lockfile" ContinueOnError="false" />
-    <Exec WorkingDirectory="$(SpaRoot)" Command="pnpm exec playwright install --with-deps" ContinueOnError="false" />
-    <Exec WorkingDirectory="$(SpaRoot)" Command="pnpm test" ContinueOnError="false" />
-  </Target>
 
 </Project>

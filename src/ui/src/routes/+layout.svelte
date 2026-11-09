@@ -1,41 +1,51 @@
 <script lang="ts">
 	import '../app.css';
 	import { resolve } from '$app/paths';
-	import { page } from '$app/stores';
-	import Modal from '$lib/modal/Modal.svelte';
-	import Toast from '$lib/toast/Toast.svelte';
+	import { page, updated } from '$app/state';
+	import { beforeNavigate } from '$app/navigation';
+	import type { Snippet } from 'svelte';
+	import Modal from '#lib/modal/Modal.svelte';
+	import Toast from '#lib/toast/Toast.svelte';
+	import CommandPalette from '#lib/CommandPalette.svelte';
 
-	import logo from '$lib/images/logo.svg';
-	import github from '$lib/images/github.svg';
-	import map from '$lib/images/map.svg';
-	import nodes from '$lib/images/nodes.svg';
-	import devices from '$lib/images/devices.svg';
-	import calibration from '$lib/images/calibration.svg';
-	import cube from '$lib/images/cube.svg';
+	import logo from '#lib/images/logo.svg';
+	import github from '#lib/images/github.svg';
+	import map from '#lib/images/map.svg';
+	import nodes from '#lib/images/nodes.svg';
+	import devices from '#lib/images/devices.svg';
+	import calibration from '#lib/images/calibration.svg';
+	import cube from '#lib/images/cube.svg';
+	interface Props {
+		children?: import('svelte').Snippet;
+	}
 
-	$: current = $page.url.pathname;
+	// `$app/state` is only reactive with runes, hence $props/$derived/{@render} in this (tiny) layout.
+	const { children }: { children?: Snippet } = $props();
+	const current = $derived(page.url.pathname);
+	let paletteOpen = $state(false);
 
-	// `as const` keeps each `href` as its precise string-literal type (instead of
-	// widening to `string`) so `resolve()` below can statically verify every one
-	// of these is a real route.
-	const routes = [
-		{ href: '/', name: 'map', icon: map, alt: 'Map' },
-		{ href: '/3d', name: '3d', icon: cube, alt: '3D View' },
-		{ href: '/geolocation', name: 'geolocation', icon: map, alt: 'Geolocation' },
-		{ href: '/devices', name: 'devices', icon: devices, alt: 'Devices' },
-		{ href: '/nodes', name: 'nodes', icon: nodes, alt: 'Nodes' },
-		{ href: '/calibration', name: 'calibration', icon: calibration, alt: 'Calibration' }
-	] as const;
+	// SvelteKit polls _app/version.json; once a newer build is live, finish the next in-app navigation with a
+	// full page load so the new bundle is picked up instead of running the old one until the tab is closed.
+	beforeNavigate(({ willUnload, to, shallow, type }) => {
+		if (shallow && type === 'goto') return;
+		if (updated.current && !willUnload && to?.url) location.href = to.url.href;
+	});
 
-	$: resolvedRoutes = routes.map((route) => ({
-		...route,
-		resolved: resolve(route.href)
-	}));
+	// `resolve()` is typed per route, so each href is resolved individually.
+	const resolvedRoutes = [
+		{ resolved: resolve('/'), name: 'map', icon: map, alt: 'Map' },
+		{ resolved: resolve('3d'), name: '3d', icon: cube, alt: '3D View' },
+		{ resolved: resolve('geolocation'), name: 'geolocation', icon: map, alt: 'Geolocation' },
+		{ resolved: resolve('devices'), name: 'devices', icon: devices, alt: 'Devices' },
+		{ resolved: resolve('nodes'), name: 'nodes', icon: nodes, alt: 'Nodes' },
+		{ resolved: resolve('calibration'), name: 'calibration', icon: calibration, alt: 'Calibration' }
+	];
 </script>
 
 <div class="app h-full">
 	<Modal />
 	<Toast />
+	<CommandPalette bind:open={paletteOpen} />
 	<div class="flex h-full bg-surface-50-950">
 		<!-- App Rail Sidebar -->
 		<div class="flex w-16 flex-col bg-surface-100-900 border-r border-surface-300-700">
@@ -49,6 +59,7 @@
 			<!-- Navigation Rail -->
 			<nav class="flex flex-col flex-1 items-center space-y-2 px-2">
 				{#each resolvedRoutes as route}
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- href is pre-resolved in resolvedRoutes above -->
 					<a href={route.resolved} class="flex flex-col items-center justify-center w-12 h-12 rounded-lg transition-all duration-200 group relative {current === route.resolved ? 'bg-primary-500 text-white shadow-lg' : 'text-surface-700-300 hover:bg-surface-200-800 hover:text-surface-950-50'}" title={route.alt}>
 						<img src={route.icon} class="w-6 h-6 transition-transform group-hover:scale-110" alt={route.alt} />
 
@@ -67,6 +78,9 @@
 
 			<!-- Footer Section -->
 			<div class="flex flex-col items-center pb-4">
+				<button type="button" onclick={() => (paletteOpen = true)} class="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-surface-200-800 transition-colors duration-200 text-surface-700-300 hover:text-surface-950-50" title="Find anything (Ctrl+K)" aria-label="Find anything">
+					<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+				</button>
 				<a href="https://github.com/ESPresense/ESPresense-companion" target="_blank" class="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-surface-200-800 transition-colors duration-200 text-surface-700-300 hover:text-surface-950-50 group" title="View on GitHub">
 					<img src={github} class="w-5 h-5 transition-transform group-hover:scale-110" alt="GitHub" />
 				</a>
@@ -75,7 +89,7 @@
 
 		<!-- Main Content Area -->
 		<main class="flex-1 overflow-hidden">
-			<slot />
+			{@render children?.()}
 		</main>
 	</div>
 </div>

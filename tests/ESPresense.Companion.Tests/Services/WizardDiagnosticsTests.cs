@@ -55,6 +55,7 @@ floors:
     points: [[0, 0], [12, 0], [12, 12], [0, 12]]
 ");
         _configLoader = new ConfigLoader(_dir);
+        await _configLoader.LoadAsync();
         await _configLoader.ConfigAsync();
 
         _mqtt = new Mock<IMqttCoordinator>();

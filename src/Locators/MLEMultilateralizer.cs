@@ -5,7 +5,6 @@ using ESPresense.Weighting;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 
 namespace ESPresense.Locators;
 
@@ -13,7 +12,10 @@ public class MLEMultilateralizer : BaseMultilateralizer
 {
     private readonly IWeighting _weighting;
 
-    public MLEMultilateralizer(Device device, Floor floor, State state) : base(device, floor, state)
+    /// <summary>Replaces the configured weighting; tests use it to act between taking the readings and solving.</summary>
+    internal IWeighting Weighting { init => _weighting = value; }
+
+    public MLEMultilateralizer(Device device, Floor floor, State state, ILogger? logger = null) : base(device, floor, state, logger)
     {
         // Load weighting from MLE config, defaulting to Gaussian if not specified
         _weighting = WeightingFactory.Create(state.Config?.Locators?.Mle?.Weighting);
@@ -38,6 +40,7 @@ public class MLEMultilateralizer : BaseMultilateralizer
             return false;
 
         int confidence = scenario.Confidence ?? 0;
+        double[]? solvedWeights = null;
         try
         {
             // Fit has 4 free params (x,y,z,scale). With only 3-4 nodes that's under/exactly-determined,
@@ -60,6 +63,7 @@ public class MLEMultilateralizer : BaseMultilateralizer
                 var obj = ObjectiveFunction.Value(
                     x =>
                     {
+                        scenario.ThrowIfSuperseded();
                         var distanceFromBoundingBox = lowerBound.Subtract(x)
                             .PointwiseMaximum(x.Subtract(upperBound))
                             .PointwiseMaximum(0)
@@ -78,7 +82,7 @@ public class MLEMultilateralizer : BaseMultilateralizer
                     scenario.Scale ?? 1.0
                 });
                 var centroid = Point3D.Centroid(nodes.Select(n => n.Node!.Location).Take(3)).ToVector();
-                var vectorToCentroid = centroid.Subtract(initialGuess.SubVector(0, 3)).Normalize(2);
+                var vectorToCentroid = DirectionOrFallback(initialGuess.SubVector(0, 3), centroid);
                 var scaleDelta = 0.05 * initialGuess[3];
                 var initialPerturbation = Vector<double>.Build.DenseOfEnumerable(vectorToCentroid.Append(scaleDelta));
                 var solver = new NelderMeadSimplex(1e-7, 10000);
@@ -86,6 +90,7 @@ public class MLEMultilateralizer : BaseMultilateralizer
                 var minimizingPoint = result.MinimizingPoint.PointwiseMinimum(upperBound).PointwiseMaximum(lowerBound);
                 scenario.UpdateLocation(new Point3D(minimizingPoint[0], minimizingPoint[1], minimizingPoint[2]));
                 scenario.Scale = minimizingPoint[3];
+                solvedWeights = weights;
                 scenario.Fixes = nodes.Length;
                 scenario.Error = result.FunctionInfoAtMinimum.Value;
                 scenario.Iterations = result switch
@@ -123,6 +128,6 @@ public class MLEMultilateralizer : BaseMultilateralizer
             confidence = HandleLocatorException(ex, scenario, guess);
         }
 
-        return FinalizeScenario(scenario, confidence);
+        return FinalizeScenario(scenario, confidence, nodes, solvedWeights); // MLE's error term ignores scale
     }
 }

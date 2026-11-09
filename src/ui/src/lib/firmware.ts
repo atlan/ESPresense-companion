@@ -1,23 +1,39 @@
-import { writable, derived } from 'svelte/store';
-import { apiPath } from '$lib/api';
-import type { FirmwareManifest, Release, WorkflowRun } from '$lib/types';
+import { readable, writable, derived, type Writable } from 'svelte/store';
+import { apiFetch, apiUrl } from '#lib/api.js';
+import type { FirmwareManifest, Release, WorkflowRun } from '#lib/types.js';
 
-export const updateMethod: SvelteStore<string> = writable('self');
-// Empty by default: no GitHub source is queried until the user actively picks one
-// (keeps the anonymous 60 req/h GitHub API budget untouched on page load).
-export const firmwareSource: SvelteStore<string> = writable('');
-export const flavor: SvelteStore<string> = writable();
-export const version: SvelteStore<string> = writable();
-export const artifact: SvelteStore<string> = writable();
+export const updateMethod: Writable<string> = writable('self');
+export const firmwareSource: Writable<string> = writable('release');
+// Initial values match VersionPicker's prop fallbacks; Svelte 5 refuses to bind
+// undefined to a prop that declares a fallback (props_invalid_value).
+export const flavor: Writable<string> = writable('-');
+export const version: Writable<string> = writable('');
+export const artifact: Writable<string> = writable('');
 // Asset filename within a selected release of the personal fork (see forkReleases
 // below) - the fork doesn't have a board/flavor catalog like $firmwareTypes, so its
 // asset list is used directly instead of the cpu/flavor-driven lookup.
-export const forkAsset: SvelteStore<string> = writable('');
+export const forkAsset: Writable<string> = writable('');
 
 export const firmwareTypes = writable<FirmwareManifest | null>(null, function start(set) {
-	fetch(apiPath('/api/firmware/types'))
-		.then((r) => r.json())
-		.then((r) => set(r));
+	// One-shot manifest fetch with a bounded retry (same spirit as artifacts/releases below):
+	// otherwise a single non-2xx would leave the store null forever with no visible error.
+	let errors = 0;
+	let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function fetchData() {
+		apiFetch<FirmwareManifest>('/api/firmware/types')
+			.then((r) => set(r))
+			.catch((ex) => {
+				console.error('Error fetching firmware types:', ex);
+				if (++errors <= 5) retryTimer = setTimeout(fetchData, 15000);
+			});
+	}
+
+	fetchData();
+
+	return function stop() {
+		clearTimeout(retryTimer);
+	};
 });
 
 export const cpuNames = derived(firmwareTypes, (a) =>
@@ -34,106 +50,85 @@ export const flavorNames = derived(firmwareTypes, (a) =>
 	}, new Map<string, string>())
 );
 
-// GitHub-backed firmware sources (releases / fork releases / CI artifacts).
-//
-// Lazy + source-scoped to respect GitHub's 60 req/h anonymous rate limit: nothing is
-// fetched on page load. A source is polled only while the update UI is mounted AND it
-// is the selected source (see setActiveSource / deactivateSources, wired to
-// VersionPicker's lifecycle + firmwareSource). Refresh interval: 60 min.
-const REFRESH_MS = 60 * 60000;
+export type Listing<T> = { data: Map<string, T[]> | null; error: string | null };
 
-function lazySource<T>(fetchImpl: () => Promise<Map<string, T[]>>) {
-	const { subscribe, set } = writable<Map<string, T[]>>(new Map());
-	let interval: ReturnType<typeof setInterval> | null = null;
-	let errors = 0;
-	let outstanding = false;
+/**
+ * Polls an espresense.com firmware listing. espresense.com caches GitHub's API at the edge, so
+ * browsers no longer spend their own 60/hour unauthenticated GitHub allowance. Failures surface as
+ * `error` (keeping the last good data) instead of leaving the picker spinning.
+ */
+function listingStore<T>(url: string, intervalMs: number, transform: (json: any) => Map<string, T[]>) {
+	return readable<Listing<T>>({ data: null, error: null }, function start(set) {
+		let data: Map<string, T[]> | null = null;
+		let errors = 0;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let stopped = false;
 
-	async function run() {
-		if (outstanding) return;
-		outstanding = true;
-		try {
-			set(await fetchImpl());
-			errors = 0;
-		} catch (ex) {
-			if (++errors > 5) set(new Map<string, T[]>());
-			console.log(ex);
-		} finally {
-			outstanding = false;
-		}
-	}
-
-	return {
-		subscribe,
-		activate() {
-			if (interval) return; // already polling this source
-			run();
-			interval = setInterval(run, REFRESH_MS);
-		},
-		deactivate() {
-			if (interval) {
-				clearInterval(interval);
-				interval = null;
+		async function fetchData() {
+			let delay = intervalMs;
+			try {
+				const res = await fetch(url);
+				if (!res.ok) {
+					const body = await res.json().catch(() => null);
+					throw new Error(`HTTP ${res.status}${body?.error ? `: ${body.error}` : ''}`);
+				}
+				data = transform(await res.json());
+				errors = 0;
+				set({ data, error: null });
+			} catch (ex) {
+				console.error(`Error fetching ${url}:`, ex);
+				// Retry quickly at first, backing off to the normal interval
+				delay = Math.min(15000 * 2 ** errors++, intervalMs);
+				set({ data, error: ex instanceof Error ? ex.message : String(ex) });
 			}
+			if (!stopped) timer = setTimeout(fetchData, delay);
 		}
-	};
+
+		fetchData();
+
+		return function stop() {
+			stopped = true;
+			clearTimeout(timer);
+		};
+	});
 }
 
-function groupReleases(data: Release[], minAssets: number): Map<string, Release[]> {
-	return data
-		.filter((i) => i.assets.length > minAssets)
-		.reduce((p: Map<string, Release[]>, c) => {
-			const key = c.prerelease ? 'Beta' : 'Release';
-			const arr = p.get(key);
-			if (arr) arr.push(c);
-			else p.set(key, [c]);
-			return p;
-		}, new Map<string, Release[]>());
-}
-
-async function fetchReleases(): Promise<Map<string, Release[]>> {
-	const res = await fetch('https://api.github.com/repos/ESPresense/ESPresense/releases', { credentials: 'same-origin' });
-	return groupReleases(await res.json(), 5);
-}
-
-// Fork releases (github.com/atlan/ESPresense): no >5-assets filter - unlike upstream's
-// per-board build matrix, a fork release may legitimately ship just one board's firmware.
-async function fetchForkReleases(): Promise<Map<string, Release[]>> {
-	const res = await fetch('https://api.github.com/repos/atlan/ESPresense/releases', { credentials: 'same-origin' });
-	return groupReleases(await res.json(), 0);
-}
-
-async function fetchArtifacts(): Promise<Map<string, WorkflowRun[]>> {
-	const res = await fetch('https://api.github.com/repos/ESPresense/ESPresense/actions/workflows/build.yml/runs?status=success&per_page=100', { credentials: 'same-origin' });
-	const data: { workflow_runs: WorkflowRun[] } = await res.json();
-	const wf = data.workflow_runs.filter((i) => i.head_repository.full_name === 'ESPresense/ESPresense' && i.status == 'completed' && (i.pull_requests.length > 0 || (i.head_branch == 'main' && Date.now() - +new Date(i.created_at) < 1000 * 60 * 60 * 24 * 7)));
-	return wf.reduce((p: Map<string, WorkflowRun[]>, c) => {
-		const arr = p.get(c.head_branch);
-		if (arr) arr.push(c);
-		else p.set(c.head_branch, [c]);
+function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
+	return items.reduce((p, c) => {
+		const k = key(c);
+		const list = p.get(k);
+		if (list) list.push(c);
+		else p.set(k, [c]);
 		return p;
-	}, new Map<string, WorkflowRun[]>());
+	}, new Map<string, T[]>());
 }
 
-export const releases = lazySource<Release>(fetchReleases);
-export const forkReleases = lazySource<Release>(fetchForkReleases);
-export const artifacts = lazySource<WorkflowRun>(fetchArtifacts);
+export const artifacts = listingStore<WorkflowRun>('https://espresense.com/artifacts/runs', 5 * 60000, (json: { workflow_runs: WorkflowRun[] }) =>
+	groupBy(
+		json.workflow_runs.filter((i) => i.head_repository.full_name === 'ESPresense/ESPresense' && i.status == 'completed' && (i.pull_requests.length > 0 || (i.head_branch == 'main' && Date.now() - +new Date(i.created_at) < 1000 * 60 * 60 * 24 * 7))),
+		(i) => i.head_branch
+	)
+);
 
-/** Poll exactly the selected GitHub source and stop the others. */
-export function setActiveSource(src: string): void {
-	releases.deactivate();
-	forkReleases.deactivate();
-	artifacts.deactivate();
-	if (src === 'release') releases.activate();
-	else if (src === 'fork') forkReleases.activate();
-	else if (src === 'artifact') artifacts.activate();
-}
+// Releases with more than 5 assets, grouped into "Beta" (prerelease) and "Release".
+export const releases = listingStore<Release>('https://espresense.com/releases/list', 15 * 60000, (json: Release[]) =>
+	groupBy(
+		json.filter((i) => i.assets.length > 5),
+		(i) => (i.prerelease ? 'Beta' : 'Release')
+	)
+);
 
-/** Stop all GitHub polling (call when the update UI unmounts). */
-export function deactivateSources(): void {
-	releases.deactivate();
-	forkReleases.deactivate();
-	artifacts.deactivate();
-}
+// Fork releases (github.com/atlan/ESPresense): no >5-assets filter - unlike upstream's per-board
+// build matrix, a fork release may legitimately ship just one board's firmware. espresense.com only
+// lists the upstream project, so this one comes straight from the GitHub API and spends the browser's
+// 60/hour anonymous allowance; VersionPicker therefore subscribes only while the fork source is
+// selected, and the interval stays at one hour.
+export const forkReleases = listingStore<Release>('https://api.github.com/repos/atlan/ESPresense/releases', 60 * 60000, (json: Release[]) =>
+	groupBy(
+		json.filter((i) => i.assets.length > 0),
+		(i) => (i.prerelease ? 'Beta' : 'Release')
+	)
+);
 
 export function getFirmwareUrl(firmwareSource: string, version: string, artifact: string, firmware: string): string | null {
 	if (firmware) {
@@ -156,7 +151,7 @@ export function getLocalFirmwareUrl(firmwareSource: string, version: string, art
 	const url = getFirmwareUrl(firmwareSource, version, artifact, firmware);
 	if (!url) return null;
 
-	const loc = new URL(apiPath('/api/firmware/download'), window.location.href);
+	const loc = new URL(apiUrl('/api/firmware/download'), window.location.href);
 
 	const params = new URLSearchParams();
 	params.append('url', url);
@@ -168,7 +163,7 @@ export function getLocalFirmwareUrl(firmwareSource: string, version: string, art
 type Callback = (percentComplete: number, message: string) => void;
 
 export async function firmwareUpdate(id: string, url: string, callback: Callback): Promise<void> {
-	var loc = new URL(apiPath(`/ws/firmware/update/${id}`), window.location.href);
+	var loc = new URL(apiUrl(`/ws/firmware/update/${id}`), window.location.href);
 	var wsUrl = (loc.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + loc.host + loc.pathname + `?${new URLSearchParams({ url: url })}`;
 	const ws = new WebSocket(wsUrl);
 

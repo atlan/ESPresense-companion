@@ -987,7 +987,7 @@ public class WizardDiagnostics(
     /// </summary>
     private void AnalyzeSignals(Config? config, WizardDiagnosticsResult result)
     {
-        var snapshot = state.TakeOptimizationSnapshot();
+        var snapshot = state.ReadMeasures();
         if (snapshot.Measures.Count == 0) return;
 
         // How long a pair has been misbehaving decides what to do about it, and nothing said so far.

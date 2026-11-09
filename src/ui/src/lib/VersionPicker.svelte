@@ -1,26 +1,41 @@
 <script>
-	import { onDestroy } from 'svelte';
-	import { releases, artifacts, forkReleases, setActiveSource, deactivateSources } from './firmware';
-	export let version = '';
-	export let artifact = '';
-	export let flavor = '-';
-	export let updateMethod = 'self'; // 'self', 'manual', 'recovery'
-	export let firmwareSource = ''; // '' (none, default - fetches nothing), 'release', 'artifact', 'fork'
-	export let forkAsset = '';
+	import { releases, artifacts, forkReleases } from './firmware';
+	/**
+	 * @typedef {Object} Props
+	 * @property {string} [version]
+	 * @property {string} [artifact]
+	 * @property {string} [flavor]
+	 * @property {string} [updateMethod] - 'self', 'manual', 'recovery'
+	 * @property {string} [firmwareSource] - 'release', 'artifact', 'fork'
+	 * @property {string} [forkAsset] - asset filename within the selected fork release
+	 */
+
+	/** @type {Props} */
+	let { version = $bindable(''), artifact = $bindable(''), flavor = $bindable('-'), updateMethod = $bindable('self'), firmwareSource = $bindable('release'), forkAsset = $bindable('') } = $props();
+
+	/** @type {import('./firmware').Listing<import('./types').Release>} */
+	let forkListing = $state({ data: null, error: null });
+
+	// A store only polls while subscribed, and $forkReleases would subscribe for the whole life of
+	// this component. The fork listing costs GitHub API budget, so subscribe only while it is selected.
+	$effect(() => {
+		if (firmwareSource !== 'fork') return;
+		return forkReleases.subscribe((listing) => (forkListing = listing));
+	});
 
 	// atlan/ESPresense has no board/flavor catalog like the upstream firmwareTypes
 	// API - the selected release's own asset list is the only source of filenames.
-	$: selectedForkRelease = Array.from($forkReleases.values())
-		.flat()
-		.find((r) => r.tag_name === version);
-	$: if (selectedForkRelease && !selectedForkRelease.assets.some((a) => a.name === forkAsset)) {
-		forkAsset = selectedForkRelease.assets[0]?.name ?? '';
-	}
+	let selectedForkRelease = $derived(
+		Array.from(forkListing.data?.values() ?? [])
+			.flat()
+			.find((r) => r.tag_name === version)
+	);
 
-	// Fetch only the currently-selected GitHub source, and only while this picker is
-	// mounted; unmounting stops all polling. Keeps GitHub API calls near zero at idle.
-	$: setActiveSource(firmwareSource);
-	onDestroy(deactivateSources);
+	$effect(() => {
+		if (selectedForkRelease && !selectedForkRelease.assets.some((a) => a.name === forkAsset)) {
+			forkAsset = selectedForkRelease.assets[0]?.name ?? '';
+		}
+	});
 </script>
 
 <div class="card mb-6 space-y-6 border border-surface-300-700 bg-surface-50-950 p-6 shadow-lg rounded-lg">
@@ -62,7 +77,6 @@
 					<label class="block" for="source">
 						<span class="block text-sm font-medium text-surface-700-300 mb-2">Source</span>
 						<select id="source" class="select w-full bg-surface-100-900 border-surface-300-600 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 rounded-md" bind:value={firmwareSource}>
-							<option value="" disabled>— select a source —</option>
 							<option value="release">🏷️ GitHub Releases</option>
 							<option value="artifact">🔨 GitHub Artifacts</option>
 							<option value="fork">🔱 My Fork</option>
@@ -72,7 +86,11 @@
 					{#if firmwareSource === 'release'}
 						<label class="block" for="version">
 							<span class="block text-sm font-medium text-surface-700-300 mb-2">Version</span>
-							{#if $releases.size === 0}
+							{#if !$releases.data?.size && $releases.error}
+								<div class="flex items-center h-10 px-3 bg-surface-100-800 border border-error-500 rounded-md text-sm text-error-500" role="alert">
+									Failed to load releases: {$releases.error}
+								</div>
+							{:else if !$releases.data}
 								<div class="flex items-center justify-center h-10 bg-surface-100-800 border border-surface-300-600 rounded-md">
 									<span class="text-sm text-surface-500-400 flex items-center gap-2">
 										<svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
@@ -82,9 +100,11 @@
 										Loading releases...
 									</span>
 								</div>
+							{:else if $releases.data.size === 0}
+								<div class="flex items-center h-10 px-3 bg-surface-100-800 border border-surface-300-600 rounded-md text-sm text-surface-500-400">No releases found</div>
 							{:else}
 								<select id="version" class="select w-full bg-surface-100-900 border-surface-300-600 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 rounded-md" bind:value={version}>
-									{#each Array.from($releases.entries()).reverse() as [key, value]}
+									{#each Array.from($releases.data.entries()).reverse() as [key, value]}
 										<optgroup label={key}>
 											{#each value as item}
 												<option value={item.tag_name}>{item.name}</option>
@@ -99,7 +119,11 @@
 					{#if firmwareSource === 'artifact'}
 						<label class="block" for="artifact">
 							<span class="block text-sm font-medium text-surface-700-300 mb-2">Artifact</span>
-							{#if $artifacts.size === 0}
+							{#if !$artifacts.data?.size && $artifacts.error}
+								<div class="flex items-center h-10 px-3 bg-surface-100-800 border border-error-500 rounded-md text-sm text-error-500" role="alert">
+									Failed to load artifacts: {$artifacts.error}
+								</div>
+							{:else if !$artifacts.data}
 								<div class="flex items-center justify-center h-10 bg-surface-100-800 border border-surface-300-600 rounded-md">
 									<span class="text-sm text-surface-500-400 flex items-center gap-2">
 										<svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
@@ -109,9 +133,11 @@
 										Loading artifacts...
 									</span>
 								</div>
+							{:else if $artifacts.data.size === 0}
+								<div class="flex items-center h-10 px-3 bg-surface-100-800 border border-surface-300-600 rounded-md text-sm text-surface-500-400">No artifacts found</div>
 							{:else}
 								<select id="artifact" class="select w-full bg-surface-100-900 border-surface-300-600 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 rounded-md" bind:value={artifact}>
-									{#each Array.from($artifacts.entries()).reverse() as [key, value]}
+									{#each Array.from($artifacts.data.entries()).reverse() as [key, value]}
 										<optgroup label={key}>
 											{#each value as item}
 												<option value={item.id}>
@@ -128,7 +154,9 @@
 					{#if firmwareSource === 'fork'}
 						<label class="block" for="fork-version">
 							<span class="block text-sm font-medium text-surface-700-300 mb-2">Fork Release</span>
-							{#if $forkReleases.size === 0}
+							{#if !forkListing.data?.size && forkListing.error}
+								<div class="flex items-center h-10 px-3 bg-surface-100-800 border border-surface-300-600 rounded-md text-sm text-surface-500-400">Failed to load releases: {forkListing.error}</div>
+							{:else if !forkListing.data}
 								<div class="flex items-center justify-center h-10 bg-surface-100-800 border border-surface-300-600 rounded-md">
 									<span class="text-sm text-surface-500-400 flex items-center gap-2">
 										<svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
@@ -138,9 +166,11 @@
 										Loading releases...
 									</span>
 								</div>
+							{:else if forkListing.data.size === 0}
+								<div class="flex items-center h-10 px-3 bg-surface-100-800 border border-surface-300-600 rounded-md text-sm text-surface-500-400">No releases found</div>
 							{:else}
 								<select id="fork-version" class="select w-full bg-surface-100-900 border-surface-300-600 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 rounded-md" bind:value={version}>
-									{#each Array.from($forkReleases.entries()).reverse() as [key, value]}
+									{#each Array.from(forkListing.data.entries()).reverse() as [key, value]}
 										<optgroup label={key}>
 											{#each value as item}
 												<option value={item.tag_name}>{item.name}</option>

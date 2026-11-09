@@ -32,6 +32,7 @@ public class DeviceSetupServiceTests
         Directory.CreateDirectory(_dir);
         await File.WriteAllTextAsync(Path.Combine(_dir, "config.yaml"), "mqtt:\n  host: localhost\n");
         _configLoader = new ConfigLoader(_dir);
+        await _configLoader.LoadAsync();
         await _configLoader.ConfigAsync();
 
         _mqtt = new Mock<IMqttCoordinator>();

@@ -1,36 +1,38 @@
 <script lang="ts">
-	import { apiPath } from '$lib/api';
-	import { nodes } from '$lib/stores';
+	import { apiFetch } from '#lib/api.js';
+	import { nodes } from '#lib/stores.js';
 	import { readable } from 'svelte/store';
-	import type { NodeSettingDetails } from '$lib/types';
+	import type { NodeSettingDetails } from '#lib/types.js';
 	import { Accordion } from '@skeletonlabs/skeleton-svelte';
 
-	import Map from '$lib/Map.svelte';
-	import NodeBreadcrumb from '$lib/NodeBreadcrumb.svelte';
+	import Map from '#lib/Map.svelte';
+	import NodeBreadcrumb from '#lib/NodeBreadcrumb.svelte';
 
-        let { floorId = $bindable<string | null>(null), data = {} as NodeSettingDetails } =
-                $props<{
-                        floorId?: string | null;
-                        data?: NodeSettingDetails;
-                }>();
-        const node = $derived($nodes.find((d) => d.id === data.settings?.id));
+	// Only `data` is a real route prop; floorId is local state bound to child components.
+	let { data = {} as NodeSettingDetails }: { data?: NodeSettingDetails } = $props();
+	let floorId = $state<string | null>(null);
+	const node = $derived($nodes.find((d) => d.id === data.settings?.id));
 
-        // Initialize floorId to the first floor the node is actually on
-        $effect(() => {
-                const firstFloor = node?.floors?.[0] ?? null;
+	// Initialize floorId to the first floor the node is actually on
+	$effect(() => {
+		const firstFloor = node?.floors?.[0] ?? null;
 
-                if (!floorId && firstFloor) {
-                        floorId = firstFloor;
-                }
-        });
+		if (!floorId && firstFloor) {
+			floorId = firstFloor;
+		}
+	});
 
 	let accordionValue = $state(['details']);
 
-	export const nodeDetails = readable<Array<{ key: string; value: string }>>([], (set) => {
+	const nodeDetails = readable<NodeSettingDetails['details']>([], (set) => {
 		async function fetchAndSet() {
+			// `node` is looked up in the nodes store, which is empty on first paint, so this
+			// polled GET used to go to /api/node/undefined. The route's own data always has
+			// the id — it's what `node` is found by — so use that and skip the tick without it.
+			const id = data.settings?.id;
+			if (!id) return;
 			try {
-				const response = await fetch(apiPath(`/api/node/${node?.id}`));
-				const result = await response.json();
+				const result = await apiFetch<NodeSettingDetails>(`/api/node/${encodeURIComponent(id)}`);
 				set(result.details);
 			} catch (ex) {
 				console.error(ex);

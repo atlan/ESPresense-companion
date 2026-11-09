@@ -1,6 +1,7 @@
 using ESPresense.Locators;
 using ESPresense.Models;
 using ESPresense.Services;
+using MathNet.Numerics.LinearAlgebra;
 using MathNet.Spatial.Euclidean;
 using Moq;
 
@@ -16,7 +17,7 @@ public class BaseMultilateralizerTests
     private Mock<IMqttCoordinator> _mockMqttCoordinator;
 
     [SetUp]
-    public void Setup()
+    public async Task Setup()
     {
         _mockMqttCoordinator = new Mock<IMqttCoordinator>();
         _configDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "cfg", Guid.NewGuid().ToString());
@@ -25,6 +26,9 @@ public class BaseMultilateralizerTests
         _configLoader = new ConfigLoader(_configDir);
         _nodeTelemetryStore = new NodeTelemetryStore(_mockMqttCoordinator.Object);
         _state = new State(_configLoader, _nodeTelemetryStore);
+
+        // These tests build floors/nodes from Config; the constructor no longer loads, so load explicitly.
+        await _configLoader.LoadAsync();
     }
 
     [TearDown]
@@ -235,6 +239,38 @@ public class BaseMultilateralizerTests
         Assert.That(result, Is.False); // Should return false because movement < 0.1
     }
 
+    [Test]
+    public void DirectionOrFallback_CoincidentPoints_ReturnsFiniteNonZeroPerturbation()
+    {
+        // Arrange - guess already sits on the centroid, so the difference is the zero vector
+        var point = Vector<double>.Build.DenseOfArray(new[] { 1.0, 2.0, 3.0 });
+
+        // Act
+        var result = TestMultilateralizer.PublicDirectionOrFallback(point, point);
+
+        // Assert
+        Assert.That(result.Count, Is.EqualTo(3));
+        Assert.That(result.ToArray().All(double.IsFinite), Is.True);
+        Assert.That(result.L2Norm(), Is.GreaterThan(0));
+    }
+
+    [Test]
+    public void DirectionOrFallback_DistinctPoints_ReturnsUnitDirection()
+    {
+        // Arrange
+        var from = Vector<double>.Build.DenseOfArray(new[] { 0.0, 0.0, 0.0 });
+        var to = Vector<double>.Build.DenseOfArray(new[] { 3.0, 0.0, 4.0 });
+
+        // Act
+        var result = TestMultilateralizer.PublicDirectionOrFallback(from, to);
+
+        // Assert
+        Assert.That(result.L2Norm(), Is.EqualTo(1).Within(1e-9));
+        Assert.That(result[0], Is.EqualTo(0.6).Within(1e-9));
+        Assert.That(result[1], Is.EqualTo(0.0).Within(1e-9));
+        Assert.That(result[2], Is.EqualTo(0.8).Within(1e-9));
+    }
+
     // Test multilateralizer that exposes protected methods for testing
     private class TestMultilateralizer : BaseMultilateralizer
     {
@@ -270,7 +306,12 @@ public class BaseMultilateralizerTests
 
         public bool PublicFinalizeScenario(Scenario scenario, int confidence)
         {
-            return FinalizeScenario(scenario, confidence);
+            return FinalizeScenario(scenario, confidence, []);
+        }
+
+        public static Vector<double> PublicDirectionOrFallback(Vector<double> from, Vector<double> to)
+        {
+            return DirectionOrFallback(from, to);
         }
     }
 }

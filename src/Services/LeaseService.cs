@@ -5,7 +5,6 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using MQTTnet;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -18,14 +17,18 @@ public class LeaseInfo
     public DateTime ExpiresAt { get; set; }
 }
 
+public sealed record LeaseStatus(string InstanceId, DateTime ExpiresAt, bool IsOwned);
+
 public class LeaseHandle : IAsyncDisposable
 {
     private readonly ILeaseService _leaseService;
     private readonly string _leaseName;
+    private readonly ILogger _logger;
     private bool _disposed;
 
-    internal LeaseHandle(ILeaseService leaseService, string leaseName)
+    internal LeaseHandle(ILeaseService leaseService, string leaseName, ILogger logger)
     {
+        _logger = logger;
         _leaseService = leaseService;
         _leaseName = leaseName;
     }
@@ -40,7 +43,7 @@ public class LeaseHandle : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to release lease '{LeaseName}' during dispose", _leaseName);
+            _logger.LogWarning(ex, "Failed to release lease '{LeaseName}' during dispose", _leaseName);
         }
     }
 
@@ -54,6 +57,7 @@ public interface ILeaseService
     Task<LeaseHandle?> AcquireAsync(string leaseName, TimeSpan? timeout = null, CancellationToken cancellationToken = default);
     Task ReleaseAsync(string leaseName);
     bool HasLease(string leaseName);
+    LeaseStatus? GetStatus(string leaseName);
     Task ReleaseAllAsync();
 }
 
@@ -62,7 +66,7 @@ public class LeaseService : ILeaseService, IDisposable
     const int leaseDurationSecs = 120;
     const int renewalIntervalSecs = 30;
 
-    private const string TopicPrefix = "espresense/companion/lease/";
+    private const string TopicPrefix = MqttTopics.CompanionLeasePrefix;
     private readonly IMqttCoordinator _mqtt;
     private readonly ILogger<LeaseService> _log;
     private readonly string _instanceId = $"{Environment.MachineName}-{Guid.NewGuid().ToString("N")[..8]}".ToLowerInvariant();
@@ -210,7 +214,7 @@ public class LeaseService : ILeaseService, IDisposable
                         _log.LogInformation("Acquired lease '{LeaseName}' (expires: {Expiry})",
                             leaseName, proposed.ExpiresAt);
 
-                        return new LeaseHandle(this, leaseName);
+                        return new LeaseHandle(this, leaseName, _log);
                     }
                 }
             }
@@ -270,6 +274,18 @@ public class LeaseService : ILeaseService, IDisposable
         => _leases.TryGetValue(leaseName, out var s) &&
            s.Owned.InstanceId == _instanceId &&
            s.Owned.ExpiresAt > DateTime.UtcNow;
+
+    public LeaseStatus? GetStatus(string leaseName)
+    {
+        if (!_leases.TryGetValue(leaseName, out var state)) return null;
+
+        var isOwned = state.Owned.InstanceId == _instanceId && state.Owned.ExpiresAt > DateTime.UtcNow;
+        var current = isOwned ? state.Owned : state.Observed;
+        return new LeaseStatus(
+            current.InstanceId,
+            current.ExpiresAt,
+            isOwned);
+    }
 
     public Task ReleaseAllAsync() => Task.WhenAll(_leases.Keys.Select(ReleaseAsync));
 

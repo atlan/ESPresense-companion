@@ -86,6 +86,7 @@ nodes:
   - ok
 ");
         _configLoader = new ConfigLoader(_configDir);
+        await _configLoader.LoadAsync();
         await _configLoader.ConfigAsync(); // ctor loads asynchronously - wait before touching Config
         var nts = new NodeTelemetryStore(new Mock<IMqttCoordinator>().Object);
         _state = new State(_configLoader, nts);

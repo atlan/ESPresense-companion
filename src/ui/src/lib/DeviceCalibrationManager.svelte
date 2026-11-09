@@ -1,26 +1,27 @@
 <script lang="ts">
-	import { devices } from '$lib/stores';
-	import { gotoCalibration } from '$lib/urls';
-	import DataTable from '$lib/DataTable.svelte';
-	import DeviceActions from '$lib/DeviceActions.svelte';
-	import DeviceActiveId from '$lib/DeviceActiveId.svelte';
-	import SlideToggle from '$lib/SlideToggle.svelte';
-	import type { Device } from '$lib/types';
+	import { devices } from '#lib/stores.js';
+	import { gotoCalibration } from '#lib/urls.js';
+	import DataTable from '#lib/DataTable.svelte';
+	import DeviceActions from '#lib/DeviceActions.svelte';
+	import DeviceActiveId from '#lib/DeviceActiveId.svelte';
+	import SlideToggle from '#lib/SlideToggle.svelte';
+	import type { Device } from '#lib/types.js';
 	import ago from 's-ago';
 
-	$: filteredDevices =
+	let filteredDevices = $derived(
 		$devices?.filter((device) => {
 			// Check if device is active based on lastSeen and timeout
 			if (device.lastSeen == null) return false;
 			const timeout = device.timeout !== null && device.timeout !== undefined ? device.timeout : 30000;
 			return new Date().getTime() - new Date(device.lastSeen).getTime() < timeout;
-		}) || [];
+		}) || []
+	);
 
-	$: calibrationStats = {
+	let calibrationStats = $derived({
 		total: filteredDevices.length,
 		calibrated: filteredDevices.filter((d) => d['rssi@1m'] != null).length,
 		needsCalibration: filteredDevices.filter((d) => d['rssi@1m'] == null).length
-	};
+	});
 
 	function isDeviceActive(device: Device): boolean {
 		if (device.lastSeen == null) return false;

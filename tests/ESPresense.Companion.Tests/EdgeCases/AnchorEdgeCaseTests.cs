@@ -1,4 +1,3 @@
-using AutoMapper;
 using ESPresense.Controllers;
 using ESPresense.Events;
 using ESPresense.Models;
@@ -20,7 +19,7 @@ public class AnchorEdgeCaseTests
     private DeviceSettingsStore _deviceSettingsStore;
 
     [SetUp]
-    public void Setup()
+    public async Task Setup()
     {
         _mockMqttCoordinator = new Mock<IMqttCoordinator>();
         _configDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "cfg", Guid.NewGuid().ToString());
@@ -29,6 +28,9 @@ public class AnchorEdgeCaseTests
         _configLoader = new ConfigLoader(_configDir);
         _nodeTelemetryStore = new NodeTelemetryStore(_mockMqttCoordinator.Object);
         _state = new State(_configLoader, _nodeTelemetryStore);
+
+        // These tests build floors/nodes from Config; the constructor no longer loads, so load explicitly.
+        await _configLoader.LoadAsync();
         _deviceSettingsStore = new DeviceSettingsStore(_mockMqttCoordinator.Object, _state);
     }
 
@@ -237,9 +239,10 @@ public class AnchorEdgeCaseTests
             mockNodeSettingsStore.Object,
             _deviceSettingsStore,
             _nodeTelemetryStore,
-            Mock.Of<IMapper>(),
+            new NodeStateMapper(_nodeTelemetryStore, Mock.Of<IFirmwareTypeStore>()),
             Mock.Of<GlobalEventDispatcher>(),
-            new WalkTestService(_state, new PairErrorTracker(_state), mockNodeSettingsStore.Object, null)
+            new CalibrationService(_state, mockNodeSettingsStore.Object),
+            new DeviceEnricher(_deviceSettingsStore)
         );
 
         // Act

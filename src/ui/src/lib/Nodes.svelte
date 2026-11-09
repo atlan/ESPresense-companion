@@ -1,26 +1,34 @@
 <script lang="ts">
 	import { zoomIdentity } from 'd3-zoom';
-	import { config, nodes } from '$lib/stores';
-	import type { Floor, Node } from '$lib/types';
+	import { config, nodes } from '#lib/stores.js';
+	import { bestScenario } from '#lib/explain.js';
+	import type { DeviceExplanation, Floor, Node } from '#lib/types.js';
 
 	import NodeMarker from './NodeMarker.svelte';
 
-	export let transform = zoomIdentity;
-	export let floorId: string | null = null;
-	export let deviceId: string | null = null;
-	export let nodeId: string | null = null;
-	export let onhovered: ((node: Node | null) => void) | undefined = undefined;
-	export let onselected: ((node: Node) => void) | undefined = undefined;
+	interface Props {
+		transform?: any;
+		floorId?: string | null;
+		deviceId?: string | null;
+		nodeId?: string | null;
+		explanation?: DeviceExplanation | null;
+		onhovered?: ((node: Node | null) => void) | undefined;
+		onselected?: ((node: Node) => void) | undefined;
+	}
 
-	let floor: Floor | undefined;
-	$: selectedNodes = $nodes?.filter((n) => !floorId || n?.floors.includes(floorId));
-	$: floor = $config?.floors?.find((f) => f.id == floorId);
+	let { transform = zoomIdentity, floorId = null, deviceId = null, nodeId = null, explanation = null, onhovered = undefined, onselected = undefined }: Props = $props();
+
+	let best = $derived(bestScenario(explanation));
+	let floor: Floor | undefined = $derived($config?.floors?.find((f) => f.id == floorId));
+	// `floors` is null for nodes that aren't placed in the config yet, so it must be guarded
+	// as well as `n` — otherwise selecting a floor throws once per poll tick.
+	let selectedNodes = $derived($nodes?.filter((n) => !floorId || n?.floors?.includes(floorId)));
 </script>
 
 <g transform={transform.toString()}>
 	{#if nodes}
 		{#each selectedNodes as n (n.id)}
-			<NodeMarker {n} {deviceId} {nodeId} {floor} {onhovered} {onselected} />
+			<NodeMarker {n} {deviceId} {nodeId} {floor} fix={best?.nodes.find((f) => f.id === n.id)} fixScale={best?.scale ?? 1} {onhovered} {onselected} />
 		{/each}
 	{/if}
 </g>

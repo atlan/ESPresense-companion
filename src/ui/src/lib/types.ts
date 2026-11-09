@@ -1,60 +1,7 @@
-import type { ScaleOrdinal, ScaleLinear } from 'd3';
-import type { Readable, Writable } from 'svelte/store';
+import type { ScaleLinear } from 'd3';
 
-export interface LayerCakeContext {
-	xScale: Writable<ScaleLinear<number, number, never>>;
-	yScale: Writable<ScaleLinear<number, number, never>>;
-	width: Writable<number>;
-	height: Writable<number>;
-	padding: Writable<{
-		top: number;
-		right: number;
-		bottom: number;
-		left: number;
-	}>;
-	colors: ScaleOrdinal<string, string>;
-}
-
-// d3-zoom's own `ZoomScale` (the constraint on rescaleX/rescaleY's generic
-// parameter) only guarantees domain/range/copy/invert - not a call signature,
-// ticks(), or bandwidth(), even though every scale actually passed through
-// zoomIdentity.rescaleX/rescaleY here supports all of those. Narrower,
-// call-signature-bearing type matching how AxisX/AxisY/CalibrationSpot
-// actually use their scales (call as a function, optionally .ticks() for
-// continuous scales or .bandwidth() for band/ordinal ones, numeric-only
-// .invert() since this app's domains are always numeric, never Date).
-export interface AxisScale {
-	(value: number): number;
-	domain(): number[];
-	domain(domain: number[]): this;
-	range(): number[];
-	range(range: number[]): this;
-	copy(): AxisScale;
-	invert(value: number): number;
-	ticks?(count?: number): number[];
-	bandwidth?(): number;
-}
-
-// The zoomable axis/calibration components (AxisX, AxisY, CalibrationSpot) read
-// the same 'LayerCake' context but pan/zoom their scales via d3-zoom, so they
-// need AxisScale (see above) instead of LayerCakeContext's fixed ScaleLinear.
-// layercake itself ships no .d.ts, so this - like LayerCakeContext above - is
-// a manually maintained match of the shape it actually puts in the context at
-// runtime.
-export interface AxisLayerCakeContext {
-	xScale: Readable<AxisScale>;
-	yScale: Readable<AxisScale>;
-	width: Readable<number>;
-	height: Readable<number>;
-	padding: Readable<{
-		top: number;
-		right: number;
-		bottom: number;
-		left: number;
-	}>;
-	xRange: Readable<[number, number]>;
-	yRange: Readable<[number, number]>;
-}
+/** The floor map's LayerCake scale types: `getLayerCakeContext<MapScales>()`. Read values off the context (`chart.xScale`), don't destructure. */
+export type MapScales = { x: ScaleLinear<number, number, never>; y: ScaleLinear<number, number, never> };
 
 export interface Room {
 	id: string;
@@ -75,10 +22,12 @@ export interface Node {
 	telemetry: {
 		version: string;
 		ip: string;
+		board?: string | null;
 	};
 	cpu: CPU;
 	flavor: Flavor;
 	online: boolean;
+	updateError?: string | null;
 	id: string;
 	name: string;
 	location: { x: number; y: number; z: number };
@@ -252,20 +201,36 @@ export interface NodeCalibrationMatrix {
 			diff: number;
 			percent: number;
 			var?: number;
+			/** 1 on a retired walk-point reading; its other values mean nothing. */
+			disabled?: number;
 		};
 	};
 }
 
 export interface OptimizerState {
 	optimizers: string;
+	phase: string;
+	message: string;
+	snapshotCount: number;
+	measurementCount: number;
+	trainingSamples: number;
 	bestRMSE?: number;
 	bestR?: number;
+	bestLoss?: number;
+	validationSamples: number;
+	lastRunAt?: string;
+	nextRunAt?: string;
+	lastOutcome?: string;
+	leaseHolder?: string;
+	leaseExpiresAt?: string;
 }
 
 export interface CalibrationResponse {
 	matrix: NodeCalibrationMatrix;
 	rmse?: number;
 	r?: number;
+	bestRMSE?: number;
+	bestR?: number;
 	optimizerState?: OptimizerState;
 	anchored?: string[];
 	/** Matrix row keys that are recorded walk-test points (ground truth), not live nodes. */
@@ -285,13 +250,103 @@ export function isNode(d: Device | Node | null): d is Node {
 	return (d as Node)?.telemetry !== undefined;
 }
 
+/** Matches the backend DeviceHistory row (flat coordinates, one row per scenario). */
 export interface DeviceHistory {
 	id: string;
 	when: string;
-	location: { x: number; y: number; z: number };
-	confidence?: number;
-	fixes?: number;
-	scale?: number;
-	room?: string;
-	floor?: string;
+	x: number | null;
+	y: number | null;
+	z: number | null;
+	confidence: number;
+	fixes: number;
+	scenario: string | null;
+	best: boolean;
+}
+
+// Mirrors DeviceExplanation in src/Models/DeviceExplanation.cs
+export type ExplainedPoint = { x: number; y: number; z: number };
+export type ExplainedPlace = { id: string | null; name: string | null };
+
+export type ExplainedReading = {
+	id: string | null;
+	name: string | null;
+	current: boolean;
+	rssi: number;
+	rssiVar: number | null;
+	refRssi: number;
+	distance: number;
+	distVar: number | null;
+	lastHit: string | null;
+};
+
+export type ExplainedNode = {
+	id: string | null;
+	name: string | null;
+	used: boolean;
+	reason: string | null;
+	measured: number | null;
+	fitted: number | null;
+	residual: number | null;
+	weight: number | null;
+};
+
+export type ExplainedScenario = {
+	name: string;
+	locator: string;
+	floor: ExplainedPlace | null;
+	room: ExplainedPlace | null;
+	best: boolean;
+	current: boolean;
+	probability: number;
+	confidence: number | null;
+	weightedConfidence: number;
+	outcome: 'Solved' | 'Fallback' | 'NoFix' | null;
+	outcomeReason: string | null;
+	location: ExplainedPoint;
+	fit: ExplainedPoint | null;
+	scale: number | null;
+	error: number | null;
+	pearsonCorrelation: number | null;
+	iterations: number | null;
+	reasonForExit: string;
+	fixes: number | null;
+	nodes: ExplainedNode[];
+};
+
+export type ExplainedFloor = { floor: ExplainedPlace; probability: number; confidence: number | null };
+
+export type ExplainedRoom = {
+	room: ExplainedPlace | null;
+	inside: boolean;
+	distanceToEdge: number | null;
+	nearestOtherRoom: ExplainedPlace | null;
+	nearestOtherDistance: number | null;
+	state: string | null;
+	previousState: string | null;
+	stateChanged: string | null;
+};
+
+export type ExplainedEllipse = { center: ExplainedPoint; semiMajor: number; semiMinor: number; angleDegrees: number };
+
+export type DeviceExplanation = {
+	id: string;
+	name: string | null;
+	anchored: boolean;
+	location: ExplainedPoint | null;
+	confidence: number | null;
+	nodes: ExplainedReading[];
+	scenarios: ExplainedScenario[];
+	floors: ExplainedFloor[];
+	room: ExplainedRoom;
+	uncertainty: ExplainedEllipse | null;
+	hints: string[];
+};
+
+/** Matches the backend SearchResult (GET /api/state/search). */
+export interface SearchResult {
+	kind: 'device' | 'node';
+	id: string;
+	name: string | null;
+	detail: string;
+	badge: string | null;
 }

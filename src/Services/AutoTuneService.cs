@@ -16,7 +16,7 @@ namespace ESPresense.Services;
 /// Only evaluates the CALIBRATION FIT parameters. Locator-side settings (e.g. nadaraya_watson
 /// bandwidth) affect live positioning, not the fit, and cannot be scored offline against snapshots.
 /// </summary>
-public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService walkTest, ConfigLoader configLoader)
+public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService walkTest, ConfigLoader configLoader, OptimizationSnapshotStore snapshotStore)
 {
     public class Candidate
     {
@@ -134,26 +134,16 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
                 Label = $"per_node_absorption, penalty {penalty}, bounds 2.0-4.0 (narrow)"
             });
         }
-        candidates.Add(new Candidate
-        {
-            Key = "global_absorption",
-            Optimizer = "global_absorption",
-            Label = "global_absorption"
-        });
         return candidates;
     }
 
     private IOptimizer BuildOptimizer(Candidate c)
     {
-        return c.Optimizer switch
+        return new PerNodeAbsorptionRxTx(state)
         {
-            "global_absorption" => new GlobalAbsorptionRxTxOptimizer(state),
-            _ => new PerNodeAbsorptionRxTx(state)
-            {
-                AbsorptionPenaltyOverride = c.AbsorptionPenalty,
-                AbsorptionMinOverride = c.AbsorptionMin,
-                AbsorptionMaxOverride = c.AbsorptionMax
-            }
+            AbsorptionPenaltyOverride = c.AbsorptionPenalty,
+            AbsorptionMinOverride = c.AbsorptionMin,
+            AbsorptionMaxOverride = c.AbsorptionMax
         };
     }
 
@@ -173,7 +163,7 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
             var correlationWeight = optimization?.CorrelationWeight ?? 0.5;
             var rmseWeight = optimization?.RmseWeight ?? 0.5;
 
-            var snapshots = state.GetOptimizationSnapshots();
+            var snapshots = snapshotStore.ToArray();
             var walkMeasures = walkTest.GetExtraMeasures();
             var allMeasures = snapshots.SelectMany(s => s.Measures)
                 .Concat(walkMeasures)
@@ -209,7 +199,7 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
             var foldOf = pairGroups.ToDictionary(g => g.Key, g => StableHash(g.Key) % Folds);
 
             var candidates = BuildCandidates();
-            var currentOptimizer = optimization?.Optimizer?.ToLowerInvariant() ?? "legacy";
+            var currentOptimizer = optimization?.Optimizer?.ToLowerInvariant() ?? "per_node_absorption";
             var currentPenalty = optimization?.AbsorptionPenaltyWeight ?? 10;
 
             lock (_lock) _state.CandidatesTotal = candidates.Count;
@@ -225,8 +215,8 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
                 {
                     var holdout = pairGroups.Where(g => foldOf[g.Key] == fold).SelectMany(g => g).ToList();
                     if (holdout.Count == 0) continue;
-                    var (corr, rmse) = new OptimizationResults().Evaluate(
-                        new List<OptimizationSnapshot> { new() { Measures = holdout } }, nsd, excludedPairs);
+                    var (corr, rmse, _) = new OptimizationResults().Evaluate(
+                        new List<OptimizationSnapshot> { new() { Measures = holdout } }, nsd, excludedPairs: excludedPairs);
                     if (double.IsNaN(corr) || double.IsNaN(rmse)) continue;
                     holdR.Add(corr);
                     holdRmse.Add(rmse);
@@ -268,10 +258,10 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
                     var optimizer = BuildOptimizer(candidate);
                     var fitted = await Task.Run(() => optimizer.Optimize(trainSnapshot, currentSettings));
 
-                    var (trainCorr, trainRmse) = fitted.Evaluate(
-                        new List<OptimizationSnapshot> { trainSnapshot }, nsd, excludedPairs);
-                    var (holdCorr, holdRmse) = fitted.Evaluate(
-                        new List<OptimizationSnapshot> { new() { Measures = holdout } }, nsd, excludedPairs);
+                    var (trainCorr, trainRmse, _) = fitted.Evaluate(
+                        new List<OptimizationSnapshot> { trainSnapshot }, nsd, excludedPairs: excludedPairs);
+                    var (holdCorr, holdRmse, _) = fitted.Evaluate(
+                        new List<OptimizationSnapshot> { new() { Measures = holdout } }, nsd, excludedPairs: excludedPairs);
 
                     if (double.IsNaN(holdCorr) || double.IsNaN(holdRmse)) continue;
                     holdComposites.Add(Composite(holdCorr, holdRmse));

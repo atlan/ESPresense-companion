@@ -42,6 +42,7 @@ optimization:
     tx_ref_rssi_max: -40
 ");
         _configLoader = new ConfigLoader(_dir);
+        await _configLoader.LoadAsync();
         await _configLoader.ConfigAsync();
         _state = new State(_configLoader, new NodeTelemetryStore(new Mock<IMqttCoordinator>().Object));
     }
@@ -119,7 +120,6 @@ optimization:
         var os = CleanSnapshot();
         var fit = new PerNodeAbsorptionRxTx(_state)
         {
-            ObjectiveOverride = "db",
             AbsorptionPenaltyOverride = 0
         }.Optimize(os, Existing(os));
 
@@ -128,7 +128,7 @@ optimization:
     }
 
     [Test]
-    public void DbObjective_SurvivesOneContradictoryPairBetterThanSquaredMetres()
+    public void DbObjective_SurvivesOneContradictoryPair()
     {
         // One pair heard 25 dB too weakly, as if a concrete wall sat between two nodes the map says
         // are in the same room. The live diagnostics report twenty such contradictions on the real
@@ -141,17 +141,12 @@ optimization:
         }
 
         var dbSnapshot = CleanSnapshot(); Poison(dbSnapshot);
-        var distSnapshot = CleanSnapshot(); Poison(distSnapshot);
 
         var db = MedianAbsorption(new PerNodeAbsorptionRxTx(_state)
-        { ObjectiveOverride = "db", AbsorptionPenaltyOverride = 0 }.Optimize(dbSnapshot, Existing(dbSnapshot)));
+        { AbsorptionPenaltyOverride = 0 }.Optimize(dbSnapshot, Existing(dbSnapshot)));
 
-        var distance = MedianAbsorption(new PerNodeAbsorptionRxTx(_state)
-        { ObjectiveOverride = "distance", AbsorptionPenaltyOverride = 0 }.Optimize(distSnapshot, Existing(distSnapshot)));
-
-        Assert.That(Math.Abs(db - TrueAbsorption), Is.LessThan(Math.Abs(distance - TrueAbsorption)),
-            $"dB+Huber landed at {db:0.00}, squared metres at {distance:0.00}, truth is {TrueAbsorption} - " +
-            "the point of the robust residual is that one impossible pair pulls without dictating");
+        Assert.That(db, Is.EqualTo(TrueAbsorption).Within(0.5),
+            $"dB+Huber landed at {db:0.00}, truth is {TrueAbsorption} - the point of the robust residual is that one impossible pair pulls without dictating");
     }
 
     [Test]
@@ -163,7 +158,7 @@ optimization:
         // scored slightly worse both times, so the old default stays and the new behaviour is opt-in
         // through weights.absorption_target.
         var os = CleanSnapshot();
-        var optimizer = new PerNodeAbsorptionRxTx(_state) { ObjectiveOverride = "db", AbsorptionPenaltyOverride = 1 };
+        var optimizer = new PerNodeAbsorptionRxTx(_state) { AbsorptionPenaltyOverride = 1 };
         optimizer.Optimize(os, Existing(os, absorption: 5.5));
 
         Assert.That(optimizer.LastTargetAbsorption, Is.EqualTo(4.0).Within(0.01),
@@ -176,27 +171,11 @@ optimization:
         var os = CleanSnapshot();
         var optimizer = new PerNodeAbsorptionRxTx(_state)
         {
-            ObjectiveOverride = "db",
             AbsorptionPenaltyOverride = 1,
             AbsorptionTargetOverride = 3.0
         };
         optimizer.Optimize(os, Existing(os, absorption: 5.5));
 
         Assert.That(optimizer.LastTargetAbsorption, Is.EqualTo(3.0).Within(0.01));
-    }
-
-    [Test]
-    public void DistanceObjective_RemainsAvailableUnchanged()
-    {
-        // The old residual is still what a stock configuration runs. It has to keep working, or the
-        // comparison the sweep performs is between a new thing and a broken thing.
-        var os = CleanSnapshot();
-        var fit = new PerNodeAbsorptionRxTx(_state)
-        {
-            ObjectiveOverride = "distance",
-            AbsorptionPenaltyOverride = 0
-        }.Optimize(os, Existing(os));
-
-        Assert.That(MedianAbsorption(fit), Is.EqualTo(TrueAbsorption).Within(0.3));
     }
 }

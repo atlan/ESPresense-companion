@@ -1,4 +1,3 @@
-using AutoMapper;
 using ESPresense.Models;
 using ESPresense.Services;
 using Moq;
@@ -33,7 +32,7 @@ public class McpConfigRedactionTests
     public async Task GetConfigTool_DoesNotReturnMqttPassword()
     {
         var configLoader = new ConfigLoader(_configDir);
-        await configLoader.ConfigAsync(); // ensure the YAML has been loaded
+        await configLoader.LoadAsync(); // the constructor no longer loads; ConfigAsync alone would wait forever
 
         var mqtt = new Mock<IMqttCoordinator>().Object;
         var nodeTelemetryStore = new NodeTelemetryStore(mqtt);
@@ -50,10 +49,12 @@ public class McpConfigRedactionTests
             configLoader,
             nodeSettingsStore,
             nodeTelemetryStore,
-            new DeviceSettingsStore(mqtt, state),
+            new DeviceEnricher(new DeviceSettingsStore(mqtt, state)),
             new TelemetryService(CreateCoordinator()),
             firmwareUpdateJobs,
-            Mock.Of<IMapper>());
+            new FirmwareCatalogService(new HttpClient(), Mock.Of<IFirmwareTypeStore>(), nodeTelemetryStore),
+            new NodeStateMapper(nodeTelemetryStore, Mock.Of<IFirmwareTypeStore>()),
+            new CalibrationService(state, nodeSettingsStore));
 
         var result = await sut.GetConfigTool();
 
@@ -73,7 +74,7 @@ public class McpConfigRedactionTests
         // state://config is a separate MCP entry point from the get_config tool and
         // must be redacted too.
         var configLoader = new ConfigLoader(_configDir);
-        await configLoader.ConfigAsync();
+        await configLoader.LoadAsync(); // the constructor no longer loads; ConfigAsync alone would wait forever
 
         var mqtt = new Mock<IMqttCoordinator>().Object;
         var nodeTelemetryStore = new NodeTelemetryStore(mqtt);
@@ -90,10 +91,12 @@ public class McpConfigRedactionTests
             configLoader,
             nodeSettingsStore,
             nodeTelemetryStore,
-            new DeviceSettingsStore(mqtt, state),
+            new DeviceEnricher(new DeviceSettingsStore(mqtt, state)),
             new TelemetryService(CreateCoordinator()),
             firmwareUpdateJobs,
-            Mock.Of<IMapper>());
+            new FirmwareCatalogService(new HttpClient(), Mock.Of<IFirmwareTypeStore>(), nodeTelemetryStore),
+            new NodeStateMapper(nodeTelemetryStore, Mock.Of<IFirmwareTypeStore>()),
+            new CalibrationService(state, nodeSettingsStore));
 
         var result = await sut.GetConfigResource();
 

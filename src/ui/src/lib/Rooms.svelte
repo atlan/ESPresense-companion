@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { zoomIdentity } from 'd3-zoom';
-	import { config } from '$lib/stores';
+	import { config } from '#lib/stores.js';
 	import Room from './Room.svelte';
 
-	export let floorId: string | null = null;
-	export let transform = zoomIdentity;
+	interface Props {
+		floorId?: string | null;
+		transform?: any;
+	}
 
-	$: floor = $config?.floors.find((f) => f.id === floorId);
+	let { floorId = null, transform = zoomIdentity }: Props = $props();
+
+	let floor = $derived($config?.floors.find((f) => f.id === floorId));
 </script>
 
 <g transform={transform.toString()}>

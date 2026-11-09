@@ -3,41 +3,34 @@
 	import { tweened } from 'svelte/motion';
 	import { cubicOut } from 'svelte/easing';
 
-	import { devices, nodes, relative } from '$lib/stores';
+	import { devices, nodes, relative } from '#lib/stores.js';
 
-	import type { Node, Floor, LayerCakeContext } from '$lib/types';
+	import { getLayerCakeContext } from 'layercake';
+	import { errorColor } from '#lib/explain.js';
+	import type { ExplainedNode, Node, Floor, MapScales } from '#lib/types.js';
 	import type { ScaleOrdinal } from 'd3';
 
-	const { xScale, yScale } = getContext<LayerCakeContext>('LayerCake');
+	const chart = getLayerCakeContext<MapScales>();
 	const colors = getContext<ScaleOrdinal<string, string>>('colors');
 
 	const r = tweened(0, { duration: 100, easing: cubicOut });
 	const v = tweened(0, { duration: 1000, easing: cubicOut });
 
-	export let deviceId: string | null = null;
-	export let nodeId: string | null = null;
-	export let floor: Floor | undefined = undefined;
-	export let n: Node;
-	export let onhovered: ((node: Node | null) => void) | undefined = undefined;
-	export let onselected: ((node: Node) => void) | undefined = undefined;
+	interface Props {
+		deviceId?: string | null;
+		nodeId?: string | null;
+		floor?: Floor | undefined;
+		n: Node;
+		fix?: ExplainedNode | undefined;
+		fixScale?: number;
+		onhovered?: ((node: Node | null) => void) | undefined;
+		onselected?: ((node: Node) => void) | undefined;
+	}
 
-	$: radarDevice = $devices?.find((d) => d.id === deviceId);
-	$: radarNode = $nodes?.find((d) => d.id === nodeId);
-	$: radarDist = radarDevice?.nodes[n.id]?.dist || radarNode?.nodes[n.id]?.dist;
-	$: radarVar = radarDevice?.nodes[n.id]?.var || radarNode?.nodes[n.id]?.var;
-	$: radarLastHit = $relative - (radarDevice?.nodes[n.id]?.lh || radarNode?.nodes[n.id]?.lh || 0);
-	$: radarTimeout = radarDevice?.timeout || 30000;
-	$: v.set(fixRadiusFromHeight(Math.sqrt(radarVar ?? 0)));
-	$: r.set(fixRadiusFromHeight(radarDist));
+	let { deviceId = null, nodeId = null, floor = undefined, n, fix = undefined, fixScale = 1, onhovered = undefined, onselected = undefined }: Props = $props();
 
-	let innerStop: number = 0;
-	let outerStop: number = 1;
-	let hit: number = 1;
-
-	$: innerStop = 0.5 * ($r / ($r + $v));
-	$: outerStop = 1 - innerStop;
-	$: hit = Math.min(1, Math.max(0, radarTimeout - radarLastHit) / radarTimeout);
-	$: hr = hit * $r;
+	let innerStop: number = $derived(0.5 * ($r / ($r + $v)));
+	let outerStop: number = $derived(1 - innerStop);
 
 	function fixRadiusFromHeight(dr: number | undefined): number {
 		if (dr == undefined) return 0;
@@ -58,23 +51,40 @@
 	function select(n: Node) {
 		onselected?.(n);
 	}
+	let radarDevice = $derived($devices?.find((d) => d.id === deviceId));
+	let radarNode = $derived($nodes?.find((d) => d.id === nodeId));
+	// With an explanation, show what the locator used: the fit scales geometric distance to meet the
+	// measured one, so its circle is the measured distance back in map metres
+	let radarDist = $derived(fix ? (fix.used ? (fix.measured ?? 0) / fixScale : undefined) : radarDevice?.nodes[n.id]?.dist || radarNode?.nodes[n.id]?.dist);
+	let radarVar = $derived(radarDevice?.nodes[n.id]?.var || radarNode?.nodes[n.id]?.var);
+	let radarLastHit = $derived($relative - (radarDevice?.nodes[n.id]?.lh || radarNode?.nodes[n.id]?.lh || 0));
+	let radarTimeout = $derived(radarDevice?.timeout || 30000);
+	let hit: number = $derived(fix ? 1 : Math.min(1, Math.max(0, radarTimeout - radarLastHit) / radarTimeout));
+	let color = $derived(!fix ? colors(n.id) : !fix.used ? '#777' : fix.residual != null ? errorColor(fix.residual / Math.max(fix.fitted ?? 1, 1)) : colors(n.id));
+	$effect(() => {
+		v.set(fixRadiusFromHeight(Math.sqrt(radarVar ?? 0)));
+	});
+	$effect(() => {
+		r.set(fixRadiusFromHeight(radarDist));
+	});
+	let hr = $derived(hit * $r);
 </script>
 
 <defs>
 	{#if radarDist && $r > 0}
 		<radialGradient id="variance-gradient-{n.id}" cx="50%" cy="50%" r={innerStop} gradientUnits="objectBoundingBox">
-			<stop offset="0" style="stop-color:{colors(n.id)}; stop-opacity:0" />
-			<stop offset={innerStop} style="stop-color:{colors(n.id)}; stop-opacity:0" />
-			<stop offset="0.5" style="stop-color:{colors(n.id)}; stop-opacity:1" />
-			<stop offset={outerStop} style="stop-color:{colors(n.id)}; stop-opacity:0" />
-			<stop offset="1" style="stop-color:{colors(n.id)}; stop-opacity:0" />
+			<stop offset="0" style="stop-color:{color}; stop-opacity:0" />
+			<stop offset={innerStop} style="stop-color:{color}; stop-opacity:0" />
+			<stop offset="0.5" style="stop-color:{color}; stop-opacity:1" />
+			<stop offset={outerStop} style="stop-color:{color}; stop-opacity:0" />
+			<stop offset="1" style="stop-color:{color}; stop-opacity:0" />
 		</radialGradient>
 	{/if}
 </defs>
 
 <path
-	d="M{$xScale(n.location.x)},{$yScale(n.location.y)} m -5,0 5,-5 5,5 -5,5 z"
-	fill={colors(n.id)}
+	d="M{chart.xScale(n.location.x)},{chart.yScale(n.location.y)} m -5,0 5,-5 5,5 -5,5 z"
+	fill={color}
 	role="button"
 	tabindex="0"
 	aria-label={`Select node ${n.name}`}
@@ -100,17 +110,20 @@
 		unselect();
 	}}
 />
-<text x={$xScale(n.location.x) + 7} y={$yScale(n.location.y) + 3.5} fill="white" font-size="10px">{n.name}</text>
+<text x={chart.xScale(n.location.x) + 7} y={chart.yScale(n.location.y) + 3.5} fill="white" font-size="10px">{n.name}</text>
 {#if radarDist && $r > 0}
-	<text x={$xScale(n.location.x)} y={$yScale(n.location.y) + 15} fill="white" font-size="10px">
+	<text x={chart.xScale(n.location.x)} y={chart.yScale(n.location.y) + 15} fill="white" font-size="10px">
 		{#if radarVar !== null && radarVar !== undefined}
 			{radarDist.toFixed(2) ?? 'n/a'} ± {Math.sqrt(radarVar).toFixed(2)}
 		{:else}
 			{radarDist.toFixed(2) ?? 'n/a'}
 		{/if}
+		{#if fix?.residual != null}
+			({fix.residual >= 0 ? '+' : ''}{fix.residual.toFixed(2)})
+		{/if}
 	</text>
-	<ellipse style="pointer-events: none" cx={$xScale(n.location.x)} cy={$yScale(n.location.y)} fill="none" stroke={colors(n.id)} rx={Math.abs($xScale(0) - $xScale($r))} ry={Math.abs($yScale(0) - $yScale($r))} stroke-width="2" stroke-opacity={0.25 + 0.75 * hit} />
-	<ellipse style="pointer-events: none" cx={$xScale(n.location.x)} cy={$yScale(n.location.y)} fill={`url(#variance-gradient-${n.id})`} rx={2 * Math.abs($xScale(0) - $xScale($r + $v))} ry={2 * Math.abs($yScale(0) - $yScale($r + $v))} fill-opacity="0.5" />
-	<line x1={$xScale(n.location.x - hr)} y1={$yScale(n.location.y)} x2={$xScale(n.location.x + hr)} y2={$yScale(n.location.y)} stroke={colors(n.id)} stroke-width="2" stroke-opacity={0.25 + 0.75 * hit} />
-	<line x1={$xScale(n.location.x)} y1={$yScale(n.location.y - hr)} x2={$xScale(n.location.x)} y2={$yScale(n.location.y + hr)} stroke={colors(n.id)} stroke-width="2" stroke-opacity={0.25 + 0.75 * hit} />
+	<ellipse style="pointer-events: none" cx={chart.xScale(n.location.x)} cy={chart.yScale(n.location.y)} fill="none" stroke={color} rx={Math.abs(chart.xScale(0) - chart.xScale($r))} ry={Math.abs(chart.yScale(0) - chart.yScale($r))} stroke-width="2" stroke-opacity={0.25 + 0.75 * hit} />
+	<ellipse style="pointer-events: none" cx={chart.xScale(n.location.x)} cy={chart.yScale(n.location.y)} fill={`url(#variance-gradient-${n.id})`} rx={2 * Math.abs(chart.xScale(0) - chart.xScale($r + $v))} ry={2 * Math.abs(chart.yScale(0) - chart.yScale($r + $v))} fill-opacity="0.5" />
+	<line x1={chart.xScale(n.location.x - hr)} y1={chart.yScale(n.location.y)} x2={chart.xScale(n.location.x + hr)} y2={chart.yScale(n.location.y)} stroke={color} stroke-width="2" stroke-opacity={0.25 + 0.75 * hit} />
+	<line x1={chart.xScale(n.location.x)} y1={chart.yScale(n.location.y - hr)} x2={chart.xScale(n.location.x)} y2={chart.yScale(n.location.y + hr)} stroke={color} stroke-width="2" stroke-opacity={0.25 + 0.75 * hit} />
 {/if}

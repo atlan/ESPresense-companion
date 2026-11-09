@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { apiPath } from '$lib/api';
-	import { config, nodes } from '$lib/stores';
-	import { getToastStore } from '$lib/toast/toastStore';
-	import { showConfirm } from '$lib/modal/modalStore';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, pickingWalkPoint, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, boundsPoints, resetEditState } from '$lib/floorplanEdit';
+	import { apiUrl } from '#lib/api.js';
+	import { config, nodes } from '#lib/stores.js';
+	import { getToastStore } from '#lib/toast/toastStore.js';
+	import { showConfirm } from '#lib/modal/modalStore.js';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, pickingWalkPoint, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, boundsPoints, resetEditState } from '#lib/floorplanEdit.js';
 
 	const toastStore = getToastStore();
 
@@ -83,7 +83,7 @@
 		busy = true;
 		try {
 			const deletedId = floorId;
-			const res = await fetch(apiPath(`/api/floorplan/floor/${deletedId}`), { method: 'DELETE' });
+			const res = await fetch(apiUrl(`/api/floorplan/floor/${deletedId}`), { method: 'DELETE' });
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.error ?? `HTTP ${res.status}`);
@@ -220,7 +220,7 @@
 		if (!newFloorBounds || !newFloorName.trim() || busy) return;
 		busy = true;
 		try {
-			const res = await fetch(apiPath('/api/floorplan/floor'), {
+			const res = await fetch(apiUrl('/api/floorplan/floor'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ name: newFloorName.trim(), bounds: newFloorBounds })
@@ -260,7 +260,7 @@
 	}
 
 	async function post(path: string, body: unknown): Promise<void> {
-		const res = await fetch(apiPath(path), {
+		const res = await fetch(apiUrl(path), {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body)
@@ -301,7 +301,7 @@
 		if (!confirmed) return;
 		busy = true;
 		try {
-			const res = await fetch(apiPath(`/api/floorplan/node/${selNode.id}`), { method: 'DELETE' });
+			const res = await fetch(apiUrl(`/api/floorplan/node/${selNode.id}`), { method: 'DELETE' });
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			ok('Node removed from config');
 			$selectedNodeId = null;
@@ -361,7 +361,7 @@
 		if (!confirmed) return;
 		busy = true;
 		try {
-			const res = await fetch(apiPath(`/api/floorplan/room/${floorId}/${selRoom.id}`), { method: 'DELETE' });
+			const res = await fetch(apiUrl(`/api/floorplan/room/${floorId}/${selRoom.id}`), { method: 'DELETE' });
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			ok('Room deleted');
 			$selectedRoomId = null;

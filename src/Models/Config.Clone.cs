@@ -1,4 +1,3 @@
-using Newtonsoft.Json;
 using TextExtensions;
 using YamlDotNet.Serialization;
 using ESPresense.Extensions;
@@ -13,9 +12,9 @@ namespace ESPresense.Models
             return new Config
             {
                 Mqtt = Mqtt?.Clone(),
-                Bounds = Bounds?.Select(b => b.ToArray()).ToArray(),
                 Timeout = Timeout,
                 AwayTimeout = AwayTimeout,
+                DeviceRetention = DeviceRetention,
                 Gps = Gps.Clone(),
                 Map = Map.Clone(),
                 Floors = Floors.Select(f => f.Clone()).ToArray(),
@@ -24,7 +23,8 @@ namespace ESPresense.Models
                 ExcludeDevices = ExcludeDevices.Select(d => d.Clone()).ToArray(),
                 History = History.Clone(),
                 Locators = Locators.Clone(),
-                Optimization = Optimization.Clone()
+                Optimization = Optimization.Clone(),
+                Filtering = Filtering?.Clone()! // a null section stays null; consumers default it
             };
         }
     }
@@ -35,6 +35,7 @@ namespace ESPresense.Models
         {
             return new ConfigLocators
             {
+                FloorContrastWeight = FloorContrastWeight,
                 NadarayaWatson = NadarayaWatson.Clone(),
                 NelderMead = NelderMead.Clone(),
                 Bfgs = Bfgs.Clone(),
@@ -54,7 +55,11 @@ namespace ESPresense.Models
                 Enabled = Enabled,
                 Floors = Floors?.ToArray(),
                 Bandwidth = Bandwidth,
-                Kernel = Kernel
+                Kernel = Kernel,
+                ConsistencyFilter = ConsistencyFilter,
+                ConsistencyToleranceM = ConsistencyToleranceM,
+                ConsistencyToleranceFraction = ConsistencyToleranceFraction,
+                ConsistencyVarianceWeight = ConsistencyVarianceWeight
             };
         }
     }
@@ -155,15 +160,25 @@ namespace ESPresense.Models
             {
                 Enabled = Enabled,
                 Optimizer = Optimizer,
-                Objective = Objective,
+                SampleIntervalSecs = SampleIntervalSecs,
+                TrainingWindowMins = TrainingWindowMins,
+                OptimizationIntervalSecs = OptimizationIntervalSecs,
+                ValidationFraction = ValidationFraction,
+                MinimumImprovement = MinimumImprovement,
                 IntervalSecs = IntervalSecs,
                 WalkPointGate = WalkPointGate,
                 KeepSnapshotMins = KeepSnapshotMins,
+                MinSamples = MinSamples,
                 Limits = new Dictionary<string, double>(Limits),
                 Weights = new Dictionary<string, double>(Weights),
-                ExcludedPairs = new List<string>(ExcludedPairs)
+                ExcludedPairs = (string[])ExcludedPairs.Clone()
             };
         }
+    }
+
+    public partial class ConfigFiltering
+    {
+        public ConfigFiltering Clone() => (ConfigFiltering)MemberwiseClone(); // doubles only
     }
 
     public partial class ConfigHistory
@@ -173,7 +188,7 @@ namespace ESPresense.Models
             return new ConfigHistory
             {
                 Enabled = Enabled,
-                Database = Database,
+                Path = Path,
                 ExpireAfter = ExpireAfter
             };
         }
@@ -200,6 +215,7 @@ namespace ESPresense.Models
                 Latitude = Latitude,
                 Longitude = Longitude,
                 Elevation = Elevation,
+                Rotation = Rotation,
                 Report = Report
             };
         }
@@ -214,10 +230,13 @@ namespace ESPresense.Models
                 Host = Host,
                 Port = Port,
                 Ssl = Ssl,
+                Insecure = Insecure,
+                CaCertPath = CaCertPath,
                 Username = Username,
                 Password = Password,
                 ClientId = ClientId,
-                DiscoveryTopic = DiscoveryTopic
+                DiscoveryTopic = DiscoveryTopic,
+                ReadOnly = ReadOnly
             };
         }
     }
@@ -272,8 +291,9 @@ namespace ESPresense.Models
                 Id = Id,
                 Point = Point?.ToArray(),
                 Floors = Floors?.ToArray(),
-                Enabled = Enabled,
-                Stationary = Stationary
+                Stationary = Stationary,
+                Room = Room,
+                Enabled = Enabled
             };
         }
     }

@@ -1,266 +1,55 @@
-﻿using ESPresense.Controllers;
-using ESPresense.Locators;
-using ESPresense.Models;
-using ESPresense.Utils;
-using MathNet.Spatial.Euclidean;
-using Newtonsoft.Json;
-using ESPresense.Extensions;
-using System.Text.Json;
+﻿using ESPresense.Models;
+using ESPresense.Controllers;
 using ESPresense.Events;
-using Serilog;
 
 namespace ESPresense.Services;
 
 /// <summary>
-/// Background service that, each time a <see cref="Device"/> surfaces from the
-/// tracker pipeline, does **three** things:
-///   1. Picks the scenario with the **highest raw Confidence** and feeds that
-///      measurement into the device‑level Kalman filter.
-///   2. Computes a motion‑consistency‑weighted confidence for every scenario
-///      (Gaussian penalty against the Kalman predicted location) and smooths
-///      per‑scenario probabilities over time.
-///   3. Publishes the scenario with the *highest smoothed probability* (ties
-///      broken by confidence) to MQTT + Home Assistant attributes.
+/// Background service that, each time a <see cref="Device"/> surfaces from the tracker pipeline:
+///   1. Fuses its scenarios (<see cref="ScenarioFusion.Update"/>), unless it is anchored.
+///   2. Builds one <see cref="DeviceReport"/> for it.
+///   3. Publishes the report (<see cref="IDeviceStatePublisher"/>).
+///   4. When the attributes went out: raises OnDeviceChanged and, for located devices, records history.
 /// </summary>
 public class MultiScenarioLocator(DeviceTracker dl,
                                    State state,
-                                   MqttCoordinator mqtt,
+                                   IDeviceStatePublisher publisher,
+                                   IDeviceHistoryWriter history,
                                    GlobalEventDispatcher globalEventDispatcher,
-                                   DeviceHistoryStore deviceHistory,
-                                   ILeaseService leaseService) : BackgroundService
+                                   ILeaseService leaseService,
+                                   ILogger<MultiScenarioLocator> logger) : BackgroundService
 {
     private const string LocatingLeaseName = "locating";
 
-    internal async Task ProcessDevice(Device device)
+    internal async Task ProcessDevice(Device device, CancellationToken ct = default)
     {
-        if (device.IsAnchored && device.Anchor is { } anchor)
+        var config = state.Config;
+        var now = DateTime.UtcNow;
+
+        Scenario? best = null;
+        bool locationChanged;
+        if (device.Anchor is { } anchor)
         {
-            device.LastCalculated = DateTime.UtcNow;
-            var anchorLocation = anchor.Location;
-
-            var gps = state?.Config?.Gps;
-            var (lat, lon) = gps?.Report == true ? gps.Add(anchorLocation.X, anchorLocation.Y) : (null, null);
-            var elevation = gps?.Report == true ? anchorLocation.Z + gps?.Elevation : null;
-
-            var stateChanged = device.ReportedState != "not_home";
-            if (stateChanged)
-            {
-                if (await mqtt.TryEnqueueAsync($"espresense/companion/{device.Id}", "not_home", retain: true))
-                    device.ReportedState = "not_home";
-            }
-
-            var locationChanged = device.ReportedLocation != anchorLocation;
-            device.ReportedLocation = anchorLocation;
+            device.LastCalculated = now;
             device.BestScenario = null;
-
-            // Force publication when device transitions to anchored state or location changes
-            if (locationChanged || stateChanged)
-            {
-                var payload = JsonConvert.SerializeObject(new
-                {
-                    source_type = "espresense",
-                    latitude = lat,
-                    longitude = lon,
-                    elevation,
-                    x = anchorLocation.X,
-                    y = anchorLocation.Y,
-                    z = anchorLocation.Z,
-                    confidence = 100,
-                    fixes = 0,
-                    best_scenario = "Anchored",
-                    last_seen = device.LastSeen
-                }, SerializerSettings.NullIgnore);
-
-                if (await mqtt.TryEnqueueAsync($"espresense/companion/{device.Id}/attributes", payload, retain: true))
-                    globalEventDispatcher.OnDeviceChanged(device, false);
-            }
-
-            return;
+            // Becoming anchored (best_scenario turns "Anchored") or moving the anchor changes what HA shows.
+            var reported = publisher.Reported(device);
+            locationChanged = reported.Location != anchor.Location || reported.BestScenario != DeviceReport.AnchoredScenario;
         }
-
-        // -----------------------------------------------------------------
-        // 1. Refresh all scenarios -------------------------------------------------
-        // -----------------------------------------------------------------
-        device.LastCalculated = DateTime.UtcNow;
-        var moved = device.Scenarios.AsParallel().Count(s => s.Locate());
-
-        // -----------------------------------------------------------------
-        // 1b. Cross-floor contrast, applied to EVERY scenario
-        // -----------------------------------------------------------------
-        // Each scenario is fitted from the nodes of one floor, so the readings from every other
-        // floor - 44 % of them on this installation - are discarded by all of them alike. Used as a
-        // contrast rather than as distances they say which storey the device is on: a ceiling
-        // attenuates, so nodes one floor away report longer than the geometry allows, and if a
-        // candidate floor is wrong that surplus shows up on the wrong side and the sign flips.
-        //
-        // ★ Applied here and not inside a locator. It was in NadarayaWatsonMultilateralizer first,
-        // which looked right until the live measurement on 2026-07-27: with four locators enabled,
-        // GetScenarios yields one scenario per locator AND per floor, so six were competing at that
-        // spot and only one carried the contrast. The device sat upstairs while a ground-floor
-        // scenario from another locator won with confidence 91, and tracking flipped between the two
-        // for minutes. Floor selection happens here, so the floor term belongs here.
-        var contrastWeight = state?.Config?.Locators?.FloorContrastWeight ?? 0;
-        if (contrastWeight > 0)
+        else
         {
-            var audible = device.Nodes.Values.Where(n => n.Current && n.Node is { HasLocation: true }).ToArray();
-            if (audible.Length > 0)
-                foreach (var scenario in device.Scenarios)
-                {
-                    if (scenario.Floor is not { } floor || scenario.Confidence is not { } confidence) continue;
-                    var adjusted = confidence + FloorContrast.Adjustment(
-                        scenario.Location, audible,
-                        n => n.Node!.Location, n => n.Distance,
-                        n => n.Node!.Floors?.Contains(floor) ?? false,
-                        contrastWeight);
-                    scenario.Confidence = (int)Math.Round(Math.Clamp(adjusted, 0, 100));
-                }
+            var fusion = ScenarioFusion.Update(device, config?.Filtering ?? new ConfigFiltering(), now, config?.Locators?.FloorContrastWeight ?? 0);
+            best = fusion.Best;
+            // A locator reporting a new position; the Kalman output drifts every pass, so it isn't compared.
+            locationChanged = fusion.Moved > 0;
         }
 
-        // -----------------------------------------------------------------
-        // 2. Feed Kalman with the scenario that has the highest raw Confidence
-        // -----------------------------------------------------------------
-        var kalmanSource = device.Scenarios
-            .Where(s => s.Current)
-            .OrderByDescending(s => s.Confidence)
-            .FirstOrDefault();
+        var report = DeviceReport.From(device, best, config?.Gps);
+        if (!await publisher.PublishAsync(device, report, locationChanged, ct)) return;
 
-        if (kalmanSource != null)
-        {
-            device.UpdateLocation(kalmanSource.Location);
-        }
-
-        // Predicted location from the updated Kalman filter (x̂ₖ|ₖ⁻¹)
-        var (predictedLocation, _) = device.KalmanFilter.GetPrediction();
-
-        // -----------------------------------------------------------------
-        // 3. Motion‑consistency weighting for every scenario -------------------
-        // -----------------------------------------------------------------
-        var filtering = state?.Config?.Filtering ?? new ConfigFiltering();
-        foreach (var scenario in device.Scenarios)
-        {
-            if (!scenario.Current)
-            {
-                scenario.WeightedConfidence = 0;
-                continue;
-            }
-
-            double delta = predictedLocation.DistanceTo(scenario.Location);
-            double mcw = Math.Exp(-(delta * delta) / (2 * filtering.MotionSigma * filtering.MotionSigma));
-            scenario.WeightedConfidence = (scenario.Confidence ?? 0) * mcw;
-        }
-
-        // -----------------------------------------------------------------
-        // 4. Inline probability smoothing (was UpdateScenarioProbabilities)
-        // -----------------------------------------------------------------
-        double totalWeightedConfidence = device.Scenarios.Sum(s => s.WeightedConfidence);
-
-        if (totalWeightedConfidence > 0)
-        {
-            var priorWeight = filtering.SmoothingWeight;
-            var newDataWeight = 1.0 - priorWeight;
-
-            foreach (var scenario in device.Scenarios)
-            {
-                double newProb = scenario.WeightedConfidence / totalWeightedConfidence;
-                scenario.Probability = priorWeight * scenario.Probability + newDataWeight * newProb;
-            }
-
-            // normalise
-            double sumProb = device.Scenarios.Sum(s => s.Probability);
-            if (sumProb > 0)
-            {
-                foreach (var scenario in device.Scenarios)
-                    scenario.Probability /= sumProb;
-            }
-        }
-
-        // -----------------------------------------------------------------
-        // 5. Choose scenario to *report* (was SelectBestScenario)
-        // -----------------------------------------------------------------
-        var bestScenario = device.Scenarios
-            .Where(s => s.Current)
-            .OrderByDescending(s => s.Probability)
-            .ThenByDescending(s => s.Confidence)
-            .ThenBy(s => device.Scenarios.IndexOf(s))
-            .FirstOrDefault();
-
-        device.BestScenario = bestScenario;
-
-        // -----------------------------------------------------------------
-        // 6. Publish state / attributes if anything moved ----------------------
-        // -----------------------------------------------------------------
-        if (bestScenario != null)
-        {
-            var newState = device.Room?.Name ?? device.Floor?.Name ?? "not_home";
-            if (newState != device.ReportedState)
-            {
-                if (await mqtt.TryEnqueueAsync($"espresense/companion/{device.Id}", newState, retain: true))
-                {
-                    moved += 1;
-                    device.ReportedState = newState;
-                }
-            }
-        }
-        else if (device.ReportedState != "not_home")
-        {
-            if (await mqtt.TryEnqueueAsync($"espresense/companion/{device.Id}", "not_home", retain: true))
-            {
-                moved += 1;
-                device.ReportedState = "not_home";
-            }
-        }
-
-        if (moved > 0 && bestScenario != null)
-        {
-            device.ReportedLocation = device.Location ?? new Point3D();
-
-            var gps = state?.Config?.Gps;
-            var location = device.Location ?? new Point3D();
-
-            // Only include GPS coordinates if reporting is enabled
-            var (lat, lon) = gps?.Report == true ? gps.Add(location.X, location.Y) : (null, null);
-            var elevation = gps?.Report == true ? location.Z + gps?.Elevation : null;
-
-            var payload = JsonConvert.SerializeObject(new
-            {
-                source_type = "espresense",
-                latitude = lat,
-                longitude = lon,
-                elevation = elevation,
-                x = location.X,
-                y = location.Y,
-                z = location.Z,
-                confidence = bestScenario.Confidence,
-                fixes = bestScenario.Fixes,
-                best_scenario = bestScenario.Name,
-                last_seen = device.LastSeen
-            }, SerializerSettings.NullIgnore);
-
-            if (!await mqtt.TryEnqueueAsync($"espresense/companion/{device.Id}/attributes", payload, retain: true))
-                return;
-
-            globalEventDispatcher.OnDeviceChanged(device, false);
-
-            // optional history
-            if (state?.Config?.History?.Enabled ?? false)
-            {
-                foreach (var ds in device.Scenarios.Where(ds => ds.Confidence != 0))
-                {
-                    await deviceHistory.Add(new DeviceHistory
-                    {
-                        Id = device.Id,
-                        When = DateTime.UtcNow,
-                        X = ds.Location.X,
-                        Y = ds.Location.Y,
-                        Z = ds.Location.Z,
-                        Confidence = ds.Confidence ?? 0,
-                        Fixes = ds.Fixes ?? 0,
-                        Scenario = ds.Name,
-                        Best = ds == bestScenario
-                    });
-                }
-            }
-        }
+        globalEventDispatcher.OnDeviceChanged(device, false);
+        if (!device.IsAnchored)
+            await history.RecordAsync(device, best, ct);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -281,31 +70,24 @@ public class MultiScenarioLocator(DeviceTracker dl,
 
                     if (lease == null)
                     {
-                        Log.Warning("Still waiting for lease '{LeaseName}'...", LocatingLeaseName);
+                        logger.LogWarning("Still waiting for lease '{LeaseName}'...", LocatingLeaseName);
                     }
                 }
 
                 if (lease == null) return;
 
-                var active = new List<string>();
-                if (state.Config?.Locators?.NadarayaWatson?.Enabled ?? false) active.Add("NadarayaWatson");
-                if (state.Config?.Locators?.NelderMead?.Enabled ?? false) active.Add("NelderMead");
-                if (state.Config?.Locators?.Bfgs?.Enabled ?? false) active.Add("Bfgs");
-                if (state.Config?.Locators?.Mle?.Enabled ?? false) active.Add("Mle");
-                if (state.Config?.Locators?.MultiFloor?.Enabled ?? false) active.Add("MultiFloor");
-                if (state.Config?.Locators?.NearestNode?.Enabled ?? false) active.Add("NearestNode");
-
+                var active = state.ScenarioFactory.Enabled(state.Config).Select(l => l.Name).ToList();
                 UpdateStatus(active.Count > 0 ? string.Join(", ", active) : "None");
 
                 await using (lease)
                 {
-                    Log.Information("Acquired lease '{LeaseName}'", LocatingLeaseName);
+                    logger.LogInformation("Acquired lease '{LeaseName}'", LocatingLeaseName);
+
                     await foreach (var device in dl.GetConsumingEnumerable(stoppingToken))
                     {
-                        if (!lease.HasLease())
-                            break;
+                        if (!lease.HasLease()) break;
 
-                        await ProcessDevice(device);
+                        await ProcessDevice(device, stoppingToken);
                     }
                 }
 
@@ -318,7 +100,7 @@ public class MultiScenarioLocator(DeviceTracker dl,
             catch (Exception ex)
             {
                 UpdateStatus("Error: " + ex.Message);
-                Log.Error(ex, "Error in MultiScenarioLocator");
+                logger.LogError(ex, "Error in MultiScenarioLocator");
                 await Task.Delay(5000, stoppingToken);
             }
         }

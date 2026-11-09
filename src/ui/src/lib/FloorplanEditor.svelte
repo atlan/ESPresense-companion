@@ -1,17 +1,17 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { getLayerCakeContext } from 'layercake';
 	import { zoomIdentity } from 'd3-zoom';
-	import { config, nodes } from '$lib/stores';
-	import { screenToMap } from '$lib/mapcoords';
-	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, pickingWalkPoint, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, boundsPoints } from '$lib/floorplanEdit';
-	import { gotoWalkSetup } from '$lib/urls';
-	import type { LayerCakeContext } from '$lib/types';
+	import { config, nodes } from '#lib/stores.js';
+	import { screenToMap } from '#lib/mapcoords.js';
+	import { editMode, selectedNodeId, nodeEdits, placingNode, pendingNode, pickingWalkPoint, selectedRoomId, roomEdits, draftRoom, traceImage, imageTool, scalePoints, boundsPoints } from '#lib/floorplanEdit.js';
+	import { gotoWalkSetup } from '#lib/urls.js';
+	import type { MapScales } from '#lib/types.js';
 
 	export let transform = zoomIdentity;
 	export let floorId: string | null = null;
 	export let svgEl: SVGElement | undefined = undefined;
 
-	const { xScale, yScale } = getContext<LayerCakeContext>('LayerCake');
+	const chart = getLayerCakeContext<MapScales>();
 
 	$: floor = $config?.floors.find((f) => f.id === floorId);
 	$: floorNodes = ($nodes ?? []).filter((n) => n.location && (!floorId || n.floors?.includes(floorId)));
@@ -32,7 +32,7 @@
 
 	function toMap(e: PointerEvent | MouseEvent): { x: number; y: number } | null {
 		if (!svgEl) return null;
-		return screenToMap(svgEl as SVGSVGElement, e.clientX, e.clientY, transform, $xScale, $yScale);
+		return screenToMap(svgEl as SVGSVGElement, e.clientX, e.clientY, transform, chart.xScale, chart.yScale);
 	}
 
 	// d3-zoom starts its pan gesture from mousedown/touchstart on the SVG - stopping only
@@ -170,7 +170,7 @@
 		return pts;
 	}
 
-	// Scales are passed IN so the template expression references $xScale/$yScale directly -
+	// Scales are passed IN so the template expression references chart.xScale/chart.yScale directly -
 	// reading them only inside the function body hides the dependency from Svelte's reactivity,
 	// and the path then doesn't re-render when the scales change on browser resize (the handles
 	// reference the scales inline and moved correctly, the outline didn't).
@@ -190,10 +190,10 @@
 {#if $editMode !== 'off'}
 	<g transform={transform.toString()}>
 		{#if $traceImage}
-			{@const ix0 = $xScale($traceImage.x)}
-			{@const ix1 = $xScale($traceImage.x + $traceImage.widthM)}
-			{@const iy0 = $yScale($traceImage.y)}
-			{@const iy1 = $yScale($traceImage.y + $traceImage.widthM * $traceImage.aspect)}
+			{@const ix0 = chart.xScale($traceImage.x)}
+			{@const ix1 = chart.xScale($traceImage.x + $traceImage.widthM)}
+			{@const iy0 = chart.yScale($traceImage.y)}
+			{@const iy1 = chart.yScale($traceImage.y + $traceImage.widthM * $traceImage.aspect)}
 			{@const icx = (ix0 + ix1) / 2}
 			{@const icy = (iy0 + iy1) / 2}
 			<!-- Tracing image in map coordinates (pans/zooms with the map). Both corners are
@@ -229,18 +229,18 @@
 
 		<!-- Image calibration markers: origin crosshair at (0,0) while aligning, scale points/line -->
 		{#if $traceImage && ($imageTool !== 'none' || $scalePoints.length > 0)}
-			<line x1={$xScale(0) - 12 / transform.k} y1={$yScale(0)} x2={$xScale(0) + 12 / transform.k} y2={$yScale(0)} stroke="#ef4444" stroke-width={1.5 / transform.k} />
-			<line x1={$xScale(0)} y1={$yScale(0) - 12 / transform.k} x2={$xScale(0)} y2={$yScale(0) + 12 / transform.k} stroke="#ef4444" stroke-width={1.5 / transform.k} />
+			<line x1={chart.xScale(0) - 12 / transform.k} y1={chart.yScale(0)} x2={chart.xScale(0) + 12 / transform.k} y2={chart.yScale(0)} stroke="#ef4444" stroke-width={1.5 / transform.k} />
+			<line x1={chart.xScale(0)} y1={chart.yScale(0) - 12 / transform.k} x2={chart.xScale(0)} y2={chart.yScale(0) + 12 / transform.k} stroke="#ef4444" stroke-width={1.5 / transform.k} />
 		{/if}
 		{#if $boundsPoints.length > 0}
 			{#each $boundsPoints as p, i (i)}
-				<circle cx={$xScale(p[0])} cy={$yScale(p[1])} r={5 / transform.k} fill="#22c55e" stroke="white" stroke-width={1 / transform.k} />
+				<circle cx={chart.xScale(p[0])} cy={chart.yScale(p[1])} r={5 / transform.k} fill="#22c55e" stroke="white" stroke-width={1 / transform.k} />
 			{/each}
 			{#if $boundsPoints.length === 2}
-				{@const bx0 = $xScale(Math.min($boundsPoints[0][0], $boundsPoints[1][0]))}
-				{@const bx1 = $xScale(Math.max($boundsPoints[0][0], $boundsPoints[1][0]))}
-				{@const by0 = $yScale(Math.min($boundsPoints[0][1], $boundsPoints[1][1]))}
-				{@const by1 = $yScale(Math.max($boundsPoints[0][1], $boundsPoints[1][1]))}
+				{@const bx0 = chart.xScale(Math.min($boundsPoints[0][0], $boundsPoints[1][0]))}
+				{@const bx1 = chart.xScale(Math.max($boundsPoints[0][0], $boundsPoints[1][0]))}
+				{@const by0 = chart.yScale(Math.min($boundsPoints[0][1], $boundsPoints[1][1]))}
+				{@const by1 = chart.yScale(Math.max($boundsPoints[0][1], $boundsPoints[1][1]))}
 				<rect
 					x={Math.min(bx0, bx1)}
 					y={Math.min(by0, by1)}
@@ -257,10 +257,10 @@
 		{/if}
 		{#if $scalePoints.length > 0}
 			{#each $scalePoints as p, i (i)}
-				<circle cx={$xScale(p[0])} cy={$yScale(p[1])} r={5 / transform.k} fill="#ef4444" stroke="white" stroke-width={1 / transform.k} />
+				<circle cx={chart.xScale(p[0])} cy={chart.yScale(p[1])} r={5 / transform.k} fill="#ef4444" stroke="white" stroke-width={1 / transform.k} />
 			{/each}
 			{#if $scalePoints.length === 2}
-				<line x1={$xScale($scalePoints[0][0])} y1={$yScale($scalePoints[0][1])} x2={$xScale($scalePoints[1][0])} y2={$yScale($scalePoints[1][1])} stroke="#ef4444" stroke-width={1.5 / transform.k} stroke-dasharray={`${5 / transform.k} ${3 / transform.k}`} />
+				<line x1={chart.xScale($scalePoints[0][0])} y1={chart.yScale($scalePoints[0][1])} x2={chart.xScale($scalePoints[1][0])} y2={chart.yScale($scalePoints[1][1])} stroke="#ef4444" stroke-width={1.5 / transform.k} stroke-dasharray={`${5 / transform.k} ${3 / transform.k}`} />
 			{/if}
 		{/if}
 
@@ -270,7 +270,7 @@
 				{@const pts = $roomEdits[room.id] ?? room.points}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<path
-					d={polyPath(pts, $xScale, $yScale)}
+					d={polyPath(pts, chart.xScale, chart.yScale)}
 					fill="transparent"
 					stroke={$selectedRoomId === room.id ? '#f59e0b' : 'transparent'}
 					stroke-width={2 / transform.k}
@@ -289,8 +289,8 @@
 					<!-- Edge midpoint: click to insert a vertex -->
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<circle
-						cx={$xScale((p[0] + next[0]) / 2)}
-						cy={$yScale((p[1] + next[1]) / 2)}
+						cx={chart.xScale((p[0] + next[0]) / 2)}
+						cy={chart.yScale((p[1] + next[1]) / 2)}
 						r={hrSmall}
 						fill="#94a3b8"
 						opacity="0.7"
@@ -305,8 +305,8 @@
 					<!-- Vertex handle: drag to move, double-click to delete -->
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<circle
-						cx={$xScale(p[0])}
-						cy={$yScale(p[1])}
+						cx={chart.xScale(p[0])}
+						cy={chart.yScale(p[1])}
 						r={hr}
 						fill="#f59e0b"
 						stroke="white"
@@ -323,7 +323,7 @@
 			<!-- Draft room in progress -->
 			{#if $draftRoom !== null && $draftRoom.length > 0}
 				<path
-					d={`M${$draftRoom.map((p) => [$xScale(p[0]), $yScale(p[1])]).join('L')}`}
+					d={`M${$draftRoom.map((p) => [chart.xScale(p[0]), chart.yScale(p[1])]).join('L')}`}
 					fill="none"
 					stroke="#22c55e"
 					stroke-width={2 / transform.k}
@@ -333,10 +333,10 @@
 					<!-- Implicit closing edge: Finish will close the outline here - shown fainter so
 					     it's obvious the polygon closes itself without re-clicking the start point. -->
 					<line
-						x1={$xScale($draftRoom[$draftRoom.length - 1][0])}
-						y1={$yScale($draftRoom[$draftRoom.length - 1][1])}
-						x2={$xScale($draftRoom[0][0])}
-						y2={$yScale($draftRoom[0][1])}
+						x1={chart.xScale($draftRoom[$draftRoom.length - 1][0])}
+						y1={chart.yScale($draftRoom[$draftRoom.length - 1][1])}
+						x2={chart.xScale($draftRoom[0][0])}
+						y2={chart.yScale($draftRoom[0][1])}
 						stroke="#22c55e"
 						stroke-opacity="0.35"
 						stroke-width={2 / transform.k}
@@ -344,7 +344,7 @@
 					/>
 				{/if}
 				{#each $draftRoom as p, i (i)}
-					<circle cx={$xScale(p[0])} cy={$yScale(p[1])} r={hrSmall} fill="#22c55e" />
+					<circle cx={chart.xScale(p[0])} cy={chart.yScale(p[1])} r={hrSmall} fill="#22c55e" />
 				{/each}
 			{/if}
 		{/if}
@@ -355,8 +355,8 @@
 				{@const dirty = !!$nodeEdits[n.id]}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<circle
-					cx={$xScale(pos.x)}
-					cy={$yScale(pos.y)}
+					cx={chart.xScale(pos.x)}
+					cy={chart.yScale(pos.y)}
 					r={hr}
 					fill={$selectedNodeId === n.id ? '#f59e0b' : dirty ? '#22c55e' : '#3b82f6'}
 					stroke="white"
@@ -367,8 +367,8 @@
 					ontouchstart={blockZoom}
 				/>
 				<text
-					x={$xScale(pos.x)}
-					y={$yScale(pos.y) - 10 / transform.k}
+					x={chart.xScale(pos.x)}
+					y={chart.yScale(pos.y) - 10 / transform.k}
 					text-anchor="middle"
 					fill="white"
 					font-size={10 / transform.k}
@@ -377,8 +377,8 @@
 			{/each}
 
 			{#if $pendingNode}
-				<circle cx={$xScale($pendingNode.x)} cy={$yScale($pendingNode.y)} r={hr} fill="#22c55e" stroke="white" stroke-width={1.5 / transform.k} />
-				<text x={$xScale($pendingNode.x)} y={$yScale($pendingNode.y) - 10 / transform.k} text-anchor="middle" fill="#22c55e" font-size={10 / transform.k} style="pointer-events: none;">new</text>
+				<circle cx={chart.xScale($pendingNode.x)} cy={chart.yScale($pendingNode.y)} r={hr} fill="#22c55e" stroke="white" stroke-width={1.5 / transform.k} />
+				<text x={chart.xScale($pendingNode.x)} y={chart.yScale($pendingNode.y) - 10 / transform.k} text-anchor="middle" fill="#22c55e" font-size={10 / transform.k} style="pointer-events: none;">new</text>
 			{/if}
 		{/if}
 	</g>

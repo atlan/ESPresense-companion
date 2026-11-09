@@ -5,7 +5,6 @@ using ESPresense.Weighting;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.Optimization;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 
 namespace ESPresense.Locators;
 
@@ -13,8 +12,11 @@ public class BfgsMultilateralizer : BaseMultilateralizer
 {
     private readonly IWeighting _weighting;
 
-    public BfgsMultilateralizer(Device device, Floor floor, State state)
-        : base(device, floor, state)
+    /// <summary>Replaces the configured weighting; tests use it to act between taking the readings and solving.</summary>
+    internal IWeighting Weighting { init => _weighting = value; }
+
+    public BfgsMultilateralizer(Device device, Floor floor, State state, ILogger? logger = null)
+        : base(device, floor, state, logger)
     {
         // Load weighting from BFGS config, defaulting to Gaussian if not specified
         _weighting = WeightingFactory.Create(state.Config?.Locators?.Bfgs?.Weighting);
@@ -29,6 +31,7 @@ public class BfgsMultilateralizer : BaseMultilateralizer
             return false;
 
         int confidence = scenario.Confidence ?? 0;
+        double[]? solvedWeights = null;
         try
         {
             if (nodes.Length < 3 || Floor.Bounds == null || Floor.Bounds.Length < 2)
@@ -46,10 +49,13 @@ public class BfgsMultilateralizer : BaseMultilateralizer
                 var lowerBound = Vector<double>.Build.DenseOfArray(new[] { Floor.Bounds[0].X, Floor.Bounds[0].Y, Floor.Bounds[0].Z });
                 var upperBound = Vector<double>.Build.DenseOfArray(new[] { Floor.Bounds[1].X, Floor.Bounds[1].Y, Floor.Bounds[1].Z });
                 var obj = ObjectiveFunction.Gradient(
-                    x => nodes
-                        .Select((dn, i) => new { err = Error(x, dn), weight = Weight(i, nodes.Length) })
-                        .Sum(a => a.weight * Math.Pow(a.err, 2)) / weightSum
-                    ,
+                    x =>
+                    {
+                        scenario.ThrowIfSuperseded();
+                        return nodes
+                            .Select((dn, i) => new { err = Error(x, dn), weight = Weight(i, nodes.Length) })
+                            .Sum(a => a.weight * Math.Pow(a.err, 2)) / weightSum;
+                    },
                     x =>
                     {
                         var current = new Point3D(x[0], x[1], x[2]);
@@ -82,6 +88,7 @@ public class BfgsMultilateralizer : BaseMultilateralizer
                 var solver = new BfgsBMinimizer(1e-5, 1e-5, 1e-5, 1000);
                 var result = solver.FindMinimum(obj, lowerBound, upperBound, initialGuess);
                 scenario.UpdateLocation(new Point3D(result.MinimizingPoint[0], result.MinimizingPoint[1], result.MinimizingPoint[2]));
+                solvedWeights = Enumerable.Range(0, nodes.Length).Select(i => Weight(i, nodes.Length)).ToArray();
                 scenario.Fixes = nodes.Length;
                 scenario.Error = result.FunctionInfoAtMinimum.Value;
                 scenario.Iterations = result switch
@@ -113,6 +120,6 @@ public class BfgsMultilateralizer : BaseMultilateralizer
             confidence = HandleLocatorException(ex, scenario, guess);
         }
 
-        return FinalizeScenario(scenario, confidence);
+        return FinalizeScenario(scenario, confidence, nodes, solvedWeights);
     }
 }

@@ -1,24 +1,24 @@
 <script lang="ts">
 	import { Progress as SkeletonProgress } from '@skeletonlabs/skeleton-svelte';
-	import { firmwareTypes, cpuNames, getFirmwareUrl, firmwareUpdate } from '$lib/firmware';
-	import type { Node } from '$lib/types';
-	import { getToastStore } from '$lib/toast/toastStore';
+	import { firmwareTypes, cpuNames, getFirmwareUrl, firmwareUpdate } from '#lib/firmware.js';
+	import type { Node } from '#lib/types.js';
+	import { getToastStore } from '#lib/toast/toastStore.js';
 
-	export let firmwareSource: string;
-	export let node: Node;
-	export let flavor: string;
-	export let cpu: string;
-	export let version: string;
-	export let artifact: string;
-	export let forkAsset: string = '';
-	export let parent: any;
-
-	enum Progress {
-		Form,
-		Updating,
-		Failed,
-		Success
+	interface Props {
+		firmwareSource: string;
+		node: Node;
+		flavor: string;
+		cpu: string;
+		version: string;
+		artifact: string;
+		forkAsset?: string;
+		parent: any;
 	}
+
+	let { firmwareSource, node, flavor = $bindable(), cpu = $bindable(), version, artifact, forkAsset = '', parent }: Props = $props();
+
+	// Not an enum: Vite 8 inlines enum members in the script and drops the declaration, leaving the markup's references undefined.
+	const Progress = { Form: 0, Updating: 1, Failed: 2, Success: 3 } as const;
 
 	const toastStore = getToastStore();
 
@@ -47,14 +47,13 @@
 		return str.replace(/\d+/g, '');
 	}
 
-	let progress: Progress = Progress.Form;
-	let percentComplete: number = 0;
-	let firmware: string;
-	let url: string;
-	let log: string[] = [];
+	let progress: number = $state(Progress.Form);
+	let percentComplete: number = $state(0);
+	let firmware: string = $state()!;
+	let url: string = $derived(getFirmwareUrl(firmwareSource, version, artifact, firmwareSource === 'fork' ? forkAsset : firmware) ?? '#ERR');
+	let log: string[] = $state([]);
 	let lastNonNumericLog: string | null = null;
-	let hasFlavorSelection: boolean;
-	$: url = getFirmwareUrl(firmwareSource, version, artifact, firmwareSource === 'fork' ? forkAsset : firmware) ?? '#ERR';
+	let hasFlavorSelection: boolean = $derived(flavor !== undefined && flavor !== null);
 
 	async function onFormSubmit(): Promise<void> {
 		if (!isValidForm) return;
@@ -84,13 +83,10 @@
 		}
 	}
 
-	$: selectedFlavor = $firmwareTypes?.flavors?.find((d) => d.value === flavor);
-	$: possibleFirmware = $firmwareTypes?.firmware?.filter((d) => d.cpu === cpu && d.flavor == flavor);
-	$: hasFlavorSelection = flavor !== undefined && flavor !== null;
-	$: isValidForm =
-		firmwareSource === 'fork'
-			? Boolean(forkAsset && url && url !== '#ERR')
-			: Boolean($firmwareTypes && hasFlavorSelection && cpu && firmware && url && url !== '#ERR');
+	let selectedFlavor = $derived($firmwareTypes?.flavors?.find((d) => d.value === flavor));
+	let possibleFirmware = $derived($firmwareTypes?.firmware?.filter((d) => d.cpu === cpu && d.flavor == flavor));
+
+	let isValidForm = $derived(firmwareSource === 'fork' ? Boolean(forkAsset && url && url !== '#ERR') : Boolean($firmwareTypes && hasFlavorSelection && cpu && firmware && url && url !== '#ERR'));
 
 	// Base Classes
 	const cBase = 'w-modal space-y-4';

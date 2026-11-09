@@ -42,7 +42,7 @@ public class CalibrationSweepService(
             return result;
         }
 
-        var snapshot = state.TakeOptimizationSnapshot();
+        var snapshot = state.ReadMeasures();
         if (snapshot.Measures.Count == 0)
         {
             result.Error = "No node-to-node measurements available right now. The nodes need to have " +
@@ -68,7 +68,6 @@ public class CalibrationSweepService(
             {
                 var optimizer = new PerNodeAbsorptionRxTx(state)
                 {
-                    ObjectiveOverride = candidate.Objective,
                     AbsorptionPenaltyOverride = candidate.AbsorptionPenalty,
                     AbsorptionMinOverride = candidate.AbsorptionMin,
                     AbsorptionMaxOverride = candidate.AbsorptionMax,
@@ -177,24 +176,20 @@ public class CalibrationSweepService(
     }
 
     /// <summary>
-    /// The grid that answers the questions actually open on this fork: does a dB residual with
-    /// robust weighting beat squared metres with a one-sided 4th power, does the regularization earn
+    /// The grid that answers the questions actually open on this fork: does the regularization earn
     /// its keep, and do the limits still bind once the target no longer sits between them.
     /// </summary>
     private static List<SweepCandidate> DefaultCandidates(ConfigOptimization o) =>
     [
-        new() { Label = "as configured", Objective = "distance", AbsorptionPenalty = o.AbsorptionPenaltyWeight },
-        new() { Label = "distance, no regularization", Objective = "distance", AbsorptionPenalty = 0 },
-        new() { Label = "dB + Huber", Objective = "db", AbsorptionPenalty = o.AbsorptionPenaltyWeight },
-        new() { Label = "dB + Huber, no regularization", Objective = "db", AbsorptionPenalty = 0 },
-        new() { Label = "dB + Huber, wider limits", Objective = "db", AbsorptionPenalty = o.AbsorptionPenaltyWeight, AbsorptionMin = 1.5, AbsorptionMax = 6.5 },
-        new() { Label = "dB + Huber, wider limits, no regularization", Objective = "db", AbsorptionPenalty = 0, AbsorptionMin = 1.5, AbsorptionMax = 6.5 }
+        new() { Label = "as configured", AbsorptionPenalty = o.AbsorptionPenaltyWeight },
+        new() { Label = "no regularization", AbsorptionPenalty = 0 },
+        new() { Label = "wider limits", AbsorptionPenalty = o.AbsorptionPenaltyWeight, AbsorptionMin = 1.5, AbsorptionMax = 6.5 },
+        new() { Label = "wider limits, no regularization", AbsorptionPenalty = 0, AbsorptionMin = 1.5, AbsorptionMax = 6.5 }
     ];
 
     private static SweepRun Summarize(BenchmarkResult r, string label, SweepCandidate? candidate) => new()
     {
         Label = label,
-        Objective = candidate?.Objective,
         AbsorptionPenalty = candidate?.AbsorptionPenalty,
         AbsorptionMin = candidate?.AbsorptionMin,
         AbsorptionMax = candidate?.AbsorptionMax,
@@ -218,7 +213,6 @@ public class SweepRequest
 public class SweepCandidate
 {
     public string Label { get; set; } = "";
-    public string? Objective { get; set; }
     public double? AbsorptionPenalty { get; set; }
     public double? AbsorptionTarget { get; set; }
     public double? AbsorptionMin { get; set; }
@@ -244,7 +238,6 @@ public class SweepResult
 public class SweepRun
 {
     public string Label { get; set; } = "";
-    public string? Objective { get; set; }
     public double? AbsorptionPenalty { get; set; }
     public double? AbsorptionMin { get; set; }
     public double? AbsorptionMax { get; set; }

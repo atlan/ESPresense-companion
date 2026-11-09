@@ -1,18 +1,19 @@
 <script lang="ts">
-	import DevicesTable from '$lib/DevicesTable.svelte';
-	import DeviceConfigLists from '$lib/DeviceConfigLists.svelte';
-	import SlideToggle from '$lib/SlideToggle.svelte';
-	import { gotoDetail } from '$lib/urls';
-	import { showAll, wsManager } from '$lib/stores';
+	import DevicesTable from '#lib/DevicesTable.svelte';
+	import DeviceConfigLists from '#lib/DeviceConfigLists.svelte';
+	import SlideToggle from '#lib/SlideToggle.svelte';
+	import { gotoDetail } from '#lib/urls.js';
+	import { showAll, wsManager } from '#lib/stores.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
+	import { apiUrl } from '#lib/api.js';
 
-	let locatingStatus = 'Starting';
+	let locatingStatus = $state('Starting');
 
 	onMount(() => {
 		(async () => {
 			try {
-				const res = await fetch('/api/state/locator');
+				const res = await fetch(apiUrl('/api/state/locator'));
 				if (res.ok) {
 					const health = await res.json();
 					locatingStatus = health.status;

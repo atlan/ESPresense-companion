@@ -4,13 +4,15 @@ using ESPresense.Utils;
 using ESPresense.Extensions;
 using ESPresense.Models;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 using ESPresense.Services;
 
 namespace ESPresense.Locators;
 
-public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State state, NodeTelemetryStore nts) : ILocate
+/// <param name="logger">Null discards; <see cref="ESPresense.Models.ScenarioFactory"/> passes one from the host.</param>
+public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State state, NodeTelemetryStore nts, ILogger<NadarayaWatsonMultilateralizer>? logger = null) : ILocate
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<NadarayaWatsonMultilateralizer>.Instance;
+
     /// <summary>
     /// Bandwidth/kernel override for replays that need to score candidate values. Null means "take the
     /// configured value", which is what the live path always does. Exists so the wizard can vary these
@@ -40,6 +42,14 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
     public static (Point3D est, double weightedError) Estimate(
         IReadOnlyList<(Point3D loc, double dist)> heard, double bandwidth, string? kernel)
     {
+        var (est, weightedError, _) = EstimateWithWeights(heard, bandwidth, kernel);
+        return (est, weightedError);
+    }
+
+    /// <summary><see cref="Estimate"/>, also returning each node's weight for the position's explanation.</summary>
+    public static (Point3D est, double weightedError, double[] weights) EstimateWithWeights(
+        IReadOnlyList<(Point3D loc, double dist)> heard, double bandwidth, string? kernel)
+    {
         const double EPS = 1e-6;
         var weights = kernel == "gaussian"
             ? heard.Select(n => Math.Exp(-Math.Pow(n.dist, 2) / (2 * Math.Pow(Math.Max(bandwidth, EPS), 2)))).ToArray()
@@ -60,14 +70,14 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             return w * diff * diff;
         }).Sum() / wSum;
 
-        return (est, weightedError);
+        return (est, weightedError, weights);
     }
 
     public bool Locate(Scenario scenario)
     {
         var nwCfg = state.Config?.Locators?.NadarayaWatson;
-        var heard = device.Nodes.Values
-            .Where(n => n.Current && (n.Node?.Floors?.Contains(floor) ?? false))
+        var heard = device.CurrentReadings()
+            .Where(n => n.Node?.Floors?.Contains(floor) ?? false)
             .OrderBy(n => n.Distance)
             .ToArray();
 
@@ -91,6 +101,7 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             scenario.Confidence = 0;
             scenario.Room = null;
             scenario.Error = null;
+            scenario.Trace = LocatorTrace.NoFix(floor, heard);
             return false;
         }
 
@@ -101,6 +112,7 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
 
         Point3D est;
         double weightedError = 0;
+        double[]? solvedWeights = null;
 
         try
         {
@@ -119,7 +131,7 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             }
             else
             {
-                (est, weightedError) = Estimate(
+                (est, weightedError, solvedWeights) = EstimateWithWeights(
                     heard.Select(n => (n.Node!.Location, n.Distance)).ToList(),
                     BandwidthOverride ?? nwCfg?.Bandwidth ?? 0.5,
                     KernelOverride ?? nwCfg?.Kernel);
@@ -159,8 +171,10 @@ public class NadarayaWatsonMultilateralizer(Device device, Floor floor, State st
             scenario.UpdateLocation(scenario.Location); // revert to last good
             scenario.Confidence = 0;
             scenario.Error = null;
-            Log.Error("Locator error for {Device}: {Message}", device, ex.Message);
+            _logger.LogError("Locator error for {Device}: {Message}", device, ex.Message);
         }
+
+        scenario.Trace = LocatorTrace.Finished(floor, heard, solvedWeights, scenario.Fit);
 
         if (scenario.Confidence <= 0) return false;
         if (scenario.Location.DistanceTo(scenario.LastLocation) < 0.1) return false;

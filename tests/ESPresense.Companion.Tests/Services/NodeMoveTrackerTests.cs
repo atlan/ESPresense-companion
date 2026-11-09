@@ -27,6 +27,7 @@ public class NodeMoveTrackerTests
         Directory.CreateDirectory(_dir);
         await File.WriteAllTextAsync(Path.Combine(_dir, "config.yaml"), "mqtt:\n  host: localhost\n");
         _configLoader = new ConfigLoader(_dir);
+        await _configLoader.LoadAsync();
         await _configLoader.ConfigAsync();
         _state = new State(_configLoader, new NodeTelemetryStore(new Mock<IMqttCoordinator>().Object));
         // The store only fills from retained MQTT settings, never from its own Set() - so a test

@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { isEditableTarget } from './dom';
 	import { LayerCake, Svg } from 'layercake';
-	import { config } from '$lib/stores';
+	import { config } from '#lib/stores.js';
 	import { scaleOrdinal, schemeCategory10 } from 'd3';
-	import { select } from 'd3-selection';
+	import { pointer, select } from 'd3-selection';
 	import { zoom, zoomIdentity } from 'd3-zoom';
 	import { setContext } from 'svelte';
-	import type { Device, Node } from '$lib/types';
+	import type { Device, DeviceExplanation, Node } from '#lib/types.js';
 
 	import Rooms from './Rooms.svelte';
 	import Devices from './Devices.svelte';
@@ -14,29 +15,37 @@
 	import AxisY from './AxisY.svelte';
 	import MapCoordinates from './MapCoordinates.svelte';
 	import CalibrationSpot from './CalibrationSpot.svelte';
+	import FixEllipse from './FixEllipse.svelte';
+	import NodePairs from './NodePairs.svelte';
 	import FloorplanEditor from './FloorplanEditor.svelte';
 	import FloorplanEditorPanel from './FloorplanEditorPanel.svelte';
-	import { editMode } from '$lib/floorplanEdit';
+	import { editMode } from '#lib/floorplanEdit.js';
+	import type { LinkDirection } from './nodeLinks';
 
-	let svg: SVGElement;
-	let transform = zoomIdentity;
+	let svg: SVGElement | undefined = $state();
+	let transform = $state(zoomIdentity);
 
-	export let floorId: string | null = null;
-	export let deviceId: string | null = null;
-	export let nodeId: string | null = null;
-	export let exclusive: boolean = false;
-	export let calibrate: boolean = false;
-	export let calibrationSpot: { x: number; y: number } | null = null;
-	/** Darf der Marker gezogen werden? Auf der Kartenseite nein - dort zeigt er nur eine Stelle. */
-	export let calibrationSpotInteractive: boolean = true;
-	// Durchgereicht bis zum Marker: Klick auf die Markierung (siehe CalibrationSpot).
-	export let onCalibrationSpotClick: (() => void) | null = null;
-	export let editable: boolean = false;
-	export let onselected: ((item: Device | Node) => void) | undefined = undefined;
+	interface Props {
+		floorId?: string | null;
+		deviceId?: string | null;
+		nodeId?: string | null;
+		explanation?: DeviceExplanation | null;
+		exclusive?: boolean;
+		/** For maps embedded in a scrolling page: plain scroll scrolls the page; pinch or Ctrl+scroll zooms. */
+		embedded?: boolean;
+		calibrationSpot?: { x: number; y: number } | null;
+		/** Draw node-to-node links coloured by measured vs real distance; hovering a node isolates its links. */
+		links?: { nearest: number | null; direction: LinkDirection } | null;
+		/** Darf der Marker gezogen werden? Auf der Kartenseite nein - dort zeigt er nur eine Stelle. */
+		calibrationSpotInteractive?: boolean;
+		// Durchgereicht bis zum Marker: Klick auf die Markierung (siehe CalibrationSpot).
+		onCalibrationSpotClick?: (() => void) | null;
+		/** Grundriss-Editor (Raeume/Knoten verschieben) einblenden. */
+		editable?: boolean;
+		onselected?: ((item: Device | Node) => void) | undefined;
+	}
 
-	$: floor = $config?.floors.find((f) => f.id === floorId) ?? $config?.floors.find((f) => f != null);
-	$: bounds = floor?.bounds;
-	$: squareBounds = bounds ? makeSquareBounds(bounds) : undefined;
+	let { floorId = $bindable(null), deviceId = $bindable(null), nodeId = $bindable(null), explanation = null, exclusive = false, embedded = false, calibrationSpot = $bindable(null), links = null, calibrationSpotInteractive = true, onCalibrationSpotClick = null, editable = false, onselected = undefined }: Props = $props();
 
 	function makeSquareBounds(bounds: number[][]): number[][] {
 		const maxDim = Math.max(bounds[1][0], bounds[1][1]);
@@ -46,19 +55,21 @@
 		];
 	}
 
-	// Explicit <SVGElement, unknown> - without it, zoom() defaults its first
-	// type param to the base `Element`, which no longer lines up with
-	// select(svg)'s Selection<SVGElement, ...> now that `svg` itself is
-	// correctly typed as SVGElement (see the `let svg` declaration above).
 	const handler = zoom<SVGElement, unknown>()
 		.scaleExtent([0.5, 40])
+		// Shift+drag is box zoom (handled below), so it must not also start a pan.
+		.filter((event) => {
+			// Embedded: plain scroll belongs to the page, so d3-zoom must not see it at all (a zero delta
+			// still calls preventDefault while a pinch gesture is winding down).
+			if (event.type === 'wheel' && embedded && !event.ctrlKey) return false;
+			return !(event.shiftKey && event.type === 'mousedown') && (!event.ctrlKey || event.type === 'wheel') && !event.button;
+		})
 		.wheelDelta((event) => {
-			// Only zoom if shift key is pressed
-			if (event.shiftKey) {
-				return -(event.deltaY + event.deltaX * 0.25) * 0.002;
-			}
-			// Return 0 to prevent zooming when shift key is not pressed
-			return 0;
+			// Like Google Maps: scroll and pinch both zoom at the cursor. Trackpad pinch arrives as a
+			// ctrlKey wheel event with small deltas, so it gets a larger multiplier (and handling it
+			// here stops the browser from zooming the whole page).
+			const unit = event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002;
+			return -event.deltaY * unit * (event.ctrlKey ? 5 : 1);
 		})
 		.on('zoom', (e) => {
 			transform = e.transform;
@@ -83,6 +94,7 @@
 	}
 
 	function handleKeyboard(event: KeyboardEvent) {
+		if (isEditableTarget(event.target)) return;
 		const zoomFactor = event.shiftKey ? 1.005 : 1.1;
 		const translateAmount = event.shiftKey ? 1 : 50;
 		let newTransform = transform;
@@ -120,24 +132,20 @@
 				break;
 		}
 
-		if (newTransform !== transform) {
+		if (svg && newTransform !== transform) {
 			select(svg).call(handler.transform, newTransform);
 		}
 	}
 
 	setContext('colors', scaleOrdinal(schemeCategory10));
 
-	// On-screen zoom controls - wheel zoom needs Shift held and is easy to miss.
+	// On-screen zoom controls, for when no wheel, pinch or keyboard is at hand.
 	function zoomBy(factor: number) {
 		if (svg) select(svg).transition().duration(150).call(handler.scaleBy, factor);
 	}
 
 	function zoomReset() {
 		if (svg) select(svg).transition().duration(150).call(handler.transform, zoomIdentity);
-	}
-
-	$: {
-		if (svg) select(svg).call(handler);
 	}
 
 	function getXRange({ height, width }: { height: number; width: number }) {
@@ -151,6 +159,82 @@
 		const max = Math.min(height, width);
 		return $config?.map?.flipY ? [max, min] : [min, max];
 	}
+	let floor = $derived($config?.floors.find((f) => f.id === floorId) ?? $config?.floors.find((f) => f != null));
+	let bounds = $derived(floor?.bounds);
+	let squareBounds = $derived(bounds ? makeSquareBounds(bounds) : undefined);
+	$effect(() => {
+		const el = svg;
+		if (!el) return;
+		select(el).call(handler);
+
+		// d3-zoom skips preventDefault when a new wheel gesture can't change the scale (at the zoom limits),
+		// which would let a pinch zoom the whole browser page instead.
+		const claimPinch = (event: WheelEvent) => {
+			if (event.ctrlKey) event.preventDefault();
+		};
+		el.addEventListener('wheel', claimPinch, { passive: false });
+		return () => el.removeEventListener('wheel', claimPinch);
+	});
+
+	// Shift+drag draws a box and zooms to it, like Google Maps.
+	$effect(() => {
+		const el = svg;
+		if (!el) return;
+
+		let start: [number, number] | null = null;
+		let box: ReturnType<typeof select<SVGRectElement, unknown>> | null = null;
+
+		const onDown = (event: MouseEvent) => {
+			if (!event.shiftKey || event.button !== 0) return;
+			event.preventDefault();
+			start = pointer(event, el);
+			box = select(el).append('rect').attr('fill', 'rgba(59,130,246,0.15)').attr('stroke', 'rgb(59,130,246)').attr('stroke-dasharray', '4 2').attr('pointer-events', 'none').attr('width', 0).attr('height', 0);
+			window.addEventListener('mousemove', onMove);
+			window.addEventListener('mouseup', onUp);
+		};
+
+		const onMove = (event: MouseEvent) => {
+			if (!start || !box) return;
+			const [x, y] = pointer(event, el);
+			box
+				.attr('x', Math.min(start[0], x))
+				.attr('y', Math.min(start[1], y))
+				.attr('width', Math.abs(x - start[0]))
+				.attr('height', Math.abs(y - start[1]));
+		};
+
+		const onUp = (event: MouseEvent) => {
+			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('mouseup', onUp);
+			box?.remove();
+			box = null;
+			if (!start) return;
+			const [x, y] = pointer(event, el);
+			const [x0, y0] = start;
+			start = null;
+			const bw = Math.abs(x - x0);
+			const bh = Math.abs(y - y0);
+			if (bw < 5 || bh < 5) return; // a shift-click, not a drag
+
+			// LayerCake sizes the <svg> to the padded area, so pointer coordinates are already layer coordinates.
+			const { width, height } = el.getBoundingClientRect();
+			const k = Math.min(40, Math.max(0.5, transform.k * Math.min(width / bw, height / bh)));
+			const [cx, cy] = transform.invert([(x + x0) / 2, (y + y0) / 2]);
+			const target = zoomIdentity
+				.translate(width / 2, height / 2)
+				.scale(k)
+				.translate(-cx, -cy);
+			select(el).call(handler.transform, target);
+		};
+
+		el.addEventListener('mousedown', onDown);
+		return () => {
+			el.removeEventListener('mousedown', onDown);
+			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('mouseup', onUp);
+			box?.remove();
+		};
+	});
 </script>
 
 <svelte:window onkeydown={handleKeyboard} />
@@ -172,11 +256,19 @@
 				<AxisX {transform} />
 				<AxisY {transform} />
 				<Rooms {transform} {floorId} />
+				{#if nodeId && exclusive}
+					<NodePairs {transform} {nodeId} {floorId} />
+				{:else if links}
+					<NodePairs {transform} {nodeId} {floorId} nearest={links.nearest} direction={links.direction} />
+				{/if}
 				{#if !editable || $editMode !== 'nodes'}
-					<Nodes {transform} {floorId} {deviceId} {nodeId} onselected={selectedNode} onhovered={hoveredNode} />
+					<Nodes {transform} {floorId} {deviceId} {nodeId} {explanation} onselected={selectedNode} onhovered={hoveredNode} />
+				{/if}
+				{#if explanation?.uncertainty}
+					<FixEllipse {transform} ellipse={explanation.uncertainty} />
 				{/if}
 				<Devices {transform} {floorId} {deviceId} {exclusive} onselected={selectedDevice} onhovered={hoveredDevice} />
-				{#if calibrate && calibrationSpot}
+				{#if calibrationSpot}
 					<CalibrationSpot {transform} {bounds} bind:position={calibrationSpot} interactive={calibrationSpotInteractive} onclick={onCalibrationSpotClick} />
 				{/if}
 				{#if editable}

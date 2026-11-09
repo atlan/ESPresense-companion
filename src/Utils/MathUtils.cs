@@ -26,11 +26,13 @@ namespace ESPresense.Utils
         /// </summary>
         /// <param name="x">The first list of values.</param>
         /// <param name="y">The second list of values.</param>
-        /// <returns>The Pearson correlation coefficient, or 0 if calculation is not possible.</returns>
+        /// <returns>The Pearson correlation coefficient, or 0 when it is undefined (fewer than two pairs, zero variance, or non-finite input).</returns>
         public static double CalculatePearsonCorrelation(List<double> x, List<double> y)
         {
+            // Single sentinel: every "undefined" case returns 0, never NaN, so callers can feed the
+            // result straight into CalculateConfidence / composite scores without NaN checks.
             if (x == null || y == null || x.Count != y.Count || x.Count < 2)
-                return double.NaN;
+                return 0;
 
             double sumX = 0;
             double sumY = 0;
@@ -51,8 +53,12 @@ namespace ESPresense.Utils
             double numerator = n * sumXY - sumX * sumY;
             double denominator = Math.Sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
 
-            // Avoid division by zero if variance is zero
-            return (denominator != 0) ? numerator / denominator : 0;
+            // Zero variance (denominator 0), or a NaN from non-finite / rounding-degenerate input,
+            // leaves the coefficient undefined: return the 0 sentinel rather than dividing.
+            if (!(denominator > 0) || double.IsNaN(numerator))
+                return 0;
+
+            return numerator / denominator;
         }
 
         /// <summary>
@@ -74,13 +80,18 @@ namespace ESPresense.Utils
             // Calculate coverage component (0-50 points)
             double coveragePart = 50.0 * nodeCount / possibleNodeCount;
 
-            // Calculate error score (0-1 range, 1 is best)
-            double errScore = error.HasValue
+            // Calculate error score (0-1 range, 1 is best).
+            // A NaN or infinite error is treated as the worst case (0): Math.Clamp(NaN, ..) is NaN and
+            // (int)Math.Round(NaN) is unspecified, so it must not reach the final rounding.
+            double errScore = error.HasValue && double.IsFinite(error.Value)
                 ? Math.Clamp(1.0 - (error.Value / MaxErr), 0.0, 1.0)
                 : 0.0;
 
-            // Calculate correlation score (0-1 range, 1 is best)
-            double rScore = Math.Max(0.0, pearsonCorrelation ?? 0.0);
+            // Calculate correlation score (0-1 range, 1 is best).
+            // A NaN or infinite correlation is treated as 0; note Math.Max(0.0, NaN) is NaN.
+            double rScore = pearsonCorrelation.HasValue && double.IsFinite(pearsonCorrelation.Value)
+                ? Math.Clamp(pearsonCorrelation.Value, 0.0, 1.0)
+                : 0.0;
 
             // Calculate quality component (0-50 points)
             double qualityPart = 50.0 * (AlphaErr * errScore + BetaR * rScore);
@@ -91,128 +102,5 @@ namespace ESPresense.Utils
             // Ensure confidence is within the defined floor and ceiling (100)
             return Math.Clamp(confidence, ConfidenceFloor, 100);
         }
-
-        /// <summary>
-        /// Applies weighted isotonic regression using the pool-adjacent-violators algorithm.
-        /// </summary>
-        public static double[] IsotonicRegression(IReadOnlyList<double> x, IReadOnlyList<double> y, IReadOnlyList<double>? weights = null, bool increasing = true)
-        {
-            if (x == null) throw new ArgumentNullException(nameof(x));
-            if (y == null) throw new ArgumentNullException(nameof(y));
-            if (x.Count != y.Count) throw new ArgumentException("Input arrays must have the same length.");
-            if (weights != null && weights.Count != x.Count) throw new ArgumentException("Weights must match input length.");
-
-            int n = x.Count;
-            if (n == 0) return Array.Empty<double>();
-
-            var order = Enumerable.Range(0, n).OrderBy(i => x[i]).ToArray();
-            var sortedY = new double[n];
-            var sortedWeights = new double[n];
-
-            for (int idx = 0; idx < n; idx++)
-            {
-                int originalIndex = order[idx];
-                sortedY[idx] = y[originalIndex];
-                double weight = weights == null ? 1.0 : weights[originalIndex];
-                sortedWeights[idx] = weight <= 0 ? 1e-9 : weight;
-            }
-
-            if (!increasing)
-            {
-                for (int i = 0; i < n; i++)
-                    sortedY[i] = -sortedY[i];
-            }
-
-            var fittedSorted = FitIncreasing(sortedY, sortedWeights);
-
-            if (!increasing)
-            {
-                for (int i = 0; i < fittedSorted.Length; i++)
-                    fittedSorted[i] = -fittedSorted[i];
-            }
-
-            var result = new double[n];
-            for (int idx = 0; idx < n; idx++)
-            {
-                result[order[idx]] = fittedSorted[idx];
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Computes weighted linear regression parameters. Returns null when insufficient data or variance.
-        /// </summary>
-        public static (double Slope, double Intercept)? WeightedLinearRegression(IReadOnlyList<double> x, IReadOnlyList<double> y, IReadOnlyList<double>? weights = null)
-        {
-            if (x == null) throw new ArgumentNullException(nameof(x));
-            if (y == null) throw new ArgumentNullException(nameof(y));
-            if (x.Count != y.Count) throw new ArgumentException("Input arrays must have the same length.");
-            if (weights != null && weights.Count != x.Count) throw new ArgumentException("Weights must match input length.");
-
-            int n = x.Count;
-            if (n < 2) return null;
-
-            double sw = 0;
-            double sx = 0;
-            double sy = 0;
-            double sxx = 0;
-            double sxy = 0;
-
-            for (int i = 0; i < n; i++)
-            {
-                double weight = weights == null ? 1.0 : Math.Max(weights[i], 0);
-                if (weight == 0) continue;
-
-                double xi = x[i];
-                double yi = y[i];
-                sw += weight;
-                sx += weight * xi;
-                sy += weight * yi;
-                sxx += weight * xi * xi;
-                sxy += weight * xi * yi;
-            }
-
-            if (sw == 0) return null;
-            double denominator = sw * sxx - sx * sx;
-            if (Math.Abs(denominator) < 1e-9) return null;
-
-            double slope = (sw * sxy - sx * sy) / denominator;
-            double intercept = (sy - slope * sx) / sw;
-            return (slope, intercept);
-        }
-
-        private static double[] FitIncreasing(IReadOnlyList<double> values, IReadOnlyList<double> weights)
-        {
-            var blocks = new List<Block>();
-            for (int i = 0; i < values.Count; i++)
-            {
-                var block = new Block(i, i, Math.Max(weights[i], 1e-9), values[i]);
-                blocks.Add(block);
-
-                while (blocks.Count >= 2 && blocks[^2].Value > blocks[^1].Value)
-                {
-                    var right = blocks[^1];
-                    var left = blocks[^2];
-                    double totalWeight = left.Weight + right.Weight;
-                    double mergedValue = (left.Value * left.Weight + right.Value * right.Weight) / totalWeight;
-                    blocks[^2] = new Block(left.Start, right.End, totalWeight, mergedValue);
-                    blocks.RemoveAt(blocks.Count - 1);
-                }
-            }
-
-            var fitted = new double[values.Count];
-            foreach (var block in blocks)
-            {
-                for (int i = block.Start; i <= block.End; i++)
-                {
-                    fitted[i] = block.Value;
-                }
-            }
-
-            return fitted;
-        }
-
-        private readonly record struct Block(int Start, int End, double Weight, double Value);
     }
 }
