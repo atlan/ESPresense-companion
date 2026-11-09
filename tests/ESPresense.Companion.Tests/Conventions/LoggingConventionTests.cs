@@ -17,20 +17,10 @@ public class LoggingConventionTests
 
     private static readonly string[] Bootstrap = { "Program.cs" };
 
-    // Fork-only services (wizard, walk test, benchmark). They log through the static logger, which UseSerilog keeps
-    // pointed at the configured pipeline; injecting ILogger<T> into them is a separate refactor.
-    private static readonly string[] ForkStaticLogUsers =
-    {
-        "Controllers/FloorplanController.cs", "Controllers/WizardController.cs", "Optimizers/WalkPointAbsorptionOptimizer.cs",
-        "Services/AutoApply.cs", "Services/AutoTuneService.cs", "Services/CalibrationBenchmark.cs", "Services/CalibrationSweepService.cs",
-        "Services/DeviceSetupService.cs", "Services/LocatorSweepService.cs", "Services/LocatorTuneService.cs", "Services/NodeMoveTracker.cs",
-        "Services/PairErrorTracker.cs", "Services/WalkPointHygiene.cs", "Services/WalkTestService.cs",
-    };
-
     [Test]
     public void StaticSerilogLog_IsOnlyUsedByBootstrap()
     {
-        var allowed = new HashSet<string>(Bootstrap.Concat(ForkStaticLogUsers), StringComparer.Ordinal);
+        var allowed = new HashSet<string>(Bootstrap, StringComparer.Ordinal);
         var offenders = SourceScan.FilesMatching(StaticSerilog).Where(f => !allowed.Contains(f)).ToList();
 
         Assert.That(offenders, Is.Empty,

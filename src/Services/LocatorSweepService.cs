@@ -2,7 +2,6 @@ using ESPresense.Locators;
 using ESPresense.Utils;
 using ESPresense.Models;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -25,8 +24,10 @@ namespace ESPresense.Services;
 /// locator classes, and lets them compete exactly as they do live. Slower, and the only way the
 /// answer means anything.
 /// </summary>
-public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLoader configLoader, ScenarioReplay replay)
+public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLoader configLoader, ScenarioReplay replay, ILogger<LocatorSweepService>? logger = null)
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<LocatorSweepService>.Instance;
+
     // Schwellen und Szenarien-Wettbewerb kommen aus ScenarioReplay - genau derselbe Massstab,
     // den Benchmark und Locator-Tuning benutzen.
     private const int MinNodesPerTick = ScenarioReplay.MinNodesPerTick;
@@ -59,7 +60,7 @@ public class LocatorSweepService(State state, WalkTestService walkTest, ConfigLo
             try { result.Runs.Add(Score(candidate, points, floors, contrastWeight)); }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Locator sweep candidate {Label} failed", candidate.Label);
+                _logger.LogWarning(ex, "Locator sweep candidate {Label} failed", candidate.Label);
                 result.Runs.Add(new LocatorSweepRun { Label = candidate.Label, Error = ex.Message });
             }
         }

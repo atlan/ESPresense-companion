@@ -1,6 +1,5 @@
 using ESPresense.Models;
 using ESPresense.Optimizers;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -16,8 +15,10 @@ namespace ESPresense.Services;
 /// Only evaluates the CALIBRATION FIT parameters. Locator-side settings (e.g. nadaraya_watson
 /// bandwidth) affect live positioning, not the fit, and cannot be scored offline against snapshots.
 /// </summary>
-public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService walkTest, ConfigLoader configLoader, OptimizationSnapshotStore snapshotStore)
+public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService walkTest, ConfigLoader configLoader, OptimizationSnapshotStore snapshotStore, ILogger<AutoTuneService>? logger = null)
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AutoTuneService>.Instance;
+
     public class Candidate
     {
         public string Key { get; set; } = "";
@@ -339,11 +340,11 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
             }
 
             Finish(recommendation: recommendation);
-            Log.Information("Auto-tune finished: {Count} candidates, best={Best}", results.Count, best?.Candidate.Label);
+            _logger.LogInformation("Auto-tune finished: {Count} candidates, best={Best}", results.Count, best?.Candidate.Label);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Auto-tune run failed");
+            _logger.LogError(ex, "Auto-tune run failed");
             Finish(error: ex.Message);
         }
     }
@@ -377,7 +378,7 @@ public class AutoTuneService(State state, NodeSettingsStore nsd, WalkTestService
         if (result.Candidate.AbsorptionMax.HasValue)
             c.Optimization.Limits["absorption_max"] = result.Candidate.AbsorptionMax.Value;
         await configLoader.SaveSectionAsync("optimization", c.Optimization);
-        Log.Information("Auto-tune applied: optimizer={Optimizer}, penalty={Penalty}",
+        _logger.LogInformation("Auto-tune applied: optimizer={Optimizer}, penalty={Penalty}",
             result.Candidate.Optimizer, result.Candidate.AbsorptionPenalty);
         return (true, null);
     }

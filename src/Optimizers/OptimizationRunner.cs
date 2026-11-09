@@ -107,7 +107,7 @@ public class OptimizationRunner : BackgroundService
     {
         var optimizers = new List<IOptimizer> { new PerNodeAbsorptionRxTx(_state, _loggerFactory.CreateLogger<PerNodeAbsorptionRxTx>()) };
         if (_walkTest != null)
-            optimizers.Add(new WalkPointAbsorptionOptimizer(_state, _walkTest, _cfg));
+            optimizers.Add(new WalkPointAbsorptionOptimizer(_state, _walkTest, _cfg, _loggerFactory.CreateLogger<WalkPointAbsorptionOptimizer>()));
         return optimizers;
     }
 
@@ -188,7 +188,7 @@ public class OptimizationRunner : BackgroundService
     /// <summary>The ground-truth gate for this cycle, or null on an instance built without walk-test services.</summary>
     private IGroundTruthGate? BuildGroundTruthGate(ConfigOptimization optimization) =>
         _benchmark != null && _walkTest != null
-            ? new WalkPointGate(_benchmark, new WalkPointAbsorptionOptimizer(_state, _walkTest, _cfg), optimization)
+            ? new WalkPointGate(_benchmark, new WalkPointAbsorptionOptimizer(_state, _walkTest, _cfg, _loggerFactory.CreateLogger<WalkPointAbsorptionOptimizer>()), optimization)
             : null;
 
     /// <summary>
@@ -517,6 +517,10 @@ public class OptimizationRunner : BackgroundService
             case OptimizerGateDecision.DeviceFrame:
                 _logger.LogInformation("Optimizer {Optimizer,-24} rejected: better node-to-node (Composite={Composite:0.000}) but not with txRef held (Composite={DeviceComposite:0.000} <= Best={Best:0.000}); the gain is a txRef/rxAdj shift devices would see as range bias",
                     p.Optimizer, composite, p.Gates.DeviceFrame!.Composite, bestScore);
+                break;
+            case OptimizerGateDecision.WalkPointGate when p.Gates.WalkPoint?.CandidateRoomHitRate == null:
+                // Nothing was replayed, so nothing was rejected: usually the walk-point fit simply had no proposal.
+                _logger.LogInformation("Optimizer {Optimizer,-24} not applied: {Note}", p.Optimizer, p.Gates.WalkPoint?.Note);
                 break;
             case OptimizerGateDecision.WalkPointGate:
                 _logger.LogWarning("Optimizer {Optimizer,-24} REJECTED by walk-point gate: room {RoomBefore:P1} -> {RoomAfter:P1}, median {MedianBefore:0.00} m -> {MedianAfter:0.00} m. {Note}",

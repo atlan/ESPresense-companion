@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using ESPresense.Models;
 using MathNet.Spatial.Euclidean;
-using Newtonsoft.Json;
-using Serilog;
+using System.Text.Json;
+using ESPresense.Utils;
 
 namespace ESPresense.Services;
 
@@ -47,8 +47,11 @@ public class NodeMoveTracker : BackgroundService
     private readonly ConcurrentQueue<NodeMove> _history = new();
     private bool _primed;
 
-    public NodeMoveTracker(State state, NodeSettingsStore nodeSettings, string? persistPath = null)
+    private readonly ILogger _logger;
+
+    public NodeMoveTracker(State state, NodeSettingsStore nodeSettings, string? persistPath = null, ILogger<NodeMoveTracker>? logger = null)
     {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<NodeMoveTracker>.Instance;
         _state = state;
         _nodeSettings = nodeSettings;
         _persistPath = persistPath;
@@ -74,7 +77,7 @@ public class NodeMoveTracker : BackgroundService
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Node move check failed");
+                _logger.LogError(ex, "Node move check failed");
             }
 
             await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false);
@@ -121,7 +124,7 @@ public class NodeMoveTracker : BackgroundService
             _history.Enqueue(move);
             while (_history.Count > MaxHistory) _history.TryDequeue(out _);
 
-            Log.Information("Node {Node} moved {Distance:0.00} m - pair statistics and walk measures for it are " +
+            _logger.LogInformation("Node {Node} moved {Distance:0.00} m - pair statistics and walk measures for it are " +
                             "no longer valid; re-seeding its absorption", node.Name ?? node.Id, distance);
         }
 
@@ -174,11 +177,11 @@ public class NodeMoveTracker : BackgroundService
                 Known = _known.ToDictionary(kv => kv.Key, kv => new[] { kv.Value.X, kv.Value.Y, kv.Value.Z }),
                 History = _history.ToList()
             };
-            File.WriteAllText(_persistPath, JsonConvert.SerializeObject(payload));
+            File.WriteAllText(_persistPath, JsonSerializer.Serialize(payload, JsonDefaults.Verbatim));
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Could not persist node move log to {Path}", _persistPath);
+            _logger.LogWarning(ex, "Could not persist node move log to {Path}", _persistPath);
         }
     }
 
@@ -187,7 +190,7 @@ public class NodeMoveTracker : BackgroundService
         if (string.IsNullOrEmpty(_persistPath) || !File.Exists(_persistPath)) return;
         try
         {
-            var payload = JsonConvert.DeserializeObject<PersistedState>(File.ReadAllText(_persistPath));
+            var payload = JsonSerializer.Deserialize<PersistedState>(File.ReadAllText(_persistPath), JsonDefaults.Verbatim);
             if (payload == null) return;
             foreach (var (id, xyz) in payload.Known)
                 if (xyz.Length >= 3)
@@ -196,11 +199,11 @@ public class NodeMoveTracker : BackgroundService
             // A baseline survived the restart, so a relocation that happened while we were down is
             // a real finding rather than first-run noise.
             _primed = _known.Count > 0;
-            Log.Information("Loaded {Nodes} known node positions and {Moves} move records", _known.Count, _history.Count);
+            _logger.LogInformation("Loaded {Nodes} known node positions and {Moves} move records", _known.Count, _history.Count);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Could not read node move log from {Path}", _persistPath);
+            _logger.LogWarning(ex, "Could not read node move log from {Path}", _persistPath);
         }
     }
 

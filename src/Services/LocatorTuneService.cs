@@ -2,7 +2,6 @@ using ESPresense.Locators;
 using ESPresense.Models;
 using ESPresense.Utils;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -26,8 +25,10 @@ namespace ESPresense.Services;
 /// Honest limitation, unverändert: stationäres Rauschen (keine Gehbewegung), und die
 /// Kalman-Glättung über den Locators wird nicht nachgespielt - ein Walk-Punkt steht still.
 /// </summary>
-public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoader configLoader, ScenarioReplay replay)
+public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoader configLoader, ScenarioReplay replay, ILogger<LocatorTuneService>? logger = null)
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<LocatorTuneService>.Instance;
+
     public class Candidate
     {
         public string Key { get; set; } = "";
@@ -260,12 +261,12 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
                                         $"Walk-Punkte), mittlerer Fehler {best.MeanErrorM:0.00} m gegen " +
                                         $"{current.MeanErrorM:0.00} m.";
 
-            Log.Information("Locator tune: {Count} candidates over {Points} points, best={Best}",
+            _logger.LogInformation("Locator tune: {Count} candidates over {Points} points, best={Best}",
                 results.Count, points.Count, best.Candidate.Label);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Locator tune failed");
+            _logger.LogError(ex, "Locator tune failed");
             result.Error = ex.Message;
         }
 
@@ -292,7 +293,7 @@ public class LocatorTuneService(State state, WalkTestService walkTest, ConfigLoa
             c.Locators.NadarayaWatson.Kernel = "inverse_square";
         }
         await configLoader.SaveSectionAsync("locators", c.Locators);
-        Log.Information("Locator tune applied: kernel={Kernel}, bandwidth={Bandwidth}", r.Candidate.Kernel, r.Candidate.Bandwidth);
+        _logger.LogInformation("Locator tune applied: kernel={Kernel}, bandwidth={Bandwidth}", r.Candidate.Kernel, r.Candidate.Bandwidth);
         return (true, null);
     }
 }

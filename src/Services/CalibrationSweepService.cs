@@ -1,6 +1,5 @@
 using ESPresense.Models;
 using ESPresense.Optimizers;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -30,8 +29,11 @@ public class CalibrationSweepService(
     State state,
     ConfigLoader configLoader,
     NodeSettingsStore nodeSettings,
-    CalibrationBenchmark benchmark)
+    CalibrationBenchmark benchmark,
+    ILogger<CalibrationSweepService>? logger = null)
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<CalibrationSweepService>.Instance;
+
     public SweepResult Run(SweepRequest? request = null)
     {
         var result = new SweepResult { RanAt = DateTime.UtcNow };
@@ -111,7 +113,7 @@ public class CalibrationSweepService(
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Calibration sweep candidate {Label} failed", candidate.Label);
+                _logger.LogWarning(ex, "Calibration sweep candidate {Label} failed", candidate.Label);
                 result.Runs.Add(new SweepRun { Label = candidate.Label, Error = ex.Message });
             }
         }

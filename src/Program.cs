@@ -59,12 +59,14 @@ builder.Services.AddSingleton<LeaseService>();
 builder.Services.AddSingleton<ILeaseService>(provider => provider.GetRequiredService<LeaseService>());
 builder.Services.AddSingleton(sp => new PairErrorTracker(
     sp.GetRequiredService<State>(),
-    Path.Combine(storageDir, "pair-errors.json")));
+    Path.Combine(storageDir, "pair-errors.json"),
+    sp.GetRequiredService<ILogger<PairErrorTracker>>()));
 builder.Services.AddSingleton(sp => new WalkTestService(
     sp.GetRequiredService<State>(),
     sp.GetRequiredService<PairErrorTracker>(),
     sp.GetRequiredService<NodeSettingsStore>(),
-    Path.Combine(storageDir, "walktest-points.json")));
+    Path.Combine(storageDir, "walktest-points.json"),
+    sp.GetRequiredService<ILogger<WalkTestService>>()));
 builder.Services.AddSingleton<AutoTuneService>();
 // Der eine Szenarien-Replay, den alle Wizard-Messungen benutzen (siehe ScenarioReplay).
 builder.Services.AddSingleton<ESPresense.Locators.ScenarioReplay>();
@@ -79,7 +81,8 @@ builder.Services.AddSingleton(sp => new AutoApply(
     sp.GetRequiredService<LocatorSweepService>(),
     sp.GetRequiredService<LocatorTuneService>(),
     sp.GetRequiredService<ConfigLoader>(),
-    Path.Combine(storageDir, "auto-applied.json")));
+    Path.Combine(storageDir, "auto-applied.json"),
+    sp.GetRequiredService<ILogger<AutoApply>>()));
 builder.Services.AddSingleton<WalkPointPlanner>();
 builder.Services.AddSingleton<CalibrationSweepService>();
 builder.Services.AddSingleton<LocatorSweepService>();
@@ -90,11 +93,13 @@ builder.Services.AddSingleton(sp => new CalibrationBenchmark(
     sp.GetRequiredService<ConfigLoader>(),
     sp.GetRequiredService<ESPresense.Locators.ScenarioReplay>(),
     sp.GetRequiredService<NodeSettingsStore>(),
-    Path.Combine(storageDir, "benchmark-history.json")));
+    Path.Combine(storageDir, "benchmark-history.json"),
+    sp.GetRequiredService<ILogger<CalibrationBenchmark>>()));
 builder.Services.AddSingleton(sp => new NodeMoveTracker(
     sp.GetRequiredService<State>(),
     sp.GetRequiredService<NodeSettingsStore>(),
-    Path.Combine(storageDir, "node-moves.json")));
+    Path.Combine(storageDir, "node-moves.json"),
+    sp.GetRequiredService<ILogger<NodeMoveTracker>>()));
 // Registered as singleton + forwarded so WizardController can call TriggerNow() on the same instance.
 builder.Services.AddSingleton<ESPresense.Optimizers.OptimizationSnapshotStore>();
 builder.Services.AddSingleton<OptimizationRunner>();

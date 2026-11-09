@@ -1,7 +1,6 @@
 using ESPresense.Models;
 using ESPresense.Services;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 
 namespace ESPresense.Optimizers;
 
@@ -54,8 +53,10 @@ namespace ESPresense.Optimizers;
 /// Knoten ohne ausreichende oder ohne genuegend GESPREIZTE Abdeckung bekommen keinen Vorschlag und
 /// behalten den Wert aus dem Paar-Fit. Schweigen ist dort die ehrliche Antwort.
 /// </summary>
-public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest, ConfigLoader configLoader) : IOptimizer
+public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest, ConfigLoader configLoader, ILogger<WalkPointAbsorptionOptimizer>? logger = null) : IOptimizer
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WalkPointAbsorptionOptimizer>.Instance;
+
     public string Name => "Walk Point Absorption";
 
     /// <summary>Dieser Optimierer wird gegen die Bodenwahrheit bewertet, nicht gegen Knoten-Paare.</summary>
@@ -160,7 +161,7 @@ public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest,
         var perPoint = Collect();
         if (perPoint.Count < Folds)
         {
-            Log.Debug("Walk point absorption: only {Count} usable points, need at least {Folds}", perPoint.Count, Folds);
+            _logger.LogDebug("Walk point absorption: only {Count} usable points, need at least {Folds}", perPoint.Count, Folds);
             return results;
         }
 
@@ -209,13 +210,13 @@ public class WalkPointAbsorptionOptimizer(State state, WalkTestService walkTest,
             // Als Diagnose ist er trotzdem wertvoll: weicht er vom gemeldeten rssi@1m ab, stimmt
             // etwas mit Referenzpegel oder Empfindlichkeit dieses Knotens nicht.
             var deviceRef = all[0].sample.RefRssi;
-            Log.Information("Walk point absorption {Node}: {Current:0.00} -> {Final:0.00} " +
+            _logger.LogInformation("Walk point absorption {Node}: {Current:0.00} -> {Final:0.00} " +
                             "(hold-out {Gain:0.00} dB besser, {N} Messungen, {Bins} Distanz-Bins; " +
                             "gefitteter Referenzpegel {FitRef:0.0} gegen gemeldete {DevRef:0.0} dBm)",
                 nodeId, current, final, gain, all.Count, fit.Bins, fit.RefRssi, deviceRef);
         }
 
-        Log.Information("Walk point absorption: {Proposed} vorgeschlagen | {NoGain} ohne Gewinn | " +
+        _logger.LogInformation("Walk point absorption: {Proposed} vorgeschlagen | {NoGain} ohne Gewinn | " +
                         "{NotId} nicht bestimmbar (zu wenig Entfernungs-Spannweite) | {TooFew} zu wenige Messungen | aus {Points} Walk-Punkten",
             proposed, noGain, notIdentifiable, tooFew, perPoint.Count);
         return results;

@@ -3,7 +3,6 @@ using ESPresense.Services;
 using ESPresense.Utils;
 using MathNet.Spatial.Euclidean;
 using Microsoft.AspNetCore.Mvc;
-using Serilog;
 
 namespace ESPresense.Controllers;
 
@@ -17,8 +16,10 @@ namespace ESPresense.Controllers;
 /// config.yaml is written once per app run before the first editor write as a safety net.
 /// </summary>
 [ApiController]
-public class FloorplanController(ConfigLoader configLoader, State state) : ControllerBase
+public class FloorplanController(ConfigLoader configLoader, State state, ILogger<FloorplanController>? logger = null) : ControllerBase
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<FloorplanController>.Instance;
+
     private static readonly object BackupLock = new();
     private static bool _backedUp;
 
@@ -34,7 +35,7 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
             {
                 var backupPath = configLoader.ConfigPath + $".bak-floorplan-{DateTime.UtcNow:yyyyMMdd-HHmmss}";
                 System.IO.File.Copy(configLoader.ConfigPath, backupPath);
-                Log.Information("Floorplan editor: backed up config to {Path}", backupPath);
+                _logger.LogInformation("Floorplan editor: backed up config to {Path}", backupPath);
 
                 // Prune old editor backups - one accrues per app run with edits, and they'd pile
                 // up forever otherwise. Timestamped names sort chronologically.
@@ -47,12 +48,12 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
                 foreach (var f in old)
                 {
                     System.IO.File.Delete(f);
-                    Log.Information("Floorplan editor: pruned old backup {Path}", f);
+                    _logger.LogInformation("Floorplan editor: pruned old backup {Path}", f);
                 }
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Floorplan editor: config backup failed (continuing anyway)");
+                _logger.LogWarning(ex, "Floorplan editor: config backup failed (continuing anyway)");
             }
             _backedUp = true;
         }
@@ -103,12 +104,12 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
             EnsureBackup();
             c.Nodes = nodes.ToArray();
             await configLoader.SaveSectionAsync("nodes", c.Nodes);
-            Log.Information("Floorplan editor: node {Id} saved at ({X}, {Y}, {Z}), room={Room}", req.Id, req.X, req.Y, req.Z, existing.Room);
+            _logger.LogInformation("Floorplan editor: node {Id} saved at ({X}, {Y}, {Z}), room={Room}", req.Id, req.X, req.Y, req.Z, existing.Room);
             return Ok(new { saved = true, room = existing.Room });
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Floorplan editor: failed to save node {Id}", req.Id);
+            _logger.LogError(ex, "Floorplan editor: failed to save node {Id}", req.Id);
             return StatusCode(500, new { error = "Failed to save node" });
         }
     }
@@ -126,7 +127,7 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
         EnsureBackup();
         c.Nodes = nodes.ToArray();
         await configLoader.SaveSectionAsync("nodes", c.Nodes);
-        Log.Information("Floorplan editor: node {Id} removed from config", id);
+        _logger.LogInformation("Floorplan editor: node {Id} removed from config", id);
         return Ok(new { deleted = true });
     }
 
@@ -171,13 +172,13 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
             EnsureBackup();
             floor.Rooms = rooms.ToArray();
             await configLoader.SaveSectionAsync("floors", c.Floors);
-            Log.Information("Floorplan editor: room {Room} on floor {Floor} saved ({Points} points)",
+            _logger.LogInformation("Floorplan editor: room {Room} on floor {Floor} saved ({Points} points)",
                 room.GetId(), req.FloorId, req.Points.Length);
             return Ok(new { saved = true, roomId = room.GetId() });
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Floorplan editor: failed to save room on floor {Floor}", req.FloorId);
+            _logger.LogError(ex, "Floorplan editor: failed to save room on floor {Floor}", req.FloorId);
             return StatusCode(500, new { error = "Failed to save room" });
         }
     }
@@ -198,7 +199,7 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
         EnsureBackup();
         floor.Rooms = rooms.ToArray();
         await configLoader.SaveSectionAsync("floors", c.Floors);
-        Log.Information("Floorplan editor: room {Room} on floor {Floor} removed", roomId, floorId);
+        _logger.LogInformation("Floorplan editor: room {Room} on floor {Floor} removed", roomId, floorId);
         return Ok(new { deleted = true });
     }
 
@@ -242,12 +243,12 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
             EnsureBackup();
             c.Floors = floors.ToArray();
             await configLoader.SaveSectionAsync("floors", c.Floors);
-            Log.Information("Floorplan editor: floor {Floor} saved", floor.GetId());
+            _logger.LogInformation("Floorplan editor: floor {Floor} saved", floor.GetId());
             return Ok(new { saved = true, floorId = floor.GetId() });
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Floorplan editor: failed to save floor");
+            _logger.LogError(ex, "Floorplan editor: failed to save floor");
             return StatusCode(500, new { error = "Failed to save floor" });
         }
     }
@@ -275,7 +276,7 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
         floors.Remove(floor);
         c.Floors = floors.ToArray();
         await configLoader.SaveSectionAsync("floors", c.Floors);
-        Log.Information("Floorplan editor: floor {Floor} deleted", id);
+        _logger.LogInformation("Floorplan editor: floor {Floor} deleted", id);
         return Ok(new { deleted = true });
     }
 
@@ -299,7 +300,7 @@ public class FloorplanController(ConfigLoader configLoader, State state) : Contr
         EnsureBackup();
         floor.Bounds = req.Bounds;
         await configLoader.SaveSectionAsync("floors", c.Floors);
-        Log.Information("Floorplan editor: floor {Floor} bounds saved", req.FloorId);
+        _logger.LogInformation("Floorplan editor: floor {Floor} bounds saved", req.FloorId);
         return Ok(new { saved = true });
     }
 }

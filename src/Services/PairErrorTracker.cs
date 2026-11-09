@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using ESPresense.Models;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -19,8 +18,11 @@ public class PairErrorTracker
     private readonly State state;
     private readonly string? _persistPath;
 
-    public PairErrorTracker(State state, string? persistPath = null)
+    private readonly ILogger _logger;
+
+    public PairErrorTracker(State state, string? persistPath = null, ILogger<PairErrorTracker>? logger = null)
     {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PairErrorTracker>.Instance;
         this.state = state;
         _persistPath = persistPath;
         Load();
@@ -45,7 +47,7 @@ public class PairErrorTracker
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Could not persist pair error statistics to {Path}", _persistPath);
+            _logger.LogWarning(ex, "Could not persist pair error statistics to {Path}", _persistPath);
         }
     }
 
@@ -61,11 +63,11 @@ public class PairErrorTracker
                     NodeA = v.NodeA, NodeB = v.NodeB, Ewma = v.Ewma,
                     AboveFractionEwma = v.AboveFractionEwma, Samples = v.Samples, FirstSampleAt = v.FirstSampleAt
                 };
-            Log.Information("Loaded {Count} pair error statistics from {Path}", _stats.Count, _persistPath);
+            _logger.LogInformation("Loaded {Count} pair error statistics from {Path}", _stats.Count, _persistPath);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Could not read pair error statistics from {Path}", _persistPath);
+            _logger.LogWarning(ex, "Could not read pair error statistics from {Path}", _persistPath);
         }
     }
 

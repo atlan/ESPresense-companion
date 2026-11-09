@@ -26,10 +26,6 @@ public class NewtonsoftConventionTests
         "Models/DeviceMessage.cs",
         "Models/NodeTelemetry.cs",
         "Models/DeviceSettings.cs",
-
-        // Fork: these two persist history files with Newtonsoft; switching the serializer would have to keep reading the files already on disk.
-        "Services/CalibrationBenchmark.cs",
-        "Services/NodeMoveTracker.cs",
     };
 
     [Test]

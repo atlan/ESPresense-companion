@@ -1,5 +1,4 @@
 using ESPresense.Models;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -34,8 +33,11 @@ public class DeviceSetupService(
     State state,
     DeviceCaptureService capture,
     DeviceSettingsStore deviceSettings,
-    DeviceIdentityTracker identityTracker)
+    DeviceIdentityTracker identityTracker,
+    ILogger<DeviceSetupService>? logger = null)
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DeviceSetupService>.Instance;
+
     /// <summary>Below this many samples from a node its median is too shaky to trust.</summary>
     private const int MinSamplesPerNode = 8;
 
@@ -70,7 +72,7 @@ public class DeviceSetupService(
         capture.Discard(deviceId);
         capture.Start(deviceId, AlternateIdsFor(deviceId));
         _run = new ReferenceRun(deviceId, referenceNodeId, distanceM, DateTime.UtcNow);
-        Log.Information("Reference run started: {Device} at {Distance} m from {Node}", deviceId, distanceM, referenceNodeId);
+        _logger.LogInformation("Reference run started: {Device} at {Distance} m from {Node}", deviceId, distanceM, referenceNodeId);
         return Status();
     }
 
@@ -246,7 +248,7 @@ public class DeviceSetupService(
             settings.RefRssi = refRssi;
             await deviceSettings.Set(writeId, settings);
             written.Add(writeId);
-            Log.Information("Device setup: wrote rssi@1m={Ref} and alias '{Alias}' to original id {Id}", refRssi, targetId, writeId);
+            _logger.LogInformation("Device setup: wrote rssi@1m={Ref} and alias '{Alias}' to original id {Id}", refRssi, targetId, writeId);
         }
         ids = written;
 

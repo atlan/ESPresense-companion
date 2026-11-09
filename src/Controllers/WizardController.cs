@@ -2,7 +2,6 @@ using ESPresense.Models;
 using ESPresense.Optimizers;
 using ESPresense.Services;
 using Microsoft.AspNetCore.Mvc;
-using Serilog;
 
 namespace ESPresense.Controllers;
 
@@ -28,8 +27,11 @@ public class WizardController(
     NextActions nextActions,
     AutoApply autoApply,
     AutoTuneService autoTune,
-    LocatorTuneService locatorTune) : ControllerBase
+    LocatorTuneService locatorTune,
+    ILogger<WizardController>? logger = null) : ControllerBase
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WizardController>.Instance;
+
     /// <summary>Renders a config pair id ("node_a:node_b") with friendly node names for display.</summary>
     private string FriendlyPair(string pair)
     {
@@ -212,7 +214,7 @@ public class WizardController(
             return BadRequest(new { error = "Optimization is disabled - enable auto-optimization first." });
 
         optimizationRunner.TriggerNow();
-        Log.Information("Calibration cycle manually triggered via wizard");
+        _logger.LogInformation("Calibration cycle manually triggered via wizard");
         return Ok(new { triggered = true });
     }
 
@@ -269,14 +271,14 @@ public class WizardController(
             if (added.Count > 0)
             {
                 await configLoader.SaveSectionAsync("optimization", c.Optimization);
-                Log.Information("Wizard added excluded pairs: {Pairs}", string.Join(", ", added));
+                _logger.LogInformation("Wizard added excluded pairs: {Pairs}", string.Join(", ", added));
             }
 
             return Ok(new { added, excludedPairs = c.Optimization.ExcludedPairs });
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to add excluded pairs");
+            _logger.LogError(ex, "Failed to add excluded pairs");
             return StatusCode(500, new { error = "Failed to save excluded pairs" });
         }
     }
@@ -582,12 +584,12 @@ public class WizardController(
             await configLoader.SaveSectionAsync("map", c.Map);
             await configLoader.SaveSectionAsync("gps", c.Gps);
             await configLoader.SaveSectionAsync("mqtt", c.Mqtt);
-            Log.Information("Wizard settings saved (all editable config sections)");
+            _logger.LogInformation("Wizard settings saved (all editable config sections)");
             return Ok(new { saved = true });
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to save wizard settings");
+            _logger.LogError(ex, "Failed to save wizard settings");
             return StatusCode(500, new { error = "Failed to save settings" });
         }
     }
@@ -635,12 +637,12 @@ public class WizardController(
             c.ExcludeDevices = ToConfig(req.ExcludeDevices);
             await configLoader.SaveSectionAsync("devices", c.Devices);
             await configLoader.SaveSectionAsync("exclude_devices", c.ExcludeDevices);
-            Log.Information("Device lists saved: {Tracked} tracked, {Excluded} excluded", c.Devices.Length, c.ExcludeDevices.Length);
+            _logger.LogInformation("Device lists saved: {Tracked} tracked, {Excluded} excluded", c.Devices.Length, c.ExcludeDevices.Length);
             return Ok(new { saved = true });
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to save device lists");
+            _logger.LogError(ex, "Failed to save device lists");
             return StatusCode(500, new { error = "Failed to save device lists" });
         }
     }

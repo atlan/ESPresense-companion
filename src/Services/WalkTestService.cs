@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using ESPresense.Models;
 using ESPresense.Utils;
 using MathNet.Spatial.Euclidean;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -28,8 +27,11 @@ public class WalkTestService
     private readonly NodeSettingsStore nodeSettings;
     private readonly string? _persistPath;
 
-    public WalkTestService(State state, PairErrorTracker pairErrorTracker, NodeSettingsStore nodeSettings, string? persistPath = null)
+    private readonly ILogger _logger;
+
+    public WalkTestService(State state, PairErrorTracker pairErrorTracker, NodeSettingsStore nodeSettings, string? persistPath = null, ILogger<WalkTestService>? logger = null)
     {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WalkTestService>.Instance;
         this.state = state;
         this.pairErrorTracker = pairErrorTracker;
         this.nodeSettings = nodeSettings;
@@ -321,7 +323,7 @@ public class WalkTestService
             };
             _session = s;
             _ = RunSessionAsync(s);
-            Log.Information("Walk test started: device {Device} at ({X}, {Y}, {Z}) for {Secs}s", deviceId, x, y, z, s.DurationSecs);
+            _logger.LogInformation("Walk test started: device {Device} at ({X}, {Y}, {Z}) for {Secs}s", deviceId, x, y, z, s.DurationSecs);
             return (true, null);
         }
     }
@@ -343,7 +345,7 @@ public class WalkTestService
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Walk test session sampling failed");
+            _logger.LogWarning(ex, "Walk test session sampling failed");
         }
         finally
         {
@@ -405,7 +407,7 @@ public class WalkTestService
             _session = null;
         }
         s.Cts.Cancel();
-        Log.Information("Walk test cancelled (device {Device})", s.DeviceId);
+        _logger.LogInformation("Walk test cancelled (device {Device})", s.DeviceId);
         return (true, null);
     }
 
@@ -435,7 +437,7 @@ public class WalkTestService
 
         if (aggregates.Count == 0)
         {
-            Log.Information("Walk test point discarded: no node collected enough samples (device {Device})", s.DeviceId);
+            _logger.LogInformation("Walk test point discarded: no node collected enough samples (device {Device})", s.DeviceId);
             return null;
         }
 
@@ -472,7 +474,7 @@ public class WalkTestService
         };
         _points[point.Id] = point;
         SavePoints();
-        Log.Information("Walk test point {Id} recorded: {Nodes} nodes, {Samples} raw samples (device {Device} at {X},{Y},{Z})",
+        _logger.LogInformation("Walk test point {Id} recorded: {Nodes} nodes, {Samples} raw samples (device {Device} at {X},{Y},{Z})",
             point.Id, aggregates.Count, s.Samples.Count, s.DeviceId, s.X, s.Y, s.Z);
         return point;
     }
@@ -546,7 +548,7 @@ public class WalkTestService
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to persist walk test points to {Path}", _persistPath);
+            _logger.LogWarning(ex, "Failed to persist walk test points to {Path}", _persistPath);
         }
     }
 
@@ -564,11 +566,11 @@ public class WalkTestService
                     _pointCounter = n;
             }
             if (_points.Count > 0)
-                Log.Information("Loaded {Count} persisted walk test points from {Path}", _points.Count, _persistPath);
+                _logger.LogInformation("Loaded {Count} persisted walk test points from {Path}", _points.Count, _persistPath);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to load persisted walk test points from {Path}", _persistPath);
+            _logger.LogWarning(ex, "Failed to load persisted walk test points from {Path}", _persistPath);
         }
     }
 

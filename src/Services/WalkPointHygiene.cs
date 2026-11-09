@@ -1,4 +1,3 @@
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -27,8 +26,10 @@ namespace ESPresense.Services;
 /// ⚠ Nichts wird geloescht. Walk-Punkte sind zu Fuss erlaufene Bodenwahrheit, und die
 /// Diagnose, die sie verurteilt, kann irren.
 /// </summary>
-public class WalkPointHygiene(WalkTestService walkTest)
+public class WalkPointHygiene(WalkTestService walkTest, ILogger<WalkPointHygiene>? logger = null)
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WalkPointHygiene>.Instance;
+
     /// <summary>
     /// Unter so wenigen Messwerten ist der Median des Aggregats Zufall. Gemessen an dieser
     /// Anlage liegt der Median bei 40 Werten je Knotenmessung; unter 10 sind es 2,7 % des
@@ -105,7 +106,7 @@ public class WalkPointHygiene(WalkTestService walkTest)
             // waechst unbegrenzt, obwohl jede einzelne Regel brav unter der Grenze bleibt.
             if (schonAus + getan.Count + 2 > deckel)
             {
-                Log.Warning("Walk-Punkt-Hygiene: Deckel erreicht ({Aus} von {Gesamt} Messungen stillgelegt, " +
+                _logger.LogWarning("Walk-Punkt-Hygiene: Deckel erreicht ({Aus} von {Gesamt} Messungen stillgelegt, " +
                             "Grenze {Cap}). Weitere Einzelknoten-Widersprueche bleiben stehen und sind in der " +
                             "Diagnose sichtbar - so viel Stilllegen auf einmal deutet auf ein gemeinsames " +
                             "Problem, nicht auf lauter Einzelfaelle.",
@@ -166,7 +167,7 @@ public class WalkPointHygiene(WalkTestService walkTest)
         var deckel = (int)Math.Floor(gesamt * MaxShareOfFleet);
         if (vorschlaege.Count > deckel)
         {
-            Log.Warning("Walk-Punkt-Hygiene: {Count} Messungen auffaellig, das ist mehr als der Deckel von " +
+            _logger.LogWarning("Walk-Punkt-Hygiene: {Count} Messungen auffaellig, das ist mehr als der Deckel von " +
                         "{Cap} ({Share:P0} von {Total}). NICHTS stillgelegt - so viele Auffaelligkeiten auf " +
                         "einmal deuten auf ein gemeinsames Problem (verstellter Referenzpegel, falsches Geraet), " +
                         "nicht auf lauter Einzelfehler.",
@@ -180,7 +181,7 @@ public class WalkPointHygiene(WalkTestService walkTest)
             var aktiv = p.Nodes.Count(n => !n.Disabled);
             if (aktiv - 1 < MinActiveNodesPerPoint)
             {
-                Log.Information("Walk-Punkt-Hygiene: {Point}/{Node} bliebe unter {Min} aktiven Messungen - " +
+                _logger.LogInformation("Walk-Punkt-Hygiene: {Point}/{Node} bliebe unter {Min} aktiven Messungen - " +
                                 "unangetastet gelassen, der Punkt ist als Ganzes zu pruefen.",
                                 p.Id, a.NodeId, MinActiveNodesPerPoint);
                 continue;
@@ -196,7 +197,7 @@ public class WalkPointHygiene(WalkTestService walkTest)
         {
             walkTest.PersistPoints();
             foreach (var b in getan)
-                Log.Information("Walk-Punkt-Hygiene: {Point}/{Node} stillgelegt ({Rule}) - {Reason}",
+                _logger.LogInformation("Walk-Punkt-Hygiene: {Point}/{Node} stillgelegt ({Rule}) - {Reason}",
                                 b.PointId, b.NodeId, b.Rule, b.Reason);
         }
         return getan;
@@ -215,7 +216,7 @@ public class WalkPointHygiene(WalkTestService walkTest)
         a.DisabledReason = disabled ? reason ?? "Von Hand stillgelegt." : null;
         a.DisabledAt = disabled ? DateTime.UtcNow : null;
         walkTest.PersistPoints();
-        Log.Information("Walk-Punkt {Point}/{Node} {State} (von Hand){Reason}",
+        _logger.LogInformation("Walk-Punkt {Point}/{Node} {State} (von Hand){Reason}",
                         pointId, nodeId, disabled ? "stillgelegt" : "wieder aufgenommen",
                         disabled && reason != null ? $": {reason}" : "");
         return true;

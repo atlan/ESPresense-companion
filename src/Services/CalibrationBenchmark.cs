@@ -2,8 +2,8 @@ using ESPresense.Locators;
 using ESPresense.Models;
 using ESPresense.Utils;
 using MathNet.Spatial.Euclidean;
-using Newtonsoft.Json;
-using Serilog;
+using System.Text.Json;
+using ESPresense.Utils;
 
 namespace ESPresense.Services;
 
@@ -29,8 +29,11 @@ public class CalibrationBenchmark(
     ConfigLoader configLoader,
     ScenarioReplay replay,
     NodeSettingsStore nodeSettings,
-    string? persistPath = null)
+    string? persistPath = null,
+    ILogger<CalibrationBenchmark>? logger = null)
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<CalibrationBenchmark>.Instance;
+
     /// <summary>
     /// Die HEUTE geltende Kalibrierung als Overrides.
     ///
@@ -71,7 +74,7 @@ public class CalibrationBenchmark(
 
     private const int MaxHistory = 50;
 
-    private List<BenchmarkResult> _history = Load(persistPath);
+    private List<BenchmarkResult> _history = Load(persistPath, logger);
 
     public BenchmarkResult? Last => _history.LastOrDefault();
 
@@ -426,7 +429,7 @@ public class CalibrationBenchmark(
             if (worst != null && fhr < 0.95) result.Verdict += $" Most common mix-up: {worst.Pair}.";
         }
 
-        Log.Information("Benchmark: median {Median:0.00} m, p90 {P90:0.00} m, room hit {Hit:P0}, {Ticks} ticks",
+        _logger.LogInformation("Benchmark: median {Median:0.00} m, p90 {P90:0.00} m, room hit {Hit:P0}, {Ticks} ticks",
             result.MedianErrorM, result.P90ErrorM, result.RoomHitRate ?? 0, result.Ticks);
 
         return remember ? Remember(result) : result;
@@ -525,15 +528,15 @@ public class CalibrationBenchmark(
     private void Save()
     {
         if (string.IsNullOrEmpty(persistPath)) return;
-        try { File.WriteAllText(persistPath, JsonConvert.SerializeObject(_history)); }
-        catch (Exception ex) { Log.Warning(ex, "Could not persist benchmark history to {Path}", persistPath); }
+        try { File.WriteAllText(persistPath, JsonSerializer.Serialize(_history, JsonDefaults.Verbatim)); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Could not persist benchmark history to {Path}", persistPath); }
     }
 
-    private static List<BenchmarkResult> Load(string? path)
+    private static List<BenchmarkResult> Load(string? path, ILogger? logger)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return new List<BenchmarkResult>();
-        try { return JsonConvert.DeserializeObject<List<BenchmarkResult>>(File.ReadAllText(path)) ?? new List<BenchmarkResult>(); }
-        catch (Exception ex) { Log.Warning(ex, "Could not read benchmark history from {Path}", path); return new List<BenchmarkResult>(); }
+        try { return JsonSerializer.Deserialize<List<BenchmarkResult>>(File.ReadAllText(path), JsonDefaults.Verbatim) ?? new List<BenchmarkResult>(); }
+        catch (Exception ex) { logger?.LogWarning(ex, "Could not read benchmark history from {Path}", path); return new List<BenchmarkResult>(); }
     }
 }
 

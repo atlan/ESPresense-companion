@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Serilog;
 
 namespace ESPresense.Services;
 
@@ -24,8 +23,10 @@ namespace ESPresense.Services;
 /// eine stillgelegte Messung, die nur intern wirkt. Der Benutzer muss erfahren, dass sich
 /// das Verhalten geaendert hat, und es mit einem Klick zurueckdrehen koennen.
 /// </summary>
-public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune, ConfigLoader configLoader, string? persistPath = null)
+public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune, ConfigLoader configLoader, string? persistPath = null, ILogger<AutoApply>? logger = null)
 {
+    private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AutoApply>.Instance;
+
     /// <summary>
     /// Was „messbar" heisst: alles ausser „simplicity". Die drei anderen Werte bedeuten, dass
     /// der Vorsprung des Gewinners groesser war als die eigene Streuung der Messung.
@@ -33,7 +34,7 @@ public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune
     private static readonly string[] MessbarEntschieden = ["room", "floor", "position"];
 
     private readonly object _lock = new();
-    private List<AppliedChange> _history = Load(persistPath);
+    private List<AppliedChange> _history = Load(persistPath, logger);
 
     public IReadOnlyList<AppliedChange> History
     {
@@ -54,7 +55,7 @@ public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune
         if (rec.AlreadyConfigured) return null;
         if (!MessbarEntschieden.Contains(rec.DecidedBy, StringComparer.OrdinalIgnoreCase))
         {
-            Log.Debug("Locator-Wahl: nichts umgestellt - die Messung trennt die Kandidaten nicht ({Why})", rec.DecidedBy);
+            _logger.LogDebug("Locator-Wahl: nichts umgestellt - die Messung trennt die Kandidaten nicht ({Why})", rec.DecidedBy);
             return null;
         }
 
@@ -88,7 +89,7 @@ public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune
             if (_history.Count > 20) _history = _history.Take(20).ToList();
             Save();
         }
-        Log.Information("Automatisch umgestellt: {Title}. {Reason}", change.Title, change.Reason);
+        _logger.LogInformation("Automatisch umgestellt: {Title}. {Reason}", change.Title, change.Reason);
         return change;
     }
 
@@ -109,7 +110,7 @@ public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune
         var (ok, error) = await locatorTune.Apply(best.Candidate.Key);
         if (!ok)
         {
-            Log.Warning("Locator-Feineinstellung nicht uebernommen: {Error}", error);
+            _logger.LogWarning("Locator-Feineinstellung nicht uebernommen: {Error}", error);
             return null;
         }
 
@@ -129,7 +130,7 @@ public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune
             if (_history.Count > 20) _history = _history.Take(20).ToList();
             Save();
         }
-        Log.Information("Automatisch umgestellt: {Title}. {Reason}", change.Title, change.Reason);
+        _logger.LogInformation("Automatisch umgestellt: {Title}. {Reason}", change.Title, change.Reason);
         return change;
     }
 
@@ -157,7 +158,7 @@ public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune
             change.UndoneAt = DateTime.UtcNow;
             Save();
         }
-        Log.Information("Automatische Umstellung zurueckgenommen: {Title}", change.Title);
+        _logger.LogInformation("Automatische Umstellung zurueckgenommen: {Title}", change.Title);
         return true;
     }
 
@@ -182,14 +183,14 @@ public class AutoApply(LocatorSweepService sweep, LocatorTuneService locatorTune
             Directory.CreateDirectory(Path.GetDirectoryName(persistPath)!);
             File.WriteAllText(persistPath, JsonSerializer.Serialize(_history));
         }
-        catch (Exception ex) { Log.Warning(ex, "Verlauf der automatischen Umstellungen nicht gespeichert"); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Verlauf der automatischen Umstellungen nicht gespeichert"); }
     }
 
-    private static List<AppliedChange> Load(string? path)
+    private static List<AppliedChange> Load(string? path, ILogger? logger)
     {
         if (path == null || !File.Exists(path)) return [];
         try { return JsonSerializer.Deserialize<List<AppliedChange>>(File.ReadAllText(path)) ?? []; }
-        catch (Exception ex) { Log.Warning(ex, "Verlauf der automatischen Umstellungen nicht gelesen"); return []; }
+        catch (Exception ex) { logger?.LogWarning(ex, "Verlauf der automatischen Umstellungen nicht gelesen"); return []; }
     }
 }
 
